@@ -1,6 +1,6 @@
 import { PixelBuffer } from './buffer.js';
 import { normalizeRect } from './geometry.js';
-import type { Rect } from './types.js';
+import type { Point, Rect } from './types.js';
 
 /**
  * Buffer-level geometry operations: flip, rotate, crop, resize, scale.
@@ -104,6 +104,103 @@ export function scaleNearest(source: PixelBuffer, factorX: number, factorY = fac
     const sy = (y / factorY) | 0;
     for (let x = 0; x < out.width; x++) {
       const sx = (x / factorX) | 0;
+      const si = source.index(sx, sy);
+      const di = out.index(x, y);
+      out.data[di] = source.data[si];
+      out.data[di + 1] = source.data[si + 1];
+      out.data[di + 2] = source.data[si + 2];
+      out.data[di + 3] = source.data[si + 3];
+    }
+  }
+  return out;
+}
+
+/**
+ * Shift the contents by whole pixels, leaving the vacated band transparent.
+ *
+ * A 1px nudge used to cost a `copy_region` plus a `clear_region` per layer per frame;
+ * for a 3-frame bob over 4 layers that is 24 operations to say "move it down one".
+ */
+export function translate(source: PixelBuffer, dx: number, dy: number): PixelBuffer {
+  return resizeCanvas(source, source.width, source.height, dx, dy);
+}
+
+export type NamedPivot =
+  | 'center'
+  | 'top'
+  | 'bottom'
+  | 'left'
+  | 'right'
+  | 'top-left'
+  | 'top-right'
+  | 'bottom-left'
+  | 'bottom-right';
+
+/** Where a named pivot sits inside a bounding box, in pixel coordinates. */
+export function resolvePivot(ref: NamedPivot, bounds: Rect): Point {
+  const { x, y, w, h } = bounds;
+  const cx = x + (w - 1) / 2;
+  const cy = y + (h - 1) / 2;
+  switch (ref) {
+    case 'center':
+      return { x: cx, y: cy };
+    case 'top':
+      return { x: cx, y };
+    case 'bottom':
+      return { x: cx, y: y + h - 1 };
+    case 'left':
+      return { x, y: cy };
+    case 'right':
+      return { x: x + w - 1, y: cy };
+    case 'top-left':
+      return { x, y };
+    case 'top-right':
+      return { x: x + w - 1, y };
+    case 'bottom-left':
+      return { x, y: y + h - 1 };
+    case 'bottom-right':
+      return { x: x + w - 1, y: y + h - 1 };
+  }
+}
+
+export interface ScaleAboutOptions {
+  /** Anchor that stays put, in source pixel coordinates. */
+  pivotX: number;
+  pivotY: number;
+  /** Output size. Defaults to the source size, so the canvas never grows. */
+  width?: number;
+  height?: number;
+}
+
+/**
+ * Scale about a pivot with nearest-neighbour sampling, keeping the output the same size
+ * by default.
+ *
+ * `scaleNearest` only takes integer factors because that is all a *display* zoom needs.
+ * Squash and stretch needs fractional factors (0.9 tall, 1.08 wide) applied to artwork
+ * that has to stay registered to the same canvas, so this maps backwards from each
+ * output pixel and rounds — which is the only sampling rule that keeps a pivot exactly
+ * fixed.
+ */
+export function scaleAbout(
+  source: PixelBuffer,
+  scaleX: number,
+  scaleY: number,
+  opts: ScaleAboutOptions,
+): PixelBuffer {
+  if (!(scaleX > 0) || !(scaleY > 0)) {
+    throw new RangeError('scaleAbout factors must be greater than zero');
+  }
+  const width = Math.max(1, Math.floor(opts.width ?? source.width));
+  const height = Math.max(1, Math.floor(opts.height ?? source.height));
+  const out = new PixelBuffer(width, height);
+  const { pivotX, pivotY } = opts;
+  for (let y = 0; y < height; y++) {
+    const sy = Math.round(pivotY + (y - pivotY) / scaleY);
+    if (sy < 0 || sy >= source.height) continue;
+    for (let x = 0; x < width; x++) {
+      const sx = Math.round(pivotX + (x - pivotX) / scaleX);
+      if (sx < 0 || sx >= source.width) continue;
       const si = source.index(sx, sy);
       const di = out.index(x, y);
       out.data[di] = source.data[si];

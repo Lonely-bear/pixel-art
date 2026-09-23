@@ -53,6 +53,8 @@ import {
   resizeCanvasCommand,
   rotateCommand,
   scaleSpriteCommand,
+  squashCommand,
+  translateCommand,
 } from './transform.js';
 
 /**
@@ -106,6 +108,9 @@ export const allCommands: Command[] = [
   cropCanvasCommand,
   scaleSpriteCommand,
   clearAllCommand,
+  // Per-cel motion
+  translateCommand,
+  squashCommand,
 ];
 
 export const defaultRegistry: CommandRegistry = createRegistry(allCommands);

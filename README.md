@@ -98,9 +98,11 @@ What it has:
   stroke is one undo step.
 - **Tools** — pencil, eraser, line, rectangle, ellipse, bucket fill, colour replace,
   eyedropper, pan. Brush size 1–8, filled-shape toggle, primary/secondary colours with alpha.
+- **Clipping** — any draw can be restricted with `clip`, so shading, highlights and dither
+  bands stay inside the silhouette instead of filling their bounding box.
 - **Layers** — visibility, locking, opacity, six blend modes, reorder, duplicate, merge down.
 - **Frames and tags** — frame strip with per-frame thumbnails and durations, plus animation
-  tags for named ranges.
+  tags for named ranges, and `translate` / `squash` for moving whole layers between frames.
 - **Palette** — click to set the primary colour, right-click for the secondary, and
   `quantize_to_palette` to snap existing artwork to the palette (with dithering).
 - **Import / export** — open and save `.pixel`, import a PNG as a new document (deriving a
@@ -147,7 +149,7 @@ Client configuration (Claude Desktop, or any `mcpServers` JSON):
 
 ### What it exposes
 
-- **58 tools.** Every core command (39) is generated straight from its zod schema, plus
+- **60 tools.** Every core command (41) is generated straight from its zod schema, plus
   hand-written session and perception tools: `create_document`, `open_document`,
   `save_document`, `import_image`, `select_document`, `close_document`, `list_documents`,
   `get_document`, `get_preview`, `get_pixels`, `get_palette`, `get_history`, `undo`, `redo`,
@@ -158,15 +160,31 @@ Client configuration (Claude Desktop, or any `mcpServers` JSON):
   can *see* the art.
 - **4 prompts.** `draw_sprite`, `animate_sprite`, `improve_sprite`, `pixel_art_basics`.
 
-### Three details that matter for agents
+### Four details that matter for agents
 
 1. **`get_preview` returns an actual PNG image**, not a pixel array. A 32x32 sprite is ~10k
    tokens as JSON and ~200 tokens as an image, and the model can actually look at it.
 2. **`apply_ops` batches.** An agent sends a list of commands in one round trip; with
-   `atomic: true` a failure rolls the whole batch back.
+   `atomic: true` a failure rolls the whole batch back. It also takes `defaultLayer` /
+   `defaultFrame` so a long batch does not repeat itself, and `quiet: true` to drop the
+   per-op summaries.
 3. **`expectedVersion` gives optimistic concurrency.** Read a version, pass it back on the
    next write, and a stale edit fails with `version_conflict` instead of clobbering someone
    else's work. Read-only commands never bump the version or eat your redo stack.
+4. **`clip` is the constraint that makes drawing tractable.** `clip: "composite"` paints
+   only where the *other* layers already have pixels, so a shadow, highlight or dither band
+   cannot spill into the transparent corners of its bounding box. `clip: "cel"` clips
+   against the layer being painted. Paired with `scope: "composite"` on `outline` and
+   `measure_region`, it removes the whole class of "must stay inside the silhouette" bugs.
+
+### Commands built for animation
+
+- `translate { layer: "*", dx, dy }` shifts every layer of a frame together and clears the
+  band it vacates. A 3-frame bob used to cost a `copy_region` plus a `clear_region` per
+  layer per frame — 24 operations to say "move it down one".
+- `squash { layer: "*", scaleX, scaleY, pivot: "bottom" }` scales about a pivot with
+  nearest-neighbour sampling, keeping the canvas size so the artwork stays registered.
+  `scaleY: 0.9, scaleX: 1.08` is the down beat of a bounce.
 
 ## For AI agents
 

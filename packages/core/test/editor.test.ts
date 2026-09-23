@@ -189,6 +189,7 @@ describe('command bus', () => {
       opaque: 0,
       bounds: null,
       empty: true,
+      scope: 'cel',
     });
 
     expect(
@@ -204,6 +205,7 @@ describe('command bus', () => {
       opaque: 4,
       bounds: { x: 0, y: 0, w: 2, h: 2 },
       empty: false,
+      scope: 'cel',
     });
   });
 

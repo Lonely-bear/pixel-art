@@ -48,6 +48,9 @@ passes, and look at the result between passes.
 ## 4. Outlines
 
 - \`outline\` with \`mode: "outside"\` adds a contour around the opaque silhouette.
+- By default \`outline\` traces only the layer you name. Pass \`scope: "composite"\` to
+  trace the whole frame as the other layers define it - that is how you get a contour
+  onto its own layer without having to draw the silhouette there too.
 - Selective outlining reads better than a closed contour: outline the bottom and
   sides in a dark version of the local colour, and drop the outline where the light
   hits. There is no single command for that - draw it deliberately, or run
@@ -66,6 +69,12 @@ passes, and look at the result between passes.
   soft-edged shading, but hard-edged ramps are usually better pixel art.
 - Banding is the classic error: two adjacent shades whose boundary is a straight
   line. Break the boundary with single-pixel steps.
+- Keep shading inside the sprite. Pass \`clip: "composite"\` to any draw command and it
+  will only paint where the *other* layers already have pixels, so a shadow ellipse
+  cannot spill into the transparent corners of its bounding box. This is the difference
+  between shading a blob and shading a rectangle that happens to contain a blob.
+- \`clip: "cel"\` clips against the layer you are drawing into, for when you want to
+  repaint or erase existing pixels without touching empty space.
 
 ## 6. Anti-aliasing
 
@@ -86,7 +95,13 @@ passes, and look at the result between passes.
   a \`direction\` of \`forward\`, \`reverse\` or \`pingpong\`. \`pingpong\` halves the
   frames you have to draw for a breathing or idle loop.
 - For a squash-and-stretch or bounce, move the whole silhouette, not individual
-  limbs: \`copy_region\` from the previous frame is often easier than redrawing.
+  limbs. \`translate {layer: "*", dx, dy}\` shifts every layer of the frame together and
+  clears the band it vacates, so a bob costs one operation instead of a copy plus a
+  clear per layer. \`squash {layer: "*", scaleX, scaleY, pivot: "bottom"}\` scales about a
+  pivot with nearest-neighbour sampling and keeps the canvas size, so the artwork stays
+  registered: \`scaleY: 0.9, scaleX: 1.08\` on the down beat, the reverse on the up beat.
+  Pass \`layer: "*"\` so all layers share one pivot - scaling them separately shears the
+  sprite.
 - Check the loop: the last frame should lead back into the first. Look at the
   sprite sheet, not just the individual frames.
 
@@ -111,6 +126,13 @@ passes, and look at the result between passes.
   layer. Prefer names; they survive reordering.
 - Frames are referenced by id or index.
 - Drawing outside the canvas is silently clipped, never an error.
+- \`draw_ellipse\` is **inscribed in its rect** - the ellipse touches all four sides, so
+  \`{x:5, y:8, w:22, h:22}\` is a full circle whose bottom edge is \`y = 29\`. A flat-bottomed
+  dome is not an ellipse: either use an ellipse whose bottom equals the baseline, or cut
+  the bottom off with \`clear_region\`.
+- Shape commands take the colour once. \`draw_pixels\` is the exception: it takes a
+  top-level \`color\` for the whole list *and* a per-pixel \`color\`, and the per-pixel value
+  wins. That is how you draw several colours in one call.
 
 ## 10. Working with a game engine
 

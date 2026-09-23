@@ -22,6 +22,16 @@ export type PaintColor = Color | null;
 export interface DrawOptions extends BlendOptions {
   /** Treat `null` colours as erase rather than as a no-op. Defaults to true. */
   allowErase?: boolean;
+  /**
+   * Paint only where this mask is non-zero. One byte per pixel, row-major, the same
+   * dimensions as the target buffer.
+   *
+   * This is what keeps a shadow or a highlight inside the silhouette: without it an
+   * ellipse meant to darken a blob also paints the transparent corners of its bounding
+   * box, and the only way to avoid that is to hand-place every pixel. See
+   * `maskFromBuffer` and `frameMask`.
+   */
+  mask?: Uint8Array | null;
 }
 
 export interface PixelSpec {
@@ -30,15 +40,57 @@ export interface PixelSpec {
   color: ColorInput | null;
 }
 
-/** Write one pixel. Returns whether the pixel was inside the surface. */
+export interface MaskOptions {
+  /** Pixels with alpha at or above this count as opaque. Defaults to 1. */
+  alphaThreshold?: number;
+}
+
+/** A full-canvas mask with every pixel allowed. */
+export function emptyMask(width: number, height: number): Uint8Array {
+  return new Uint8Array(Math.max(0, width * height));
+}
+
+/** A full-canvas mask with every pixel allowed. */
+export function fullMask(width: number, height: number): Uint8Array {
+  const mask = new Uint8Array(Math.max(0, width * height));
+  mask.fill(1);
+  return mask;
+}
+
+/**
+ * Build a paint mask from a buffer's alpha channel.
+ *
+ * The mask is one byte per pixel rather than a bit, because the extra 3 bytes buy
+ * branch-free indexing and these are small buffers.
+ */
+export function maskFromBuffer(buf: PixelBuffer, opts: MaskOptions = {}): Uint8Array {
+  const threshold = Math.max(1, opts.alphaThreshold ?? 1);
+  const mask = new Uint8Array(buf.width * buf.height);
+  for (let p = 0; p < mask.length; p++) {
+    mask[p] = buf.data[p * 4 + 3] >= threshold ? 1 : 0;
+  }
+  return mask;
+}
+
+/** Intersect two masks. Used to compose a clip with an explicit region. */
+export function maskAnd(a: Uint8Array, b: Uint8Array): Uint8Array {
+  const out = new Uint8Array(Math.min(a.length, b.length));
+  for (let i = 0; i < out.length; i++) out[i] = a[i] && b[i] ? 1 : 0;
+  return out;
+}
+
+/** Write one pixel. Returns whether the pixel was inside the surface and unmasked. */
 export function putPixel(
   buf: PixelBuffer,
   x: number,
   y: number,
   color: PaintColor,
-  opts: BlendOptions = {},
+  opts: DrawOptions = {},
 ): boolean {
   if (x < 0 || y < 0 || x >= buf.width || y >= buf.height) return false;
+  // The mask is checked before anything is written, so a masked pixel costs nothing and
+  // reports "not painted" exactly like an out-of-bounds one.
+  if (opts.mask && opts.mask[y * buf.width + x] === 0) return false;
   const i = buf.index(x, y);
   if (color === null) {
     const d = buf.data;
@@ -419,6 +471,14 @@ export interface OutlineOptions extends DrawOptions {
   /** Include diagonal neighbours. Defaults to false (4-connected). */
   diagonal?: boolean;
   rect?: Rect;
+  /**
+   * Trace this full-canvas mask instead of the buffer's own pixels.
+   *
+   * This is how `outline` contours a whole sprite rather than a single cel: pass the
+   * mask of the composited frame and the outline is written into whichever cel you
+   * asked for, so a contour can live on its own layer.
+   */
+  source?: Uint8Array | null;
 }
 
 /**
@@ -441,9 +501,18 @@ export function outline(
   const mode = opts.mode ?? 'outside';
 
   const mask = new Uint8Array(r.w * r.h);
-  for (let y = 0; y < r.h; y++) {
-    for (let x = 0; x < r.w; x++) {
-      mask[y * r.w + x] = buf.data[buf.index(r.x + x, r.y + y) + 3] > 0 ? 1 : 0;
+  if (opts.source) {
+    const source = opts.source;
+    for (let y = 0; y < r.h; y++) {
+      for (let x = 0; x < r.w; x++) {
+        mask[y * r.w + x] = source[(r.y + y) * buf.width + (r.x + x)] ? 1 : 0;
+      }
+    }
+  } else {
+    for (let y = 0; y < r.h; y++) {
+      for (let x = 0; x < r.w; x++) {
+        mask[y * r.w + x] = buf.data[buf.index(r.x + x, r.y + y) + 3] > 0 ? 1 : 0;
+      }
     }
   }
   const opaqueAt = (x: number, y: number) =>

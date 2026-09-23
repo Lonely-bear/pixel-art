@@ -2,6 +2,7 @@ import { blendInto } from './blend.js';
 import { PixelBuffer } from './buffer.js';
 import { parseColor } from './color.js';
 import { getFrame, type Layer, type Sprite } from './document.js';
+import { maskFromBuffer } from './raster.js';
 import type { ColorInput, FrameId, LayerId } from './types.js';
 
 export interface CompositeOptions {
@@ -85,6 +86,39 @@ export function compositeOnBackground(
   opts: CompositeOptions = {},
 ): PixelBuffer {
   return compositeFrame(sprite, frameId, { ...opts, background });
+}
+
+export interface FrameMaskOptions {
+  /**
+   * Leave this layer out of the composite.
+   *
+   * `clip: 'composite'` means "only where the sprite already has pixels", and when the
+   * command is painting *into* a layer, that layer's own pixels must not count as the
+   * silhouette — otherwise the clip is a no-op and the shape still bleeds outward.
+   */
+  excludeLayerId?: LayerId;
+  /** Alpha at or above this counts as opaque. Defaults to 1. */
+  alphaThreshold?: number;
+  /** Include hidden layers. Defaults to false. */
+  respectVisibility?: boolean;
+}
+
+/**
+ * The opacity mask of a composited frame, one byte per pixel, 1 where opaque.
+ *
+ * This is the silhouette that a `clip: 'composite'` paint is allowed to touch: the shape
+ * the *other* layers define, so a shadow can be drawn into a new layer without spilling
+ * into the transparent corners of its bounding box.
+ */
+export function frameMask(sprite: Sprite, frameId: FrameId, opts: FrameMaskOptions = {}): Uint8Array {
+  const layers = opts.excludeLayerId
+    ? sprite.layers.filter((layer) => layer.id !== opts.excludeLayerId).map((layer) => layer.id)
+    : undefined;
+  const composite = compositeFrame(sprite, frameId, {
+    layers,
+    respectVisibility: opts.respectVisibility ?? true,
+  });
+  return maskFromBuffer(composite, { alphaThreshold: opts.alphaThreshold });
 }
 
 /** Composite then flatten alpha against a colour, producing a fully opaque buffer. */

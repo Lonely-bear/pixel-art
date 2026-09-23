@@ -4,6 +4,8 @@ import type { Sprite } from '../document.js';
 import { resolveFrame, resolveLayer } from '../document.js';
 import type { Draft } from '../draft.js';
 import { DITHER_PATTERNS } from '../dither.js';
+import { maskFromBuffer } from '../raster.js';
+import { frameMask } from '../render.js';
 import type { FrameId, LayerId } from '../types.js';
 
 /**
@@ -114,6 +116,15 @@ export const blendOptionsShape = {
 export type LayerRef = z.infer<typeof layerRefSchema>;
 export type FrameRef = z.infer<typeof frameRefSchema>;
 
+export const clipSchema = z
+  .enum(['none', 'cel', 'composite'])
+  .optional()
+  .describe(
+    'Restrict painting to existing pixels. `cel` = only where this layer already has ' +
+      'pixels; `composite` = only where the rest of the frame does. Use `composite` to ' +
+      'keep a shadow, highlight or dither band inside the sprite silhouette.',
+  );
+
 /* ------------------------------------------------------------------ *
  * Resolution helpers
  * ------------------------------------------------------------------ */
@@ -124,6 +135,32 @@ export function layerIdOf(sprite: Sprite, ref: LayerRef): LayerId {
 
 export function frameIdOf(sprite: Sprite, ref: FrameRef): FrameId {
   return resolveFrame(sprite, ref).id;
+}
+
+/**
+ * Build the mask for a `clip` option, or `undefined` when nothing should be clipped.
+ *
+ * `composite` deliberately *excludes the layer being painted into*. The usual workflow is
+ * a silhouette on the bottom layer and shading on a layer above it; if the target layer
+ * counted towards its own silhouette the clip would be a no-op the moment anything had
+ * been drawn, and the shading would bleed out of the sprite exactly as it does today.
+ * Painting into the same layer you are clipping against is what `clip: 'cel'` is for.
+ */
+export function clipMask(
+  ctx: CommandContext,
+  clip: 'none' | 'cel' | 'composite' | undefined,
+  layerRef: LayerRef,
+  frameRef: FrameRef,
+): Uint8Array | undefined {
+  if (!clip || clip === 'none') return undefined;
+  const layerId = layerIdOf(ctx.sprite, layerRef);
+  const frameId = frameIdOf(ctx.sprite, frameRef);
+  if (clip === 'cel') {
+    const cel = ctx.draft.cel(layerId, frameId, false);
+    // An empty cel has no pixels to clip against, so nothing may be painted.
+    return cel ? maskFromBuffer(cel) : new Uint8Array(ctx.sprite.width * ctx.sprite.height);
+  }
+  return frameMask(ctx.sprite, frameId, { excludeLayerId: layerId });
 }
 
 /**

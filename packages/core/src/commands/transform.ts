@@ -1,18 +1,32 @@
 import { z } from 'zod';
 import { PixelBuffer } from '../buffer.js';
+import { getFrame } from '../document.js';
 import { clearRegion } from '../raster.js';
-import { crop, flipHorizontal, flipVertical, resizeCanvas, rotate90, scaleNearest } from '../transform.js';
+import { compositeFrame } from '../render.js';
+import {
+  crop,
+  flipHorizontal,
+  flipVertical,
+  resizeCanvas,
+  resolvePivot,
+  rotate90,
+  scaleAbout,
+  scaleNearest,
+  translate,
+} from '../transform.js';
 import {
   defineCommand,
   frameIdOf,
   frameRefSchema,
   layerIdOf,
   layerRefSchema,
+  pointSchema,
   rectSchema,
   type FrameRef,
   type LayerRef,
 } from './types.js';
 import type { CommandContext } from './types.js';
+import type { Point } from '../types.js';
 
 /**
  * Whole-canvas transforms.
@@ -162,5 +176,125 @@ export const clearAllCommand = defineCommand({
       }
     }
     return { cels: cleared };
+  },
+});
+
+/* ------------------------------------------------------------------ *
+ * Per-cel motion
+ *
+ * Animating a bob used to mean clearing and redrawing every layer of every
+ * frame: a 1px nudge cost a `copy_region` plus a `clear_region` per cel, and
+ * there was no way to squash at all. These two commands are what make the
+ * skill's own advice ("move the whole silhouette, do not redraw it") followable.
+ * ------------------------------------------------------------------ */
+
+const NAMED_PIVOTS = [
+  'center',
+  'top',
+  'bottom',
+  'left',
+  'right',
+  'top-left',
+  'top-right',
+  'bottom-left',
+  'bottom-right',
+] as const;
+
+const layerOrAllSchema = z
+  .union([layerRefSchema, z.literal('*')])
+  .describe('A layer reference, or `*` for every layer that has a cel on this frame.');
+
+/** The cels a per-cel motion command should touch, restricted to one frame. */
+function frameCels(ctx: CommandContext, layerRef: LayerRef | '*', frameRef: FrameRef): CelTarget[] {
+  const frame = getFrame(ctx.sprite, frameIdOf(ctx.sprite, frameRef));
+  const layerIds =
+    layerRef === '*' ? [...frame.cels.keys()] : [layerIdOf(ctx.sprite, layerRef as LayerRef)];
+  const targets: CelTarget[] = [];
+  for (const layerId of layerIds) {
+    const buffer = frame.cels.get(layerId);
+    if (buffer) targets.push({ frame, layerId, buffer });
+  }
+  return targets;
+}
+
+export const translateCommand = defineCommand({
+  name: 'translate',
+  description:
+    'Shift a cel by whole pixels, clearing the band it vacates. This is how you bob, drift or nudge artwork between frames: one operation instead of a copy plus a clear. Use `layer: "*"` to move every layer of the frame together so the sprite stays registered.',
+  params: z.object({
+    layer: layerOrAllSchema,
+    frame: frameRefSchema,
+    dx: z.number().int().describe('Horizontal shift in pixels. Negative moves left.'),
+    dy: z.number().int().describe('Vertical shift in pixels. Negative moves up.'),
+  }),
+  apply(ctx, p) {
+    const targets = frameCels(ctx, p.layer, p.frame);
+    for (const t of targets) t.frame.cels.set(t.layerId, translate(t.buffer, p.dx, p.dy));
+    return { cels: targets.length, dx: p.dx, dy: p.dy };
+  },
+});
+
+export const squashCommand = defineCommand({
+  name: 'squash',
+  description:
+    'Scale a cel about a pivot with nearest-neighbour sampling, keeping the canvas size so the artwork stays registered to the sprite. Squash and stretch: `scaleY: 0.9, scaleX: 1.08` for the down beat, the reverse for the up beat. The pivot defaults to `bottom`, which is what a bounce or a landing wants.',
+  params: z.object({
+    layer: layerOrAllSchema,
+    frame: frameRefSchema,
+    scaleX: z
+      .number()
+      .positive()
+      .max(8)
+      .optional()
+      .describe('Horizontal factor. 1.08 stretches 8%. Defaults to 1 (unchanged).'),
+    scaleY: z
+      .number()
+      .positive()
+      .max(8)
+      .optional()
+      .describe('Vertical factor. 0.9 squashes 10%. Defaults to 1 (unchanged).'),
+    pivot: z
+      .union([z.enum(NAMED_PIVOTS), pointSchema])
+      .optional()
+      .describe(
+        'Anchor that stays put: a named edge or corner of the artwork, or an explicit `{x, y}` in canvas pixels. Defaults to `bottom`.',
+      ),
+  }),
+  apply(ctx, p) {
+    const scaleX = p.scaleX ?? 1;
+    const scaleY = p.scaleY ?? 1;
+    const targets = frameCels(ctx, p.layer, p.frame);
+    if (targets.length === 0) return { cels: 0, reason: 'no cels on this frame' };
+
+    // With `layer: "*"` every cel must share one pivot, or the layers drift apart
+    // and the sprite shears. The composite is the only frame of reference that is
+    // the same for all of them.
+    const named = typeof p.pivot === 'string' ? p.pivot : null;
+    let shared: Point | null = null;
+    if (named) {
+      const bounds =
+        p.layer === '*'
+          ? compositeFrame(ctx.sprite, frameIdOf(ctx.sprite, p.frame)).opaqueBounds()
+          : targets[0].buffer.opaqueBounds();
+      if (!bounds) return { cels: 0, reason: 'nothing drawn to pivot around' };
+      shared = resolvePivot(named, bounds);
+    }
+    const explicit: Point | null = named ? null : ((p.pivot as Point | undefined) ?? null);
+
+    let done = 0;
+    for (const t of targets) {
+      let pivot: Point | null = explicit;
+      if (!pivot) {
+        const bounds = t.buffer.opaqueBounds();
+        if (!bounds) continue;
+        pivot = shared ?? resolvePivot('bottom', bounds);
+      }
+      t.frame.cels.set(
+        t.layerId,
+        scaleAbout(t.buffer, scaleX, scaleY, { pivotX: pivot.x, pivotY: pivot.y }),
+      );
+      done++;
+    }
+    return { cels: done, scaleX, scaleY, pivot: shared ?? explicit ?? null };
   },
 });

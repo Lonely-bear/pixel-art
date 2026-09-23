@@ -320,6 +320,116 @@ describe('editing', () => {
   });
 });
 
+describe('clip, scope and per-cel motion', () => {
+  beforeEach(async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: {
+        width: 16,
+        height: 16,
+        name: 'Motion',
+        layers: ['base', 'shade'],
+        palette: 'dawnbringer16',
+      },
+    });
+  });
+
+  it('keeps a shape inside the silhouette the other layers define', async () => {
+    // A small body on `base`, then a much larger shape on `shade` that must be
+    // clipped to it. Without `clip` the second call paints all 256 pixels.
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { layer: 'base', rect: { x: 4, y: 4, w: 8, h: 8 }, color: '#346524', fill: true },
+    });
+
+    const clipped = (await client.callTool({
+      name: 'draw_rect',
+      arguments: {
+        layer: 'shade',
+        rect: { x: 0, y: 0, w: 16, h: 16 },
+        color: '#d04648',
+        fill: true,
+        clip: 'composite',
+      },
+    })) as ToolResult;
+
+    expect((payload(clipped).summary as { painted: number }).painted).toBe(64);
+
+    const unclipped = (await client.callTool({
+      name: 'draw_rect',
+      arguments: {
+        layer: 'shade',
+        rect: { x: 0, y: 0, w: 16, h: 16 },
+        color: '#d04648',
+        fill: true,
+        clip: 'none',
+      },
+    })) as ToolResult;
+    expect((payload(unclipped).summary as { painted: number }).painted).toBe(256);
+  });
+
+  it('traces the composite onto a layer of its own', async () => {
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { layer: 'base', rect: { x: 4, y: 4, w: 8, h: 8 }, color: '#346524', fill: true },
+    });
+
+    const result = (await client.callTool({
+      name: 'outline',
+      arguments: { layer: 'shade', color: '#000000', scope: 'composite' },
+    })) as ToolResult;
+    const summary = payload(result).summary as { painted: number; scope: string };
+    expect(summary.scope).toBe('composite');
+    expect(summary.painted).toBe(32);
+
+    const measured = (await client.callTool({
+      name: 'measure_region',
+      arguments: { layer: 'base', scope: 'composite' },
+    })) as ToolResult;
+    const stats = payload(measured).summary as { opaque: number; bounds: unknown };
+    expect(stats.opaque).toBe(96);
+    expect(stats.bounds).toEqual({ x: 3, y: 3, w: 10, h: 10 });
+  });
+
+  it('accepts layer: "*" on translate and squash', async () => {
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { layer: 'base', rect: { x: 4, y: 4, w: 4, h: 4 }, color: '#346524', fill: true },
+    });
+    await client.callTool({
+      name: 'draw_pixels',
+      arguments: { layer: 'shade', pixels: [{ x: 5, y: 5, color: '#d04648' }] },
+    });
+
+    // The `*` literal has to survive the tool-schema rewrite, or the whole point of
+    // moving every layer together is unreachable from MCP.
+    const moved = (await client.callTool({
+      name: 'translate',
+      arguments: { layer: '*', dx: 1, dy: 1 },
+    })) as ToolResult;
+    expect(moved.isError).toBeFalsy();
+    expect((payload(moved).summary as { cels: number }).cels).toBe(2);
+
+    const measured = (await client.callTool({
+      name: 'measure_region',
+      arguments: { layer: 'base' },
+    })) as ToolResult;
+    expect((payload(measured).summary as { bounds: unknown }).bounds).toEqual({
+      x: 5,
+      y: 5,
+      w: 4,
+      h: 4,
+    });
+
+    const squashed = (await client.callTool({
+      name: 'squash',
+      arguments: { layer: '*', scaleY: 0.5, pivot: 'bottom' },
+    })) as ToolResult;
+    expect(squashed.isError).toBeFalsy();
+    expect((payload(squashed).summary as { cels: number }).cels).toBe(2);
+  });
+});
+
 describe('perception', () => {
   it('returns the composited sprite as a real image block', async () => {
     await client.callTool({

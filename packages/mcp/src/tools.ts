@@ -1098,6 +1098,15 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
  * fills in the obvious default (bottom layer, frame 0). Commands that treat
  * `layer`/`frame` as an optional *filter* keep their original meaning.
  */
+/**
+ * Commands whose `layer` also accepts `*` for "every layer on this frame".
+ *
+ * They must keep their original union schema: swapping in a plain `layerRefSchema`
+ * would reject `layer: "*"` with a validation error, and moving every layer together
+ * is the whole point of these two.
+ */
+const ALL_LAYERS_COMMANDS = new Set(['translate', 'squash']);
+
 function registerCommandTool(server: McpServer, store: DocumentStore, command: Command): void {
   const base = command.params as unknown as z.ZodObject<z.ZodRawShape>;
   if (typeof base?.extend !== 'function') return;
@@ -1106,9 +1115,16 @@ function registerCommandTool(server: McpServer, store: DocumentStore, command: C
 
   const shape: Record<string, z.ZodType> = { document: documentRef, expectedVersion: versionRef };
   if (required.has('layer')) {
-    shape.layer = layerRefSchema
-      .optional()
-      .describe('Layer ID, layer name, or 0-based index counting from the bottom. Defaults to the bottom layer.');
+    const original = (base.shape as Record<string, z.ZodType>).layer;
+    if (ALL_LAYERS_COMMANDS.has(command.name) && original) {
+      shape.layer = original
+        .optional()
+        .describe('A layer ID, layer name or 0-based index, or `*` for every layer on the frame. Defaults to the bottom layer.');
+    } else {
+      shape.layer = layerRefSchema
+        .optional()
+        .describe('Layer ID, layer name, or 0-based index counting from the bottom. Defaults to the bottom layer.');
+    }
   }
   if (required.has('frame')) {
     shape.frame = frameRefSchema

@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { blendInto } from '../blend.js';
+import { clipRect, fullRect } from '../geometry.js';
+import { frameMask, compositeFrame } from '../render.js';
 import {
   clearRegion,
   countOpaque,
@@ -17,6 +19,8 @@ import {
 import {
   blendOptionsShape,
   celOf,
+  clipMask,
+  clipSchema,
   colorSchema,
   defineCommand,
   ditherPatternSchema,
@@ -53,11 +57,16 @@ export const drawPixelsCommand = defineCommand({
         }),
       )
       .describe('Sparse pixel list. Only the listed pixels are touched.'),
+    clip: clipSchema,
     ...blendOptionsShape,
   }),
   apply(ctx, p) {
     const buf = celOf(ctx, p.layer, p.frame);
-    const painted = drawPixels(buf, p.pixels, { blend: p.blend, opacity: p.opacity });
+    const painted = drawPixels(buf, p.pixels, {
+      blend: p.blend,
+      opacity: p.opacity,
+      mask: clipMask(ctx, p.clip, p.layer, p.frame),
+    });
     return {
       layer: layerIdOf(ctx.sprite, p.layer),
       frame: frameIdOf(ctx.sprite, p.frame),
@@ -78,6 +87,7 @@ export const drawLineCommand = defineCommand({
     from: pointSchema.describe('Start pixel, inclusive.'),
     to: pointSchema.describe('End pixel, inclusive.'),
     color: nullableColorSchema,
+    clip: clipSchema,
     ...blendOptionsShape,
   }),
   apply(ctx, p) {
@@ -85,6 +95,7 @@ export const drawLineCommand = defineCommand({
     const painted = drawLine(buf, p.from.x, p.from.y, p.to.x, p.to.y, p.color, {
       blend: p.blend,
       opacity: p.opacity,
+      mask: clipMask(ctx, p.clip, p.layer, p.frame),
     });
     return { painted };
   },
@@ -100,6 +111,7 @@ export const drawRectCommand = defineCommand({
     rect: rectSchema,
     color: nullableColorSchema,
     fill: z.boolean().optional().describe('Fill the interior. Defaults to false (border only).'),
+    clip: clipSchema,
     ...blendOptionsShape,
   }),
   apply(ctx, p) {
@@ -108,6 +120,7 @@ export const drawRectCommand = defineCommand({
       fill: p.fill,
       blend: p.blend,
       opacity: p.opacity,
+      mask: clipMask(ctx, p.clip, p.layer, p.frame),
     });
     return { painted };
   },
@@ -123,6 +136,7 @@ export const drawEllipseCommand = defineCommand({
     rect: rectSchema.describe('Bounding box the ellipse is inscribed in.'),
     color: nullableColorSchema,
     fill: z.boolean().optional(),
+    clip: clipSchema,
     ...blendOptionsShape,
   }),
   apply(ctx, p) {
@@ -131,6 +145,7 @@ export const drawEllipseCommand = defineCommand({
       fill: p.fill,
       blend: p.blend,
       opacity: p.opacity,
+      mask: clipMask(ctx, p.clip, p.layer, p.frame),
     });
     return { painted };
   },
@@ -146,6 +161,7 @@ export const drawPolygonCommand = defineCommand({
     points: z.array(pointSchema).min(2).describe('Vertices in order; the path closes automatically.'),
     color: nullableColorSchema,
     fill: z.boolean().optional(),
+    clip: clipSchema,
     ...blendOptionsShape,
   }),
   apply(ctx, p) {
@@ -154,6 +170,7 @@ export const drawPolygonCommand = defineCommand({
       fill: p.fill,
       blend: p.blend,
       opacity: p.opacity,
+      mask: clipMask(ctx, p.clip, p.layer, p.frame),
     });
     return { painted };
   },
@@ -172,6 +189,7 @@ export const fillCommand = defineCommand({
     tolerance: z.number().min(0).max(255).optional().describe('Per-channel tolerance. Defaults to 0 (exact match).'),
     contiguous: z.boolean().optional().describe('Defaults to true.'),
     rect: rectSchema.optional().describe('Constrain the fill to this rect.'),
+    clip: clipSchema,
     ...blendOptionsShape,
   }),
   apply(ctx, p) {
@@ -182,6 +200,7 @@ export const fillCommand = defineCommand({
       rect: p.rect,
       blend: p.blend,
       opacity: p.opacity,
+      mask: clipMask(ctx, p.clip, p.layer, p.frame),
     });
     return { painted };
   },
@@ -198,6 +217,7 @@ export const ditherFillCommand = defineCommand({
     color: nullableColorSchema,
     pattern: ditherPatternSchema.describe('Named dither pattern.'),
     level: z.number().min(0).max(1).optional().describe('Coverage 0-1. Defaults to 0.5.'),
+    clip: clipSchema,
     ...blendOptionsShape,
   }),
   apply(ctx, p) {
@@ -207,6 +227,7 @@ export const ditherFillCommand = defineCommand({
       level: p.level,
       blend: p.blend,
       opacity: p.opacity,
+      mask: clipMask(ctx, p.clip, p.layer, p.frame),
     });
     return { painted, pattern: p.pattern, level: p.level ?? 0.5 };
   },
@@ -215,26 +236,36 @@ export const ditherFillCommand = defineCommand({
 export const outlineCommand = defineCommand({
   name: 'outline',
   description:
-    'Trace the silhouette of everything already drawn on the cel. `outside` grows the shape (the usual pixel art outline), `inside` eats into it, `both` does both.',
+    'Trace a silhouette. `scope: "cel"` (default) traces what is already drawn on this layer; `scope: "composite"` traces the whole frame as the other layers define it, so a contour can be drawn onto its own layer. `outside` grows the shape (the usual pixel art outline), `inside` eats into it, `both` does both.',
   params: z.object({
     layer: layerRefSchema,
     frame: frameRefSchema,
     color: nullableColorSchema,
+    scope: z
+      .enum(['cel', 'composite'])
+      .optional()
+      .describe('What to trace: this layer (`cel`, default) or the whole frame (`composite`).'),
     mode: z.enum(['outside', 'inside', 'both']).optional().describe('Defaults to `outside`.'),
     diagonal: z.boolean().optional().describe('Use 8-connected neighbours. Defaults to false.'),
     rect: rectSchema.optional().describe('Limit outlining to this rect.'),
+    clip: clipSchema,
     ...blendOptionsShape,
   }),
   apply(ctx, p) {
     const buf = celOf(ctx, p.layer, p.frame);
+    const frameId = frameIdOf(ctx.sprite, p.frame);
+    const source =
+      p.scope === 'composite' ? frameMask(ctx.sprite, frameId, { excludeLayerId: layerIdOf(ctx.sprite, p.layer) }) : null;
     const painted = outline(buf, p.color, {
       mode: p.mode,
       diagonal: p.diagonal,
       rect: p.rect,
+      source,
       blend: p.blend,
       opacity: p.opacity,
+      mask: clipMask(ctx, p.clip, p.layer, p.frame),
     });
-    return { painted };
+    return { painted, scope: p.scope ?? 'cel' };
   },
 });
 
@@ -249,6 +280,7 @@ export const replaceColorCommand = defineCommand({
     to: nullableColorSchema.describe('Replacement colour, or null to erase.'),
     rect: rectSchema.optional(),
     tolerance: z.number().min(0).max(255).optional(),
+    clip: clipSchema,
     ...blendOptionsShape,
   }),
   apply(ctx, p) {
@@ -258,6 +290,7 @@ export const replaceColorCommand = defineCommand({
       tolerance: p.tolerance,
       blend: p.blend,
       opacity: p.opacity,
+      mask: clipMask(ctx, p.clip, p.layer, p.frame),
     });
     return { painted };
   },
@@ -270,10 +303,27 @@ export const clearRegionCommand = defineCommand({
     layer: layerRefSchema,
     frame: frameRefSchema,
     rect: rectSchema.optional().describe('Omit to clear the entire cel.'),
+    clip: clipSchema,
   }),
   apply(ctx, p) {
     const buf = celOf(ctx, p.layer, p.frame);
-    const cleared = clearRegion(buf, p.rect);
+    const mask = clipMask(ctx, p.clip, p.layer, p.frame);
+    if (!mask) return { cleared: clearRegion(buf, p.rect) };
+    // Erasing is a write like any other, so it respects the clip too.
+    let cleared = 0;
+    const rect = p.rect ? clipRect(p.rect, buf.width, buf.height) : fullRect(buf.width, buf.height);
+    for (let y = rect.y; y < rect.y + rect.h; y++) {
+      for (let x = rect.x; x < rect.x + rect.w; x++) {
+        if (mask[y * buf.width + x] === 0) continue;
+        const i = buf.index(x, y);
+        if (buf.data[i + 3] === 0 && buf.data[i] === 0 && buf.data[i + 1] === 0 && buf.data[i + 2] === 0) continue;
+        buf.data[i] = 0;
+        buf.data[i + 1] = 0;
+        buf.data[i + 2] = 0;
+        buf.data[i + 3] = 0;
+        cleared++;
+      }
+    }
     return { cleared };
   },
 });
@@ -332,20 +382,35 @@ export const copyRegionCommand = defineCommand({
 export const measureRegionCommand = defineCommand({
   name: 'measure_region',
   description:
-    'Read-only statistics for a cel: opaque pixel count and the tight bounding box of the artwork. Use this to verify a drawing without fetching the image.',
+    'Read-only statistics: opaque pixel count and the tight bounding box of the artwork. `scope: "cel"` (default) measures this layer; `scope: "composite"` measures the whole frame as it renders. Use this to verify a drawing without fetching the image.',
   readOnly: true,
   params: z.object({
     layer: layerRefSchema,
     frame: frameRefSchema,
     rect: rectSchema.optional(),
+    scope: z
+      .enum(['cel', 'composite'])
+      .optional()
+      .describe('Measure this layer (`cel`, default) or the whole frame (`composite`).'),
   }),
   apply(ctx, p) {
+    if (p.scope === 'composite') {
+      const frameId = frameIdOf(ctx.sprite, p.frame);
+      const buf = compositeFrame(ctx.sprite, frameId);
+      return {
+        opaque: countOpaque(buf, p.rect),
+        bounds: buf.opaqueBounds(),
+        empty: buf.isEmpty(),
+        scope: 'composite',
+      };
+    }
     const buf = celOf(ctx, p.layer, p.frame, false);
-    if (!buf) return { opaque: 0, bounds: null, empty: true };
+    if (!buf) return { opaque: 0, bounds: null, empty: true, scope: 'cel' };
     return {
       opaque: countOpaque(buf, p.rect),
       bounds: buf.opaqueBounds(),
       empty: buf.isEmpty(),
+      scope: 'cel',
     };
   },
 });
