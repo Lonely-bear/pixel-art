@@ -14,7 +14,6 @@ import {
 } from '../tilemap.js';
 import {
   celOf,
-  clipSchema,
   defineCommand,
   frameRefSchema,
   layerRefSchema,
@@ -284,7 +283,6 @@ export const paintTilemapCommand = defineCommand({
     offsetX: z.number().int().optional().describe('Pixel offset. Defaults to 0.'),
     offsetY: z.number().int().optional().describe('Pixel offset. Defaults to 0.'),
     replaceEmpty: z.number().int().optional().describe('Tile index to stamp where the map is empty. Defaults to skipping them.'),
-    clip: clipSchema,
   }),
   apply(ctx, p) {
     const tilemap = resolveTilemap(ctx.sprite, p.tilemap);
