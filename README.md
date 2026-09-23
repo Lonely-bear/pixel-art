@@ -160,7 +160,7 @@ Client configuration (Claude Desktop, or any `mcpServers` JSON):
   can *see* the art.
 - **4 prompts.** `draw_sprite`, `animate_sprite`, `improve_sprite`, `pixel_art_basics`.
 
-### Four details that matter for agents
+### Five details that matter for agents
 
 1. **`get_preview` returns an actual PNG image**, not a pixel array. A 32x32 sprite is ~10k
    tokens as JSON and ~200 tokens as an image, and the model can actually look at it.
@@ -176,6 +176,11 @@ Client configuration (Claude Desktop, or any `mcpServers` JSON):
    cannot spill into the transparent corners of its bounding box. `clip: "cel"` clips
    against the layer being painted. Paired with `scope: "composite"` on `outline` and
    `measure_region`, it removes the whole class of "must stay inside the silhouette" bugs.
+5. **Dithering is a write rule, not a special command.** `dither_fill` takes a `shape`
+   (`{rect}`, `{ellipse}` or `{polygon}`) so a transition band can follow a curve instead of
+   being a box, and every paint command (`draw_rect`, `draw_ellipse`, `draw_polygon`,
+   `draw_line`, `fill`, `draw_pixels`) also accepts `pattern` and `level`. A dithered shape
+   lands on exactly the pixels a solid one would, and it composes with `clip`.
 
 ### Commands built for animation
 

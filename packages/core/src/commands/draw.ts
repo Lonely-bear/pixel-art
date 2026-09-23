@@ -10,8 +10,8 @@ import {
   drawPolygon,
   drawPixels,
   drawRect,
-  ditherFill,
   extractRegion,
+  fillShape,
   floodFill,
   outline,
   replaceColor,
@@ -23,6 +23,7 @@ import {
   clipSchema,
   colorSchema,
   defineCommand,
+  ditherOptionsShape,
   ditherPatternSchema,
   frameIdOf,
   frameRefSchema,
@@ -31,6 +32,8 @@ import {
   nullableColorSchema,
   pointSchema,
   rectSchema,
+  shapeSchema,
+  toShapeSpec,
 } from './types.js';
 
 /**
@@ -62,6 +65,7 @@ export const drawPixelsCommand = defineCommand({
       )
       .describe('Sparse pixel list. Only the listed pixels are touched.'),
     clip: clipSchema,
+    ...ditherOptionsShape,
     ...blendOptionsShape,
   }),
   apply(ctx, p) {
@@ -69,6 +73,8 @@ export const drawPixelsCommand = defineCommand({
     const painted = drawPixels(buf, p.pixels, {
       blend: p.blend,
       opacity: p.opacity,
+      pattern: p.pattern as never,
+      level: p.level,
       mask: clipMask(ctx, p.clip, p.layer, p.frame),
     });
     return {
@@ -92,6 +98,7 @@ export const drawLineCommand = defineCommand({
     to: pointSchema.describe('End pixel, inclusive.'),
     color: nullableColorSchema,
     clip: clipSchema,
+    ...ditherOptionsShape,
     ...blendOptionsShape,
   }),
   apply(ctx, p) {
@@ -99,6 +106,8 @@ export const drawLineCommand = defineCommand({
     const painted = drawLine(buf, p.from.x, p.from.y, p.to.x, p.to.y, p.color, {
       blend: p.blend,
       opacity: p.opacity,
+      pattern: p.pattern as never,
+      level: p.level,
       mask: clipMask(ctx, p.clip, p.layer, p.frame),
     });
     return { painted };
@@ -116,6 +125,7 @@ export const drawRectCommand = defineCommand({
     color: nullableColorSchema,
     fill: z.boolean().optional().describe('Fill the interior. Defaults to false (border only).'),
     clip: clipSchema,
+    ...ditherOptionsShape,
     ...blendOptionsShape,
   }),
   apply(ctx, p) {
@@ -124,6 +134,8 @@ export const drawRectCommand = defineCommand({
       fill: p.fill,
       blend: p.blend,
       opacity: p.opacity,
+      pattern: p.pattern as never,
+      level: p.level,
       mask: clipMask(ctx, p.clip, p.layer, p.frame),
     });
     return { painted };
@@ -141,6 +153,7 @@ export const drawEllipseCommand = defineCommand({
     color: nullableColorSchema,
     fill: z.boolean().optional(),
     clip: clipSchema,
+    ...ditherOptionsShape,
     ...blendOptionsShape,
   }),
   apply(ctx, p) {
@@ -149,6 +162,8 @@ export const drawEllipseCommand = defineCommand({
       fill: p.fill,
       blend: p.blend,
       opacity: p.opacity,
+      pattern: p.pattern as never,
+      level: p.level,
       mask: clipMask(ctx, p.clip, p.layer, p.frame),
     });
     return { painted };
@@ -166,6 +181,7 @@ export const drawPolygonCommand = defineCommand({
     color: nullableColorSchema,
     fill: z.boolean().optional(),
     clip: clipSchema,
+    ...ditherOptionsShape,
     ...blendOptionsShape,
   }),
   apply(ctx, p) {
@@ -174,6 +190,8 @@ export const drawPolygonCommand = defineCommand({
       fill: p.fill,
       blend: p.blend,
       opacity: p.opacity,
+      pattern: p.pattern as never,
+      level: p.level,
       mask: clipMask(ctx, p.clip, p.layer, p.frame),
     });
     return { painted };
@@ -194,6 +212,7 @@ export const fillCommand = defineCommand({
     contiguous: z.boolean().optional().describe('Defaults to true.'),
     rect: rectSchema.optional().describe('Constrain the fill to this rect.'),
     clip: clipSchema,
+    ...ditherOptionsShape,
     ...blendOptionsShape,
   }),
   apply(ctx, p) {
@@ -204,6 +223,8 @@ export const fillCommand = defineCommand({
       rect: p.rect,
       blend: p.blend,
       opacity: p.opacity,
+      pattern: p.pattern as never,
+      level: p.level,
       mask: clipMask(ctx, p.clip, p.layer, p.frame),
     });
     return { painted };
@@ -213,11 +234,12 @@ export const fillCommand = defineCommand({
 export const ditherFillCommand = defineCommand({
   name: 'dither_fill',
   description:
-    'Fill a rect with a named dither pattern. This is the intended way to shade: pick a pattern such as `bayer4` or `checker` and a coverage level instead of emitting individual pixels. Patterns: checker, checker-inv, bayer4, bayer8, dots, sparse, dense, horizontal, vertical, diagonal.',
+    'Fill a region with a named dither pattern. This is the intended way to shade: pick a pattern such as `bayer4` or `checker` and a coverage level instead of emitting individual pixels. Pass `shape: {ellipse}` or `shape: {polygon}` when the band should follow a curve; a plain `rect` (or nothing, for the whole cel) fills a box. Patterns: checker, checker-inv, bayer4, bayer8, dots, sparse, dense, horizontal, vertical, diagonal.',
   params: z.object({
     layer: layerRefSchema,
     frame: frameRefSchema,
-    rect: rectSchema,
+    rect: rectSchema.optional().describe('Fill this rect. Omit when using `shape`, or to fill the whole cel.'),
+    shape: shapeSchema.optional(),
     color: nullableColorSchema,
     pattern: ditherPatternSchema.describe('Named dither pattern.'),
     level: z.number().min(0).max(1).optional().describe('Coverage 0-1. Defaults to 0.5.'),
@@ -226,14 +248,17 @@ export const ditherFillCommand = defineCommand({
   }),
   apply(ctx, p) {
     const buf = celOf(ctx, p.layer, p.frame);
-    const painted = ditherFill(buf, p.rect, p.color, {
+    const shape = p.shape
+      ? toShapeSpec(p.shape)
+      : ({ kind: 'rect', rect: p.rect ?? fullRect(buf.width, buf.height) } as const);
+    const painted = fillShape(buf, shape, p.color, {
       pattern: p.pattern as never,
       level: p.level,
       blend: p.blend,
       opacity: p.opacity,
       mask: clipMask(ctx, p.clip, p.layer, p.frame),
     });
-    return { painted, pattern: p.pattern, level: p.level ?? 0.5 };
+    return { painted, pattern: p.pattern, level: p.level ?? 0.5, kind: shape.kind };
   },
 });
 

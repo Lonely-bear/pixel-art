@@ -4,7 +4,7 @@ import type { Sprite } from '../document.js';
 import { resolveFrame, resolveLayer } from '../document.js';
 import type { Draft } from '../draft.js';
 import { DITHER_PATTERNS } from '../dither.js';
-import { maskFromBuffer } from '../raster.js';
+import { maskFromBuffer, type ShapeSpec } from '../raster.js';
 import { frameMask } from '../render.js';
 import type { FrameId, LayerId } from '../types.js';
 
@@ -124,6 +124,39 @@ export const clipSchema = z
       'pixels; `composite` = only where the rest of the frame does. Use `composite` to ' +
       'keep a shadow, highlight or dither band inside the sprite silhouette.',
   );
+
+export const shapeSchema = z
+  .union([
+    z.object({ rect: rectSchema }).strict(),
+    z.object({ ellipse: rectSchema }).strict(),
+    z.object({ polygon: z.array(pointSchema).min(3) }).strict(),
+  ])
+  .describe(
+    'A region: `{rect}`, `{ellipse}` or `{polygon}`. Use `ellipse` or `polygon` for a ' +
+      'dithered band that follows a curve instead of a box.',
+  );
+
+export type ShapeRef = z.infer<typeof shapeSchema>;
+
+/** Turn the wire form of a shape into the rasteriser's `ShapeSpec`. */
+export function toShapeSpec(shape: ShapeRef): ShapeSpec {
+  if ('rect' in shape) return { kind: 'rect', rect: shape.rect };
+  if ('ellipse' in shape) return { kind: 'ellipse', rect: shape.ellipse };
+  return { kind: 'polygon', points: shape.polygon };
+}
+
+/**
+ * Optional stipple parameters, spread into any paint command.
+ *
+ * Dithering is handled inside `putPixel`, so adding these two keys is all a command needs
+ * to gain dithered fills for every shape it can draw.
+ */
+export const ditherOptionsShape = {
+  pattern: ditherPatternSchema
+    .optional()
+    .describe('Stipple the paint with this pattern instead of laying it down solid.'),
+  level: z.number().min(0).max(1).optional().describe('Coverage for `pattern`, 0-1. Defaults to 0.5.'),
+};
 
 /* ------------------------------------------------------------------ *
  * Resolution helpers

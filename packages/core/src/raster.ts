@@ -32,6 +32,16 @@ export interface DrawOptions extends BlendOptions {
    * `maskFromBuffer` and `frameMask`.
    */
   mask?: Uint8Array | null;
+  /**
+   * Stipple every write with this dither pattern instead of laying paint down solid.
+   *
+   * Applying it in `putPixel` rather than in each fill routine means a dithered
+   * rectangle, ellipse, polygon, line and bucket fill all come out of the same rule,
+   * and a dithered shape lands on exactly the pixels a solid one would.
+   */
+  pattern?: DitherPattern;
+  /** Coverage for `pattern`, 0-1. Defaults to 0.5. */
+  level?: number;
 }
 
 export interface PixelSpec {
@@ -91,6 +101,9 @@ export function putPixel(
   // The mask is checked before anything is written, so a masked pixel costs nothing and
   // reports "not painted" exactly like an out-of-bounds one.
   if (opts.mask && opts.mask[y * buf.width + x] === 0) return false;
+  // Dithering is a write rule too, so it lives here with the mask rather than in each
+  // shape routine.
+  if (opts.pattern && !ditherMask(opts.pattern, x, y, opts.level ?? 0.5)) return false;
   const i = buf.index(x, y);
   if (color === null) {
     const d = buf.data;
@@ -434,6 +447,64 @@ export function floodFill(
   }
 }
 
+/** A region to paint: a rectangle, an ellipse, or a closed polygon. */
+export type ShapeSpec =
+  | { kind: 'rect'; rect: Rect }
+  | { kind: 'ellipse'; rect: Rect }
+  | { kind: 'polygon'; points: readonly Point[] };
+
+/**
+ * The pixels a shape covers, as a full-canvas mask.
+ *
+ * Ellipses and polygons are rasterised by running the very same `drawEllipse` /
+ * `drawPolygon` routines the draw commands use, into a scratch buffer. Re-deriving the
+ * geometry here would risk a dithered shape landing on a different set of pixels than a
+ * solid one drawn with the same coordinates, which is exactly the kind of drift that is
+ * impossible to debug from a screenshot.
+ */
+export function shapeMask(shape: ShapeSpec, width: number, height: number): Uint8Array {
+  if (shape.kind === 'rect') {
+    const mask = new Uint8Array(width * height);
+    const r = clipRect(shape.rect, width, height);
+    for (let y = r.y; y < r.y + r.h; y++) {
+      mask.fill(1, y * width + r.x, y * width + r.x + r.w);
+    }
+    return mask;
+  }
+  const scratch = new PixelBuffer(width, height);
+  if (shape.kind === 'ellipse') {
+    drawEllipse(scratch, shape.rect, '#ffffff', { fill: true });
+  } else {
+    drawPolygon(scratch, shape.points, '#ffffff', { fill: true });
+  }
+  return maskFromBuffer(scratch);
+}
+
+/**
+ * Fill an arbitrary shape.
+ *
+ * `mask` and `pattern` are handled inside `putPixel`, so they compose with the shape
+ * rather than competing with it: a dithered ellipse clipped to a silhouette is one call.
+ */
+export function fillShape(
+  buf: PixelBuffer,
+  shape: ShapeSpec,
+  color: ColorInput | null,
+  opts: DrawOptions = {},
+): number {
+  const c = color === null ? null : parseColor(color);
+  const covered = shapeMask(shape, buf.width, buf.height);
+  let painted = 0;
+  for (let y = 0; y < buf.height; y++) {
+    const row = y * buf.width;
+    for (let x = 0; x < buf.width; x++) {
+      if (covered[row + x] === 0) continue;
+      if (putPixel(buf, x, y, c, opts)) painted++;
+    }
+  }
+  return painted;
+}
+
 export interface DitherFillOptions extends DrawOptions {
   pattern: DitherPattern;
   /** Coverage 0-1. Defaults to 0.5. */
@@ -452,17 +523,7 @@ export function ditherFill(
   color: ColorInput | null,
   opts: DitherFillOptions,
 ): number {
-  const c = color === null ? null : parseColor(color);
-  const r = clipRect(rect, buf.width, buf.height);
-  const level = opts.level ?? 0.5;
-  let painted = 0;
-  for (let y = r.y; y < r.y + r.h; y++) {
-    for (let x = r.x; x < r.x + r.w; x++) {
-      if (!ditherMask(opts.pattern, x, y, level)) continue;
-      if (putPixel(buf, x, y, c, opts)) painted++;
-    }
-  }
-  return painted;
+  return fillShape(buf, { kind: 'rect', rect }, color, opts);
 }
 
 export interface OutlineOptions extends DrawOptions {

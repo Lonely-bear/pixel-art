@@ -75,6 +75,12 @@ passes, and look at the result between passes.
   between shading a blob and shading a rectangle that happens to contain a blob.
 - \`clip: "cel"\` clips against the layer you are drawing into, for when you want to
   repaint or erase existing pixels without touching empty space.
+- A dithered transition band can follow a curve. \`dither_fill\` takes a \`shape\` -
+  \`{ellipse: rect}\` or \`{polygon: [points]}\` - as well as a \`rect\`, so the band between
+  two shades can trace the boundary instead of being a box. Omit both to stipple the
+  whole cel. Every paint command (\`draw_rect\`, \`draw_ellipse\`, \`draw_polygon\`,
+  \`draw_line\`, \`fill\`, \`draw_pixels\`) also takes \`pattern\` and \`level\` directly, so a
+  dithered shape is one call and lands on exactly the pixels a solid one would.
 
 ## 6. Anti-aliasing
 
