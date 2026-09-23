@@ -23,6 +23,8 @@ import type {
   AnimationSequenceInfo,
   HistoryEntry,
   Rgba as Color,
+  TilemapInfo,
+  TilesetInfo,
   ToolId,
 } from '../shared/types.js';
 import { api } from './api.js';
@@ -87,6 +89,12 @@ export interface EditorValue {
   onionAfter: number;
   setOnionAfter(count: number): void;
   sequence: AnimationSequenceInfo | null;
+  tilesetInfo: TilesetInfo | null;
+  tilemapData: TilemapInfo | null;
+  tilemapRef: string | null;
+  setTilemapRef(ref: string | null): void;
+  activeTile: number;
+  setActiveTile(index: number): void;
   exportGif(tag?: string): Promise<void>;
   exportTiled(): Promise<void>;
   importImage(): Promise<void>;
@@ -136,6 +144,13 @@ export function EditorProvider({ children }: { children: ReactNode }): ReactNode
   const [onionAfter, setOnionAfter] = useState(0);
   const [sequence, setSequence] = useState<AnimationSequenceInfo | null>(null);
   const playIndexRef = useRef(0);
+
+  // Tilemap editing. The tileset image and the raw cell indices are not part of
+  // the document summary, so they come from their own calls.
+  const [tilesetInfo, setTilesetInfo] = useState<TilesetInfo | null>(null);
+  const [tilemapData, setTilemapData] = useState<TilemapInfo | null>(null);
+  const [tilemapRef, setTilemapRef] = useState<string | null>(null);
+  const [activeTile, setActiveTile] = useState(0);
 
   const activeIdRef = useRef<string | undefined>(undefined);
   const frameIdRef = useRef<string | null>(null);
@@ -302,6 +317,44 @@ export function EditorProvider({ children }: { children: ReactNode }): ReactNode
       window.clearTimeout(timer);
     };
   }, [playing, sequence, playSpeed]);
+
+  // Keep the tileset and the selected tilemap in step with the document. Both
+  // effects key off `detail`, which `refresh()` bumps after every command, so an
+  // edit anywhere re-reads them.
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    void api
+      .tilesetInfo(activeIdRef.current)
+      .then((next) => {
+        if (!cancelled) setTilesetInfo(next);
+      })
+      .catch(() => {
+        if (!cancelled) setTilesetInfo(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, detail]);
+
+  useEffect(() => {
+    if (!ready || !tilemapRef) {
+      setTilemapData(null);
+      return;
+    }
+    let cancelled = false;
+    void api
+      .tilemapData(activeIdRef.current, tilemapRef)
+      .then((next) => {
+        if (!cancelled) setTilemapData(next);
+      })
+      .catch(() => {
+        if (!cancelled) setTilemapData(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, detail, tilemapRef]);
 
   const refreshHistory = useCallback(async () => {
     try {
@@ -496,6 +549,12 @@ export function EditorProvider({ children }: { children: ReactNode }): ReactNode
     onionAfter,
     setOnionAfter,
     sequence,
+    tilesetInfo,
+    tilemapData,
+    tilemapRef,
+    setTilemapRef,
+    activeTile,
+    setActiveTile,
     exportGif,
     exportTiled,
     importImage,

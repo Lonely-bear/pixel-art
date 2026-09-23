@@ -8,6 +8,7 @@ import { LayersPanel } from './components/LayersPanel.js';
 import { FramesPanel } from './components/FramesPanel.js';
 import { HistoryPanel, PalettePanel } from './components/PalettePanel.js';
 import { StatusBar } from './components/StatusBar.js';
+import { TilemapPanel } from './components/TilemapPanel.js';
 
 const TOOL_KEYS: Record<string, string> = {
   b: 'pencil',
@@ -97,6 +98,7 @@ export function App(): React.ReactNode {
           </main>
           <aside className="sidebar">
             <LayersPanel />
+            <TilemapPanel />
             <PalettePanel />
             <HistoryPanel />
           </aside>

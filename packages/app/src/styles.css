@@ -728,3 +728,16 @@ code {
   border-color: var(--accent);
   color: #fff;
 }
+
+/* Tilemap editor: both canvases are pixel art, so never smooth them. */
+.tileset-preview,
+.tilemap-grid {
+  display: block;
+  max-width: 100%;
+  image-rendering: pixelated;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin: 6px 0;
+  cursor: crosshair;
+}
