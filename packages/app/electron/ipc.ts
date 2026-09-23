@@ -9,14 +9,17 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { BrowserWindow, dialog, ipcMain } from 'electron';
 import {
+  animationSequence,
   buildSpritesheet,
   deserializeSprite,
+  encodeGIF,
   encodePNG,
   scaleAtlas,
   scaleNearest,
   serializeSprite,
   spriteFromPng,
   toAsepriteJson,
+  toTiledJson,
 } from '@pixel/core';
 import { CHANNELS, type DocumentSummary, type PreviewRequest } from '../shared/types.js';
 import {
@@ -216,6 +219,68 @@ export function registerIpc(getMcpStatus: () => unknown): void {
       JSON.stringify(toAsepriteJson(sprite, sheet, path.basename(picked.filePath)), null, 2),
     );
     return { path: picked.filePath, json: jsonPath, width: sheet.width, height: sheet.height };
+  });
+
+  ipcMain.handle(
+    CHANNELS.exportGif,
+    async (
+      _event,
+      id: string | undefined,
+      options: { tag?: string | number; scale?: number; background?: string | null; loop?: boolean } = {},
+    ) => {
+      const doc = store.require(id);
+      const picked = await dialog.showSaveDialog(focusedWindow()!, {
+        title: 'Export GIF',
+        defaultPath: `${doc.name}.gif`,
+        filters: [{ name: 'Animated GIF', extensions: ['gif'] }],
+      });
+      if (picked.canceled || !picked.filePath) return null;
+      const sprite = doc.editor.sprite;
+      const scale = Math.max(1, Math.floor(options.scale ?? 1));
+      // The frame order comes from the tag, through the same `animationSequence`
+      // the preview uses, so what you see playing is what gets written.
+      const bytes = encodeGIF(sprite, {
+        tag: options.tag,
+        scale,
+        background: options.background ?? null,
+        loop: options.loop,
+      });
+      await ensureDir(picked.filePath);
+      await writeFile(picked.filePath, bytes);
+      const sequence = animationSequence(sprite, options.tag);
+      return {
+        path: picked.filePath,
+        width: sprite.width * scale,
+        height: sprite.height * scale,
+        frames: sequence.frames.length,
+      };
+    },
+  );
+
+  ipcMain.handle(CHANNELS.exportTiled, async (_event, id: string | undefined) => {
+    const doc = store.require(id);
+    const sprite = doc.editor.sprite;
+    if (!sprite.tileset) throw new Error('This document has no tileset. Run `create_tileset` first.');
+    const tilemaps = sprite.tilemaps ?? [];
+    if (tilemaps.length === 0) throw new Error('This document has no tilemaps. Run `add_tilemap` first.');
+
+    const picked = await dialog.showSaveDialog(focusedWindow()!, {
+      title: 'Export Tiled map',
+      defaultPath: `${doc.name}.tmj`,
+      filters: [{ name: 'Tiled map', extensions: ['tmj', 'json'] }],
+    });
+    if (picked.canceled || !picked.filePath) return null;
+
+    const map = toTiledJson(sprite.tileset, tilemaps, { image: 'tileset.png' });
+    await ensureDir(picked.filePath);
+    await writeFile(picked.filePath, JSON.stringify(map, null, 2));
+    return {
+      path: picked.filePath,
+      width: map.width,
+      height: map.height,
+      tiles: map.tilesets[0]?.tilecount ?? 0,
+      layers: map.layers.map((layer) => layer.name),
+    };
   });
 
   ipcMain.handle(CHANNELS.importImage, async () => {

@@ -73,6 +73,8 @@ export interface EditorValue {
   saveFile(forceDialog?: boolean): Promise<void>;
   exportPng(scale: number): Promise<void>;
   exportSheet(): Promise<void>;
+  exportGif(tag?: string): Promise<void>;
+  exportTiled(): Promise<void>;
   importImage(): Promise<void>;
   createDocument(options: Record<string, unknown>): Promise<void>;
   selectDocument(id: string): Promise<void>;
@@ -309,6 +311,18 @@ export function EditorProvider({ children }: { children: ReactNode }): ReactNode
     if (result) setNotice({ kind: 'info', text: `Exported ${result.path} + ${result.json}` });
   }, []);
 
+  const exportGif = useCallback(async (tag?: string) => {
+    // The tag decides the frame order, through the same sequence the GIF writer
+    // uses, so the export matches whatever was playing on the canvas.
+    const result = await api.exportGif(activeIdRef.current, { tag, scale: 1 });
+    if (result) setNotice({ kind: 'info', text: `Exported ${result.path} (${result.frames} frames)` });
+  }, []);
+
+  const exportTiled = useCallback(async () => {
+    const result = await api.exportTiled(activeIdRef.current, {});
+    if (result) setNotice({ kind: 'info', text: `Exported ${result.path}` });
+  }, []);
+
   const importImage = useCallback(async () => {
     const imported = await api.importImage();
     if (!imported) return;
@@ -398,6 +412,8 @@ export function EditorProvider({ children }: { children: ReactNode }): ReactNode
     saveFile,
     exportPng,
     exportSheet,
+    exportGif,
+    exportTiled,
     importImage,
     createDocument,
     selectDocument,

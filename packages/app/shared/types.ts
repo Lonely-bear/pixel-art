@@ -144,6 +144,8 @@ export const CHANNELS = {
   saveFileAs: 'pixel:save-file-as',
   exportPng: 'pixel:export-png',
   exportSheet: 'pixel:export-sheet',
+  exportGif: 'pixel:export-gif',
+  exportTiled: 'pixel:export-tiled',
   importImage: 'pixel:import-image',
   mcpStatus: 'pixel:mcp-status',
   status: 'pixel:status',
@@ -166,6 +168,12 @@ export interface ExportResult {
   json?: string;
   width?: number;
   height?: number;
+  /** Frames written, for an animation export. */
+  frames?: number;
+  /** Tile count of the exported tileset. */
+  tiles?: number;
+  /** Tilemap layer names, for a Tiled export. */
+  layers?: string[];
 }
 
 /**
@@ -196,6 +204,8 @@ export interface PixelApi {
   saveFileAs(id?: string): Promise<{ path: string } | null>;
   exportPng(id: string | undefined, options: Record<string, unknown>): Promise<ExportResult | null>;
   exportSheet(id: string | undefined, options: Record<string, unknown>): Promise<ExportResult | null>;
+  exportGif(id: string | undefined, options: Record<string, unknown>): Promise<ExportResult | null>;
+  exportTiled(id: string | undefined, options: Record<string, unknown>): Promise<ExportResult | null>;
   importImage(): Promise<DocumentDetail | null>;
   mcpStatus(): Promise<McpStatus>;
   onChanged(handler: (payload: ChangedPayload) => void): () => void;

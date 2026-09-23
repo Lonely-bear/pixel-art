@@ -8,6 +8,7 @@ export function TopBar(): React.ReactNode {
   const { detail, status } = editor;
   const [creating, setCreating] = useState(false);
   const [scale, setScale] = useState(1);
+  const [gifTag, setGifTag] = useState('');
   const [name, setName] = useState('');
 
   // The File > New menu item forwards here through a window event.
@@ -88,6 +89,26 @@ export function TopBar(): React.ReactNode {
         </button>
         <button type="button" onClick={() => void editor.exportSheet()}>
           Export sheet
+        </button>
+
+        <select
+          className="doc-select"
+          value={gifTag}
+          onChange={(event) => setGifTag(event.target.value)}
+          title="Animation tag to export"
+        >
+          <option value="">All frames</option>
+          {(detail?.tagList ?? []).map((tag) => (
+            <option key={tag.id} value={tag.name}>
+              {tag.name} ({tag.direction})
+            </option>
+          ))}
+        </select>
+        <button type="button" onClick={() => void editor.exportGif(gifTag || undefined)}>
+          Export GIF
+        </button>
+        <button type="button" title="Write a Tiled (.tmj) map" onClick={() => void editor.exportTiled()}>
+          Export Tiled
         </button>
 
         <span className="divider" />

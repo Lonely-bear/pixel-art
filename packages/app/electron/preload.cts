@@ -34,6 +34,10 @@ const api = {
     invoke('pixel:export-png', id, options),
   exportSheet: (id: string | undefined, options: Record<string, unknown>) =>
     invoke('pixel:export-sheet', id, options),
+  exportGif: (id: string | undefined, options: Record<string, unknown>) =>
+    invoke('pixel:export-gif', id, options),
+  exportTiled: (id: string | undefined, options: Record<string, unknown>) =>
+    invoke('pixel:export-tiled', id, options),
   importImage: () => invoke('pixel:import-image'),
   mcpStatus: () => invoke('pixel:mcp-status'),
 
