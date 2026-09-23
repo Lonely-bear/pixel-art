@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PixelBuffer } from '../src/buffer.js';
 import { createSprite } from '../src/document.js';
-import { buildSpritesheet, sliceAnimations, toAsepriteJson } from '../src/atlas.js';
+import { buildSpritesheet, scaleAtlas, sliceAnimations, toAsepriteJson } from '../src/atlas.js';
 
 function makeSprite() {
   const sprite = createSprite({ width: 8, height: 8, name: 'Slime' });
@@ -83,5 +83,30 @@ describe('sliceAnimations', () => {
     expect(slices[0].frames.map((f) => f.index)).toEqual([0, 1]);
     expect(slices[1].frames.map((f) => f.index)).toEqual([2, 3]);
     expect(slices[1].repeat).toBe(2);
+  });
+});
+
+describe('scaleAtlas', () => {
+  it('grows the image, the sheet size and the frame rects together', () => {
+    const sprite = makeSprite();
+    const atlas = buildSpritesheet(sprite);
+    const scaled = scaleAtlas(atlas, 2);
+
+    expect(scaled.image.width).toBe(atlas.width * 2);
+    expect(scaled.image.height).toBe(atlas.height * 2);
+    expect(scaled.width).toBe(atlas.width * 2);
+    expect(scaled.height).toBe(atlas.height * 2);
+
+    // The whole point: the exported JSON must describe the PNG that was written.
+    const json = toAsepriteJson(sprite, scaled, 'sheet.png');
+    expect(json.meta.size).toEqual({ w: scaled.image.width, h: scaled.image.height });
+    expect(json.frames['Slime 1.png'].frame).toEqual({ x: 16, y: 0, w: 16, h: 16 });
+  });
+
+  it('is a no-op at factor 1 and rejects nonsense factors', () => {
+    const atlas = buildSpritesheet(makeSprite());
+    expect(scaleAtlas(atlas, 1)).toBe(atlas);
+    expect(() => scaleAtlas(atlas, 0)).toThrow(RangeError);
+    expect(() => scaleAtlas(atlas, 1.5)).toThrow(RangeError);
   });
 });

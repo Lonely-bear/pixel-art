@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PixelBuffer } from '../src/buffer.js';
 import { createSprite } from '../src/document.js';
-import { CommandError, createEditor, createRegistry } from '../src/index.js';
+import { CommandError, createEditor, createRegistry, describeCommands } from '../src/index.js';
 import type { Command } from '../src/commands/types.js';
 import { z } from 'zod';
 
@@ -222,6 +222,23 @@ describe('command bus', () => {
 
     editor.redo();
     expect(editor.execute('measure_region', { layer: 0, frame: 0 }).opaque).toBe(4);
+  });
+
+  it('rejects an unknown parameter instead of silently ignoring it', () => {
+    const editor = createEditor(makeSprite());
+
+    // A mistyped parameter used to fall back to its default and report success,
+    // which is how an agent asking to `undo {count: 5}` silently undid one edit.
+    const result = editor.tryExecute('draw_rect', { ...redRect, fill2: true });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('invalid_params');
+      expect(result.error).toMatch(/unrecognized key/i);
+    }
+
+    // And the published schema says so too, so the contract is visible to clients.
+    const schema = describeCommands(editor.registry.list()).find((c) => c.name === 'draw_rect');
+    expect(schema?.params.additionalProperties).toBe(false);
   });
 });
 

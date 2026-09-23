@@ -1,5 +1,6 @@
 import { PixelBuffer } from './buffer.js';
 import { compositeFrame } from './render.js';
+import { scaleNearest } from './transform.js';
 import type { Sprite } from './document.js';
 import type { ColorInput } from './types.js';
 
@@ -94,6 +95,33 @@ export function buildSpritesheet(sprite: Sprite, opts: AtlasOptions = {}): Atlas
       from: t.from,
       to: t.to,
       direction: t.direction,
+    })),
+  };
+}
+
+/**
+ * Scale a packed atlas by an integer factor.
+ *
+ * Scaling the *atlas* rather than just its image is what keeps the exported JSON
+ * honest: frame rects, sheet size and the image all grow together, so an engine
+ * slicing the sheet reads the same geometry the PNG actually has.
+ */
+export function scaleAtlas(atlas: Atlas, factor: number): Atlas {
+  if (factor === 1) return atlas;
+  if (!Number.isInteger(factor) || factor < 1) {
+    throw new RangeError(`scaleAtlas factor must be a positive integer, got ${factor}`);
+  }
+  return {
+    ...atlas,
+    image: scaleNearest(atlas.image, factor),
+    width: atlas.width * factor,
+    height: atlas.height * factor,
+    frames: atlas.frames.map((frame) => ({
+      ...frame,
+      x: frame.x * factor,
+      y: frame.y * factor,
+      w: frame.w * factor,
+      h: frame.h * factor,
     })),
   };
 }

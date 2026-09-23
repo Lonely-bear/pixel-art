@@ -30,6 +30,7 @@ import {
   parseColor,
   PixelBuffer,
   resolveFrame,
+  scaleAtlas,
   scaleNearest,
   spriteFromPng,
   toAsepriteJson,
@@ -181,6 +182,43 @@ function describeSprite(sprite: Sprite): Record<string, unknown> {
   };
 }
 
+/**
+ * Condense one JSON Schema property into a short type hint.
+ *
+ * `list_commands` used to return every full schema - about 188 kB, which an agent
+ * had to write a script to read. Almost always all it wants is the shape of the
+ * parameters, so the default answer is one short line per command; `verbose: true`
+ * still returns the real schemas for anything that needs the detail.
+ */
+function compactType(schema: unknown): string {
+  if (!schema || typeof schema !== 'object') return 'any';
+  const node = schema as Record<string, unknown>;
+  if (Array.isArray(node.enum)) return node.enum.map((value) => JSON.stringify(value)).join('|');
+  if (Array.isArray(node.anyOf)) {
+    return [...new Set(node.anyOf.map((option) => compactType(option)))].join('|');
+  }
+  if (node.type === 'array') return `${compactType(node.items)}[]`;
+  if (typeof node.type === 'string') return node.type;
+  return 'any';
+}
+
+interface CompactCommand {
+  name: string;
+  description: string;
+  params: Record<string, string>;
+  required: string[];
+}
+
+function compactCommand(command: ReturnType<typeof describeCommands>[number]): CompactCommand {
+  const schema = command.params as { properties?: Record<string, unknown>; required?: string[] };
+  const required = schema.required ?? [];
+  const params: Record<string, string> = {};
+  for (const [key, value] of Object.entries(schema.properties ?? {})) {
+    params[key] = `${compactType(value)}${required.includes(key) ? '' : '?'}`;
+  }
+  return { name: command.name, description: command.description, params, required };
+}
+
 function writeFile(path: string, bytes: Uint8Array): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, bytes);
@@ -235,11 +273,15 @@ function addTool(
   config: { title: string; description: string; inputSchema: z.ZodObject<z.ZodRawShape>; annotations?: ToolAnnotations },
   handler: (args: Record<string, unknown>) => CallToolResult | Promise<CallToolResult>,
 ): void {
+  // Strict, like the core command schemas. A mistyped parameter has to be an
+  // error rather than a silent fallback to the default: `undo {count: 5}` used
+  // to quietly undo a single edit and still report success.
+  const strict = { ...config, inputSchema: config.inputSchema.strict() };
   (server.registerTool as unknown as (
     n: string,
     c: unknown,
     h: unknown,
-  ) => unknown)(name, config, handler);
+  ) => unknown)(name, strict, handler);
 }
 
 export function registerTools(server: McpServer, store: DocumentStore): void {
@@ -690,7 +732,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Undo',
       description:
-        'Undo the most recent edit, or several. Cheap - use it freely when a pass makes the sprite worse instead of guessing forward.',
+        'Undo the most recent edit, or several (`steps`). Cheap - use it freely when a pass makes the sprite worse instead of guessing forward.',
       inputSchema: z.object({
         document: documentRef,
         steps: z.number().int().min(1).max(100).optional().describe('How many edits to undo. Defaults to 1.'),
@@ -715,7 +757,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     'redo',
     {
       title: 'Redo',
-      description: 'Redo previously undone edits.',
+      description: 'Redo previously undone edits. Pass `steps` to redo more than one.',
       inputSchema: z.object({
         document: documentRef,
         steps: z.number().int().min(1).max(100).optional().describe('How many edits to redo. Defaults to 1.'),
@@ -743,7 +785,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Apply a batch of commands',
       description:
-        'Run several commands in one round trip. Far cheaper than one call per edit when you are generating a sprite or all the frames of an animation. Each op is `{command, params}` - or put the params inline: `{command: "draw_rect", layer: "base", rect: {...}, color: "#f00", fill: true}`. Use `list_commands` to see every available command and its parameters. Returns a per-op result, so a failure tells you exactly which op and why.',
+        'Run several commands in one round trip. Far cheaper than one call per edit when you are generating a sprite or all the frames of an animation. Each op is `{command, params}` - or put the params inline: `{command: "draw_rect", layer: "base", rect: {...}, color: "#f00", fill: true}`. Set `defaultLayer`/`defaultFrame` once instead of repeating them in every op. Use `list_commands` to see every available command and its parameters. Returns a per-op result, so a failure tells you exactly which op and why.',
       inputSchema: z.object({
         document: documentRef,
         expectedVersion: versionRef,
@@ -752,6 +794,16 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           .optional()
           .describe('If true, undo every op that succeeded when one fails, so the document is unchanged. Defaults to false.'),
         stopOnError: z.boolean().optional().describe('Stop at the first failing op. Defaults to true.'),
+        defaultLayer: layerRefSchema
+          .optional()
+          .describe('Layer applied to every op that needs one and does not name it. Defaults to the bottom layer.'),
+        defaultFrame: frameRefSchema
+          .optional()
+          .describe('Frame applied to every op that needs one and does not name it. Defaults to frame 0.'),
+        quiet: z
+          .boolean()
+          .optional()
+          .describe('Return only the counts and the failures, without per-op summaries. Use it for long batches where you only care that nothing broke.'),
         ops: z
           .array(z.record(z.string(), z.unknown()))
           .min(1)
@@ -778,8 +830,14 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
       const rawOps = args.ops as RawOp[];
       const atomic = args.atomic === true;
       const stopOnError = args.stopOnError !== false;
+      const quiet = args.quiet === true;
+      const defaults = {
+        layer: args.defaultLayer as string | number | undefined,
+        frame: args.defaultFrame as string | number | undefined,
+      };
 
       const results: Array<Record<string, unknown>> = [];
+      const failures: Array<Record<string, unknown>> = [];
       let applied = 0;
       let failed = 0;
 
@@ -795,7 +853,17 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         }
 
         const command = defaultRegistry.get(op.command);
-        if (command) fillDefaults(doc.editor.sprite, command, op.params);
+        if (command) {
+          // An explicit default beats the implicit one, which beats nothing.
+          const required = requiredArgsOf(command);
+          if (required.has('layer') && op.params.layer === undefined && defaults.layer !== undefined) {
+            op.params.layer = defaults.layer;
+          }
+          if (required.has('frame') && op.params.frame === undefined && defaults.frame !== undefined) {
+            op.params.frame = defaults.frame;
+          }
+          fillDefaults(doc.editor.sprite, command, op.params);
+        }
 
         const result = doc.editor.tryExecute(op.command, op.params, { label: op.label });
         if (result.ok) {
@@ -804,6 +872,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         } else {
           failed++;
           results.push({ index: i, command: op.command, ok: false, code: result.code, error: result.error });
+          failures.push({ index: i, command: op.command, code: result.code, error: result.error });
           if (stopOnError) break;
         }
       }
@@ -818,7 +887,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           applied: 0,
           failed,
           version: doc.editor.version,
-          results,
+          failures,
         });
       }
 
@@ -828,7 +897,10 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         failed,
         version: doc.editor.version,
         document: store.summary(doc),
-        results,
+        // The failure list is small and always worth having; the per-op results
+        // are the bulky part, so `quiet` drops those instead.
+        ...(failed > 0 ? { failures } : {}),
+        ...(quiet ? {} : { results }),
       });
     },
   );
@@ -926,20 +998,22 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           margin: args.margin as number | undefined,
         });
         const scale = (args.scale as number | undefined) ?? 1;
-        const image = scale > 1 ? scaleNearest(atlas.image, scale) : atlas.image;
+        // Scale the atlas, not just its image, so the JSON frame rects and
+        // `meta.size` match the PNG the engine will actually slice.
+        const sheet = scaleAtlas(atlas, scale);
 
-        writeFile(out, encodePNG(image));
+        writeFile(out, encodePNG(sheet.image));
 
         const fileName = out.split(/[\\/]/).pop() ?? 'sheet.png';
-        const json = toAsepriteJson(sprite, atlas, fileName);
+        const json = toAsepriteJson(sprite, sheet, fileName);
         writeFile(jsonPath, Buffer.from(JSON.stringify(json, null, 2), 'utf8'));
 
         return ok({
           ok: true,
           image: out,
           json: jsonPath,
-          width: image.width,
-          height: image.height,
+          width: sheet.width,
+          height: sheet.height,
           columns: atlas.columns,
           rows: atlas.rows,
           frames: atlas.frames.length,
@@ -959,9 +1033,13 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'List all commands',
       description:
-        'The full catalogue of drawing, structure, palette and transform commands with their JSON Schemas, including commands that are not individually exposed as tools. Everything listed here can be run through `apply_ops`.',
+        'The catalogue of drawing, structure, palette and transform commands, including commands that are not individually exposed as tools. Everything listed here can be run through `apply_ops`. By default each command is one line: its name, description and parameter types. Pass `verbose: true` for the full JSON Schemas.',
       inputSchema: z.object({
         filter: z.string().optional().describe('Only return commands whose name or description contains this text.'),
+        verbose: z
+          .boolean()
+          .optional()
+          .describe('Return the full JSON Schema for every command instead of the compact one-line form.'),
       }),
       annotations: { readOnlyHint: true },
     },
@@ -973,11 +1051,16 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           (c) => c.name.toLowerCase().includes(filter) || c.description.toLowerCase().includes(filter),
         );
       }
+      const hint =
+        'Run any of these through apply_ops, e.g. {"ops": [{"command": "dither_fill", "params": {...}}]}. Pass verbose: true for the full JSON Schemas.';
+      if (args.verbose === true) {
+        return ok({ ok: true, count: catalog.length, commands: catalog, hint });
+      }
       return ok({
         ok: true,
         count: catalog.length,
-        commands: catalog,
-        hint: 'Run any of these through apply_ops, e.g. {"ops": [{"command": "dither_fill", "params": {...}}]}',
+        commands: catalog.map(compactCommand),
+        hint,
       });
     },
   );

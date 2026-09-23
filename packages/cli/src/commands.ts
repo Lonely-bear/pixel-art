@@ -11,6 +11,7 @@ import {
   encodePNG,
   frameLayersWithCels,
   resolveFrame,
+  scaleAtlas,
   spriteDurationMs,
   spriteFromPng,
   toAsepriteJson,
@@ -198,19 +199,21 @@ const sheetCommand: CommandSpec = {
     };
 
     const atlas = buildSpritesheet(sprite, options);
-    const image = scale === 1 ? atlas.image : atlas.image.scale(scale);
-    await writeBytes(out, encodePNG(image));
+    // Scale the atlas, not just its image, so the JSON frame rects and
+    // `meta.size` match the PNG the engine will actually slice.
+    const sheet = scaleAtlas(atlas, scale);
+    await writeBytes(out, encodePNG(sheet.image));
 
     const jsonPath = stringFlag(ctx.args.flags, 'json') ?? `${out.replace(/\.png$/i, '')}.json`;
-    const metadata = toAsepriteJson(sprite, atlas, basename(out));
+    const metadata = toAsepriteJson(sprite, sheet, basename(out));
     await writeText(jsonPath, `${JSON.stringify(metadata, null, 2)}\n`);
 
     printJson({
       ok: true,
       path: out,
       json: jsonPath,
-      width: image.width,
-      height: image.height,
+      width: sheet.width,
+      height: sheet.height,
       columns: atlas.columns,
       rows: atlas.rows,
       frames: atlas.frames.length,

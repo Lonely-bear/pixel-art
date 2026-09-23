@@ -12,6 +12,7 @@ import {
   buildSpritesheet,
   deserializeSprite,
   encodePNG,
+  scaleAtlas,
   scaleNearest,
   serializeSprite,
   spriteFromPng,
@@ -204,15 +205,17 @@ export function registerIpc(getMcpStatus: () => unknown): void {
     if (picked.canceled || !picked.filePath) return null;
     const sprite = doc.editor.sprite;
     const atlas = buildSpritesheet(sprite, options);
-    const image = options.scale && options.scale > 1 ? scaleNearest(atlas.image, options.scale) : atlas.image;
+    // Scale the atlas, not just its image, so the JSON frame rects and
+    // `meta.size` match the PNG the engine will actually slice.
+    const sheet = scaleAtlas(atlas, options.scale ?? 1);
     const jsonPath = picked.filePath.replace(/\.png$/i, '.json');
     await ensureDir(picked.filePath);
-    await writeFile(picked.filePath, encodePNG(image));
+    await writeFile(picked.filePath, encodePNG(sheet.image));
     await writeFile(
       jsonPath,
-      JSON.stringify(toAsepriteJson(sprite, atlas, path.basename(picked.filePath)), null, 2),
+      JSON.stringify(toAsepriteJson(sprite, sheet, path.basename(picked.filePath)), null, 2),
     );
-    return { path: picked.filePath, json: jsonPath, width: image.width, height: image.height };
+    return { path: picked.filePath, json: jsonPath, width: sheet.width, height: sheet.height };
   });
 
   ipcMain.handle(CHANNELS.importImage, async () => {

@@ -27,6 +27,12 @@ function firstText(result: ToolResult): string {
   return result.content.find((c) => c.type === 'text')?.text ?? '';
 }
 
+/** Read the dimensions straight out of a PNG's IHDR, independent of our encoder. */
+function pngSize(path: string): { width: number; height: number } {
+  const bytes = readFileSync(path);
+  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+}
+
 let client: Client;
 let pixel: PixelServer;
 let tempDir: string;
@@ -74,6 +80,28 @@ describe('tool surface', () => {
     // The targeting arguments every generated tool gains.
     expect(Object.keys(schema.properties ?? {})).toContain('document');
     expect(Object.keys(schema.properties ?? {})).toContain('expectedVersion');
+  });
+
+  it('lists commands compactly by default and in full on request', async () => {
+    const compact = (await client.callTool({ name: 'list_commands', arguments: {} })) as ToolResult;
+    const body = payload(compact);
+    expect(body.count).toBeGreaterThanOrEqual(39);
+
+    const entry = (body.commands as Array<Record<string, unknown>>).find((c) => c.name === 'draw_rect');
+    expect(entry?.required).toContain('rect');
+    expect((entry?.params as Record<string, string>).rect).toBe('object');
+    expect(typeof (entry?.params as Record<string, string>).color).toBe('string');
+
+    // This used to be ~188 kB of JSON Schema, which an agent had to script around.
+    expect(JSON.stringify(body).length).toBeLessThan(20_000);
+
+    const verbose = (await client.callTool({
+      name: 'list_commands',
+      arguments: { filter: 'draw_rect', verbose: true },
+    })) as ToolResult;
+    const full = (payload(verbose).commands as Array<{ params: Record<string, unknown> }>)[0];
+    expect(full.params.type).toBe('object');
+    expect(full.params.additionalProperties).toBe(false);
   });
 });
 
@@ -212,6 +240,65 @@ describe('editing', () => {
       arguments: { rect: { x: 0, y: 0, w: 1, h: 1 }, color: '#fff', expectedVersion: 1 },
     })) as ToolResult;
     expect(payload(good).ok).toBe(true);
+  });
+
+  it('rejects an unknown op parameter instead of silently ignoring it', async () => {
+    const result = (await client.callTool({
+      name: 'apply_ops',
+      arguments: {
+        ops: [{ command: 'draw_rect', rect: { x: 0, y: 0, w: 2, h: 2 }, color: '#fff', fill2: true }],
+      },
+    })) as ToolResult;
+    const body = payload(result);
+
+    // A typo used to fall back to the default and report success - the shape of
+    // bug that turns `undo {count: 5}` into a single undo with `ok: true`.
+    expect(body.ok).toBe(false);
+    expect(body.failed).toBe(1);
+    expect((body.failures as Array<{ code: string }>)[0].code).toBe('invalid_params');
+  });
+
+  it('rejects an unknown parameter on a hand-registered tool too', async () => {
+    // The command tools get strictness from `defineCommand`. The hand-written
+    // tools need it from `addTool`, or `undo {count: 99}` silently undoes one
+    // edit and reports success - a data-loss-shaped bug.
+    const result = (await client.callTool({
+      name: 'undo',
+      arguments: { count: 99 },
+    })) as ToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(firstText(result)).toMatch(/validation error/i);
+  });
+
+  it('applies defaultLayer and defaultFrame to every op', async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 8, height: 8, name: 'Defaults', layers: ['base', 'shade'], frames: 2 },
+    });
+    const result = (await client.callTool({
+      name: 'apply_ops',
+      arguments: {
+        defaultLayer: 'shade',
+        defaultFrame: 1,
+        quiet: true,
+        ops: [
+          { command: 'draw_rect', rect: { x: 0, y: 0, w: 2, h: 2 }, color: '#ff0000', fill: true },
+          { command: 'draw_rect', rect: { x: 2, y: 2, w: 2, h: 2 }, color: '#00ff00', fill: true },
+        ],
+      },
+    })) as ToolResult;
+    const body = payload(result);
+    expect(body.ok).toBe(true);
+    expect(body.applied).toBe(2);
+    // `quiet` drops the per-op results, which is the point of it.
+    expect(body.results).toBeUndefined();
+
+    const measured = (await client.callTool({
+      name: 'measure_region',
+      arguments: { layer: 'shade', frame: 1 },
+    })) as ToolResult;
+    expect((payload(measured).summary as { opaque: number }).opaque).toBe(8);
   });
 
   it('undoes and redoes', async () => {
@@ -369,8 +456,36 @@ describe('export', () => {
     expect(json.meta.frameTags[0].name).toBe('spin');
   });
 
-  it('round-trips a document through save and open', async () => {
+  it('keeps the spritesheet JSON consistent with the scaled PNG', async () => {
     await client.callTool({
+      name: 'create_document',
+      arguments: { width: 8, height: 8, name: 'Scale', layers: ['base'], frames: 2 },
+    });
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { rect: { x: 0, y: 0, w: 4, h: 4 }, color: '#ff0000', fill: true },
+    });
+
+    const sheet = join(tempDir, 'scaled-sheet.png');
+    const result = (await client.callTool({
+      name: 'export_sheet',
+      arguments: { out: sheet, layout: 'horizontal', scale: 3 },
+    })) as ToolResult;
+    const body = payload(result);
+
+    // The JSON must describe the PNG that was actually written, or an engine
+    // slicing the sheet reads the wrong geometry and grabs a corner of each frame.
+    const size = pngSize(sheet);
+    expect(body.width).toBe(size.width);
+    expect(body.height).toBe(size.height);
+
+    const json = JSON.parse(readFileSync(body.json as string, 'utf8'));
+    expect(json.meta.size).toEqual({ w: size.width, h: size.height });
+    expect(json.frames['Scale 0.png'].frame).toEqual({ x: 0, y: 0, w: 24, h: 24 });
+    expect(json.frames['Scale 1.png'].frame).toEqual({ x: 24, y: 0, w: 24, h: 24 });
+  });
+
+  it('round-trips a document through save and open', async () => {    await client.callTool({
       name: 'create_document',
       arguments: { width: 8, height: 8, name: 'Round', layers: ['base', 'shade'] },
     });

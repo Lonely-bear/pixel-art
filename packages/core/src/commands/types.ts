@@ -38,14 +38,18 @@ export interface Command<P = any> {
   apply(ctx: CommandContext, params: P): CommandSummary | void;
 }
 
-export function defineCommand<S extends z.ZodType>(spec: {
+export function defineCommand<S extends z.ZodObject<z.ZodRawShape>>(spec: {
   name: string;
   description: string;
   params: S;
   readOnly?: boolean;
   apply(ctx: CommandContext, params: z.infer<S>): CommandSummary | void;
 }): Command<z.infer<S>> {
-  return spec as unknown as Command<z.infer<S>>;
+  // Strict at the top level, so a mistyped parameter is an error instead of a
+  // silent fallback to the default. Agents guess parameter names - a `count`
+  // that quietly does nothing while `steps` was wanted is a data-loss-shaped
+  // bug, not a cosmetic one.
+  return { ...spec, params: spec.params.strict() } as unknown as Command<z.infer<S>>;
 }
 
 /* ------------------------------------------------------------------ *
@@ -76,14 +80,18 @@ export const ditherPatternSchema = z.enum(
   DITHER_PATTERNS as unknown as [string, ...string[]],
 );
 
-export const pointSchema = z.object({ x: z.number().int(), y: z.number().int() });
+export const pointSchema = z
+  .object({ x: z.number().int(), y: z.number().int() })
+  .strict();
 
-export const rectSchema = z.object({
-  x: z.number().int().describe('Left edge in pixels, 0-based.'),
-  y: z.number().int().describe('Top edge in pixels, 0-based. Y grows downward.'),
-  w: z.number().int().describe('Width in pixels.'),
-  h: z.number().int().describe('Height in pixels.'),
-});
+export const rectSchema = z
+  .object({
+    x: z.number().int().describe('Left edge in pixels, 0-based.'),
+    y: z.number().int().describe('Top edge in pixels, 0-based. Y grows downward.'),
+    w: z.number().int().describe('Width in pixels.'),
+    h: z.number().int().describe('Height in pixels.'),
+  })
+  .strict();
 
 export const layerRefSchema = z
   .union([z.string(), z.number().int()])
