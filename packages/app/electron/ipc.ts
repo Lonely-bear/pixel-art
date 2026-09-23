@@ -14,6 +14,7 @@ import {
   deserializeSprite,
   encodeGIF,
   encodePNG,
+  resolveTilemap,
   scaleAtlas,
   scaleNearest,
   serializeSprite,
@@ -296,6 +297,42 @@ export function registerIpc(getMcpStatus: () => unknown): void {
       loops: sequence.loops,
     };
   });
+
+  // The tilemap editor needs the tileset image and the raw cell indices, which the
+  // document summary deliberately does not carry.
+  ipcMain.handle(CHANNELS.tilesetInfo, (_event, id: string | undefined) => {
+    const doc = store.require(id);
+    const tileset = doc.editor.sprite.tileset;
+    if (!tileset) return null;
+    return {
+      id: tileset.id,
+      name: tileset.name,
+      tileWidth: tileset.tileWidth,
+      tileHeight: tileset.tileHeight,
+      columns: tileset.columns,
+      rows: Math.floor(tileset.image.height / tileset.tileHeight),
+      width: tileset.image.width,
+      height: tileset.image.height,
+      png: encodePNG(tileset.image),
+    };
+  });
+
+  ipcMain.handle(
+    CHANNELS.tilemapData,
+    (_event, id: string | undefined, tilemapRef: string | number) => {
+      const doc = store.require(id);
+      const tilemap = resolveTilemap(doc.editor.sprite, tilemapRef);
+      return {
+        id: tilemap.id,
+        name: tilemap.name,
+        width: tilemap.width,
+        height: tilemap.height,
+        tileWidth: tilemap.tileWidth,
+        tileHeight: tilemap.tileHeight,
+        data: [...tilemap.data],
+      };
+    },
+  );
 
   ipcMain.handle(CHANNELS.importImage, async () => {
     const picked = await dialog.showOpenDialog(focusedWindow()!, {

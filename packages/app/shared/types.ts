@@ -146,6 +146,8 @@ export const CHANNELS = {
   exportSheet: 'pixel:export-sheet',
   exportGif: 'pixel:export-gif',
   exportTiled: 'pixel:export-tiled',
+  tilesetInfo: 'pixel:tileset-info',
+  tilemapData: 'pixel:tilemap-data',
   animationSequence: 'pixel:animation-sequence',
   importImage: 'pixel:import-image',
   mcpStatus: 'pixel:mcp-status',
@@ -191,6 +193,30 @@ export interface AnimationSequenceInfo {
   loops: boolean;
 }
 
+export interface TilesetInfo {
+  id: string;
+  name: string;
+  tileWidth: number;
+  tileHeight: number;
+  columns: number;
+  rows: number;
+  width: number;
+  height: number;
+  /** The tileset image, encoded as a PNG so the renderer can draw it. */
+  png: Uint8Array;
+}
+
+export interface TilemapInfo {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  tileWidth: number;
+  tileHeight: number;
+  /** Row-major tile indices, `-1` for an empty cell. */
+  data: number[];
+}
+
 /**
  * The exact object the preload script exposes as `window.pixel`.
  *
@@ -221,6 +247,8 @@ export interface PixelApi {
   exportSheet(id: string | undefined, options: Record<string, unknown>): Promise<ExportResult | null>;
   exportGif(id: string | undefined, options: Record<string, unknown>): Promise<ExportResult | null>;
   exportTiled(id: string | undefined, options: Record<string, unknown>): Promise<ExportResult | null>;
+  tilesetInfo(id: string | undefined): Promise<TilesetInfo | null>;
+  tilemapData(id: string | undefined, tilemap: string | number): Promise<TilemapInfo | null>;
   animationSequence(id: string | undefined, tag?: string | number): Promise<AnimationSequenceInfo>;
   importImage(): Promise<DocumentDetail | null>;
   mcpStatus(): Promise<McpStatus>;

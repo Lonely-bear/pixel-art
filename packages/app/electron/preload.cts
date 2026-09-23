@@ -38,6 +38,9 @@ const api = {
     invoke('pixel:export-gif', id, options),
   exportTiled: (id: string | undefined, options: Record<string, unknown>) =>
     invoke('pixel:export-tiled', id, options),
+  tilesetInfo: (id: string | undefined) => invoke('pixel:tileset-info', id),
+  tilemapData: (id: string | undefined, tilemap: string | number) =>
+    invoke('pixel:tilemap-data', id, tilemap),
   animationSequence: (id: string | undefined, tag?: string | number) =>
     invoke('pixel:animation-sequence', id, tag),
   importImage: () => invoke('pixel:import-image'),
