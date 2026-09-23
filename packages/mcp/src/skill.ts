@@ -1,0 +1,142 @@
+/**
+ * The pixel-art craft guide served as `pixel://skill` and injected by prompts.
+ *
+ * Tools alone produce technically-valid mush. What separates a sprite that reads
+ * as a character from one that reads as noise is craft: silhouette first, a
+ * deliberate ramp, selective outlines, controlled dithering. That knowledge is
+ * not in the API surface, so it ships as a document the model can read.
+ */
+export const SKILL_URI = 'pixel://skill';
+
+export const PIXEL_ART_SKILL = `# Pixel art craft guide
+
+You are drawing with a tool that gives you exact control over every pixel. That is
+both the opportunity and the trap: nothing stops you from producing mud. Work in
+passes, and look at the result between passes.
+
+## 1. Plan the canvas before drawing
+
+- Ask for the sprite size the game needs (16x16, 32x32, 48x48...). Do not invent a
+  huge canvas "for detail" - small canvases force readable shapes.
+- Work on separate layers. A normal stack is: \`base\` (filled shapes) -> \`shade\`
+  (light and shadow) -> \`outline\` (contour). Use \`add_layer\` and pass \`layer\` to
+  every draw call.
+- Lock or hide layers you are not editing so you do not accidentally repaint them.
+
+## 2. Silhouette first, colour last
+
+1. Block the whole subject in a single flat colour on \`base\`. Check the silhouette
+   by looking at \`get_preview\`. If it is not recognisable as a solid shape, no
+   amount of shading will save it.
+2. Only then add shading. Decide where the light comes from (top-left is the
+   convention) and stay consistent.
+3. Add the outline last.
+
+## 3. Colour
+
+- Prefer a palette. \`create_document\` accepts \`palette: "dawnbringer16"\` or
+  \`"endesga16"\`; you can also pass explicit hex values. A constrained palette is
+  the single biggest quality win.
+- Use a **ramp**: for each material pick 3-4 colours that step in hue as well as in
+  value. Shadow steps should shift toward blue/purple, highlights toward
+  yellow/orange. A pure brightness ramp looks dull and plastic.
+- Never use pure black (\`#000000\`) as a shadow or pure white as a highlight. Use
+  near-black and near-white; reserve the extremes for outlines if anything.
+- Keep the number of materials small: skin, cloth, metal, and one accent is enough
+  for a character.
+
+## 4. Outlines
+
+- \`outline\` with \`mode: "outside"\` adds a contour around the opaque silhouette.
+- Selective outlining reads better than a closed contour: outline the bottom and
+  sides in a dark version of the local colour, and drop the outline where the light
+  hits. There is no single command for that - draw it deliberately, or run
+  \`outline\` and then erase the lit segments with \`clear_region\` or a draw with
+  \`color: null\`.
+- Outline colour should be a dark, desaturated version of the neighbouring fill,
+  not black.
+
+## 5. Shading and texture
+
+- \`dither_fill\` with \`pattern: "bayer4"\` or \`"checker"\` is the classic way to make
+  a third shade out of two colours, or to blend a gradient on a small canvas.
+  Keep dithered areas small - a 1px checker over a large area turns to noise.
+- \`dither_fill\` with \`pattern: "sparse"\` reads as texture (dirt, cloth, grain).
+- \`draw_line\` with a translucent colour and \`blend\` is an alternative for
+  soft-edged shading, but hard-edged ramps are usually better pixel art.
+- Banding is the classic error: two adjacent shades whose boundary is a straight
+  line. Break the boundary with single-pixel steps.
+
+## 6. Anti-aliasing
+
+- Use it sparingly, only on curves and only on the outside of a shape.
+- Place a mid-tone between the fill and the outline or background, never a
+  full-strength blend, and never on a straight horizontal or vertical edge.
+- \`draw_pixels\` with an explicit colour is the right tool; do not reach for
+  blur-like effects.
+
+## 7. Animation
+
+- Animate by duplicating a frame (\`duplicate_frame\`) and moving one thing. Keep
+  the parts that should not move identical between frames.
+- 2-4 frames is enough for a walk cycle at small sizes; 6-8 for a full run.
+- Set frame durations explicitly with \`update_frame\` (100-150 ms is a normal
+  baseline; a run cycle is faster than a walk).
+- Tag the sequences you intend to export: \`add_tag\` with \`from\`/\`to\` indices and
+  a \`direction\` of \`forward\`, \`reverse\` or \`pingpong\`. \`pingpong\` halves the
+  frames you have to draw for a breathing or idle loop.
+- For a squash-and-stretch or bounce, move the whole silhouette, not individual
+  limbs: \`copy_region\` from the previous frame is often easier than redrawing.
+- Check the loop: the last frame should lead back into the first. Look at the
+  sprite sheet, not just the individual frames.
+
+## 8. Iterating
+
+- \`get_preview\` renders the composited frame (or all frames) as a PNG you can
+  actually see. Use it constantly - after the silhouette, after shading, after
+  outlining. Never chain twenty edits blind.
+- \`get_pixels\` returns a small region as text when you need exact coordinates.
+- \`measure_region\` tells you where the opaque pixels actually are, which is how
+  you centre a sprite without guessing.
+- If a pass makes things worse, \`undo\` it. Undo is cheap; guessing is not.
+
+## 9. Coordinates and conventions
+
+- Origin is the **top-left**, x grows right, y grows **down**, pixels are
+  zero-based. \`{x: 0, y: 0}\` is the top-left pixel; the bottom-right of a 16x16
+  sprite is \`{x: 15, y: 15}\`.
+- Rectangles are \`{x, y, w, h}\` where \`w\`/\`h\` are counts, so a rect at \`x:0\` with
+  \`w:16\` spans the full width.
+- Layers are referenced by name, id, or index where index 0 is the **bottom**
+  layer. Prefer names; they survive reordering.
+- Frames are referenced by id or index.
+- Drawing outside the canvas is silently clipped, never an error.
+
+## 10. Working with a game engine
+
+- \`export_sheet\` writes a spritesheet PNG plus Aseprite-compatible JSON that
+  Unity, Godot, Phaser and LÖVE all read. Godot and Unity want a power-of-two
+  layout: use \`layout: "grid"\` and pick \`columns\` accordingly.
+- \`export_png\` writes a single composited frame; use it for icons and previews.
+- Set frame durations in the document rather than in the engine so the exported
+  JSON carries the timing.
+- Leave a 1px transparent margin between frames in a sheet (\`padding: 1\`) or
+  engines will bleed neighbouring frames when filtering.
+
+## 11. Things that look bad
+
+- Pillow shading: a highlight ring inside the silhouette that ignores the light
+  direction. Shade in bands, not rings.
+- A closed pure-black outline around everything.
+- Dithering everywhere instead of in a few transition bands.
+- Too many shades of the same colour with no hue shift.
+- Jagged curves: pixel art curves should be smooth when viewed at 100%. Step
+  lengths on a curve should change gradually, e.g. 2,1,1,2,1,1 - never 4,1,4.
+- Redrawing everything each frame instead of moving one element.
+`;
+
+/** Short, always-included preamble for prompts that do not need the full guide. */
+export const SKILL_SUMMARY =
+  'Pixel art workflow: block the silhouette in one flat colour on a base layer, ' +
+  'look at get_preview, then shade with a hue-shifted ramp, then outline selectively. ' +
+  'Read pixel://skill for the full guide before drawing anything non-trivial.';

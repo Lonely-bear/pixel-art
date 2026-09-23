@@ -1,0 +1,28 @@
+{
+  "name": "@pixel/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Headless pixel art document model, command bus and rasteriser.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "fast-png": "^8.0.0",
+    "fflate": "^0.8.3",
+    "zod": "^4.6.5"
+  }
+}

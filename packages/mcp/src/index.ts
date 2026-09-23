@@ -1,0 +1,12 @@
+/**
+ * `@pixel/mcp` - the Model Context Protocol surface for the pixel art editor.
+ *
+ * Embed it in the Electron main process to share one document store (and one
+ * undo history) between the GUI and the agent, or run `pixel-mcp` standalone.
+ */
+export * from './server.js';
+export * from './session.js';
+export * from './skill.js';
+export * from './tools.js';
+export * from './resources.js';
+export * from './prompts.js';

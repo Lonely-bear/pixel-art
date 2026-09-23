@@ -1,0 +1,4 @@
+packages:
+  - "packages/*"
+minimumReleaseAgeExclude:
+  - electron@44.4.5
