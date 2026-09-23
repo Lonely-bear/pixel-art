@@ -283,6 +283,20 @@ export function registerIpc(getMcpStatus: () => unknown): void {
     };
   });
 
+  // Resolved by the same `animationSequence` the GIF writer uses, so the canvas
+  // plays exactly the frames the export would write.
+  ipcMain.handle(CHANNELS.animationSequence, (_event, id: string | undefined, tag?: string | number) => {
+    const doc = store.require(id);
+    const sequence = animationSequence(doc.editor.sprite, tag);
+    return {
+      name: sequence.name,
+      frameIds: sequence.frames.map((frame) => frame.frameId),
+      durations: sequence.frames.map((frame) => frame.durationMs),
+      durationMs: sequence.durationMs,
+      loops: sequence.loops,
+    };
+  });
+
   ipcMain.handle(CHANNELS.importImage, async () => {
     const picked = await dialog.showOpenDialog(focusedWindow()!, {
       title: 'Import image',

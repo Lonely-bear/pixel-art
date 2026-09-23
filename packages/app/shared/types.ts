@@ -146,6 +146,7 @@ export const CHANNELS = {
   exportSheet: 'pixel:export-sheet',
   exportGif: 'pixel:export-gif',
   exportTiled: 'pixel:export-tiled',
+  animationSequence: 'pixel:animation-sequence',
   importImage: 'pixel:import-image',
   mcpStatus: 'pixel:mcp-status',
   status: 'pixel:status',
@@ -174,6 +175,20 @@ export interface ExportResult {
   tiles?: number;
   /** Tilemap layer names, for a Tiled export. */
   layers?: string[];
+}
+
+/**
+ * The frame order for one animation tag, resolved by `@pixel/core`'s
+ * `animationSequence` so the canvas plays exactly what the GIF export writes.
+ */
+export interface AnimationSequenceInfo {
+  name: string | null;
+  /** Frame IDs in playback order, already expanded for direction and repeat. */
+  frameIds: string[];
+  /** Duration of each entry in `frameIds`, in milliseconds. */
+  durations: number[];
+  durationMs: number;
+  loops: boolean;
 }
 
 /**
@@ -206,6 +221,7 @@ export interface PixelApi {
   exportSheet(id: string | undefined, options: Record<string, unknown>): Promise<ExportResult | null>;
   exportGif(id: string | undefined, options: Record<string, unknown>): Promise<ExportResult | null>;
   exportTiled(id: string | undefined, options: Record<string, unknown>): Promise<ExportResult | null>;
+  animationSequence(id: string | undefined, tag?: string | number): Promise<AnimationSequenceInfo>;
   importImage(): Promise<DocumentDetail | null>;
   mcpStatus(): Promise<McpStatus>;
   onChanged(handler: (payload: ChangedPayload) => void): () => void;

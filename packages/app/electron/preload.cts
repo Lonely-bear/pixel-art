@@ -38,6 +38,8 @@ const api = {
     invoke('pixel:export-gif', id, options),
   exportTiled: (id: string | undefined, options: Record<string, unknown>) =>
     invoke('pixel:export-tiled', id, options),
+  animationSequence: (id: string | undefined, tag?: string | number) =>
+    invoke('pixel:animation-sequence', id, tag),
   importImage: () => invoke('pixel:import-image'),
   mcpStatus: () => invoke('pixel:mcp-status'),
 

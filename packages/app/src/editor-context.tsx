@@ -20,6 +20,7 @@ import type {
   AppStatus,
   DocumentDetail,
   ExecResult,
+  AnimationSequenceInfo,
   HistoryEntry,
   Rgba as Color,
   ToolId,
@@ -73,6 +74,19 @@ export interface EditorValue {
   saveFile(forceDialog?: boolean): Promise<void>;
   exportPng(scale: number): Promise<void>;
   exportSheet(): Promise<void>;
+  playing: boolean;
+  setPlaying(playing: boolean): void;
+  playTag: string;
+  setPlayTag(tag: string): void;
+  playSpeed: number;
+  setPlaySpeed(speed: number): void;
+  onionSkin: boolean;
+  setOnionSkin(on: boolean): void;
+  onionBefore: number;
+  setOnionBefore(count: number): void;
+  onionAfter: number;
+  setOnionAfter(count: number): void;
+  sequence: AnimationSequenceInfo | null;
   exportGif(tag?: string): Promise<void>;
   exportTiled(): Promise<void>;
   importImage(): Promise<void>;
@@ -111,6 +125,17 @@ export function EditorProvider({ children }: { children: ReactNode }): ReactNode
   const [zoom, setZoom] = useState(12);
   const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+
+  // Playback. The frame order comes from the same `animationSequence` the GIF
+  // export uses, so what plays on the canvas is exactly what gets written.
+  const [playing, setPlaying] = useState(false);
+  const [playTag, setPlayTag] = useState('');
+  const [playSpeed, setPlaySpeed] = useState(1);
+  const [onionSkin, setOnionSkin] = useState(false);
+  const [onionBefore, setOnionBefore] = useState(1);
+  const [onionAfter, setOnionAfter] = useState(0);
+  const [sequence, setSequence] = useState<AnimationSequenceInfo | null>(null);
+  const playIndexRef = useRef(0);
 
   const activeIdRef = useRef<string | undefined>(undefined);
   const frameIdRef = useRef<string | null>(null);
@@ -231,6 +256,52 @@ export function EditorProvider({ children }: { children: ReactNode }): ReactNode
     const timer = setTimeout(() => setNotice(null), 5000);
     return () => clearTimeout(timer);
   }, [notice]);
+
+  // Keep the playback sequence in step with the document and the chosen tag.
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    void api
+      .animationSequence(activeIdRef.current, playTag || undefined)
+      .then((next) => {
+        if (!cancelled) setSequence(next);
+      })
+      .catch(() => {
+        if (!cancelled) setSequence(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, playTag, detail]);
+
+  // A timeout chain rather than an interval, because each frame can carry its own
+  // duration.
+  useEffect(() => {
+    if (!playing || !sequence || sequence.frameIds.length === 0) return;
+    let cancelled = false;
+    let timer = 0;
+    const step = () => {
+      if (cancelled) return;
+      const total = sequence.frameIds.length;
+      const index = playIndexRef.current >= total ? 0 : playIndexRef.current;
+      setFrameId(sequence.frameIds[index]);
+      const wait = Math.max(16, (sequence.durations[index] ?? 100) / Math.max(0.1, playSpeed));
+      const next = index + 1;
+      if (next >= total && !sequence.loops) {
+        playIndexRef.current = total;
+        timer = window.setTimeout(() => setPlaying(false), wait);
+        return;
+      }
+      playIndexRef.current = next >= total ? 0 : next;
+      timer = window.setTimeout(step, wait);
+    };
+    playIndexRef.current = 0;
+    step();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [playing, sequence, playSpeed]);
 
   const refreshHistory = useCallback(async () => {
     try {
@@ -412,6 +483,19 @@ export function EditorProvider({ children }: { children: ReactNode }): ReactNode
     saveFile,
     exportPng,
     exportSheet,
+    playing,
+    setPlaying,
+    playTag,
+    setPlayTag,
+    playSpeed,
+    setPlaySpeed,
+    onionSkin,
+    setOnionSkin,
+    onionBefore,
+    setOnionBefore,
+    onionAfter,
+    setOnionAfter,
+    sequence,
     exportGif,
     exportTiled,
     importImage,
