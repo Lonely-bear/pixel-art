@@ -17,7 +17,23 @@ const MAX_ZOOM = 40;
 
 export function PixelCanvas(): React.ReactNode {
   const editor = useEditor();
-  const { detail, bitmap, zoom, setZoom, tool, primary, secondary, brushSize, fillShapes } = editor;
+  const {
+    detail,
+    bitmap,
+    zoom,
+    setZoom,
+    tool,
+    primary,
+    secondary,
+    brushSize,
+    fillShapes,
+    onionSkin,
+    onionBefore,
+    onionAfter,
+    sequence,
+    frameId,
+    thumbnails,
+  } = editor;
 
   const wrapperRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -29,6 +45,9 @@ export function PixelCanvas(): React.ReactNode {
   const [panning, setPanning] = useState(false);
   const [viewport, setViewport] = useState({ w: 0, h: 0 });
   const [redrawCount, forceRedraw] = useState(0);
+  // Neighbour frames for onion skinning, cached by thumbnail URL so the canvas
+  // does not rebuild an image every repaint.
+  const onionImages = useRef<Map<string, HTMLImageElement>>(new Map());
   const fittedFor = useRef<string | null>(null);
 
   const width = detail?.width ?? 0;
@@ -103,6 +122,32 @@ export function PixelCanvas(): React.ReactNode {
     context.clip();
     context.fillStyle = checkerPattern(context);
     context.fillRect(panX, panY, imageWidth, imageHeight);
+
+    // Onion skin: the neighbouring frames ghosted behind the current one, so a
+    // hand-drawn animation can be lined up frame to frame.
+    if (onionSkin && sequence && sequence.frameIds.length > 1 && frameId) {
+      const total = sequence.frameIds.length;
+      const here = sequence.frameIds.indexOf(frameId);
+      if (here >= 0) {
+        for (let offset = -onionBefore; offset <= onionAfter; offset += 1) {
+          if (offset === 0) continue;
+          const index = ((here + offset) % total + total) % total;
+          const url = thumbnails.get(sequence.frameIds[index]);
+          if (!url) continue;
+          let image = onionImages.current.get(url);
+          if (!image) {
+            image = new Image();
+            image.src = url;
+            onionImages.current.set(url, image);
+          }
+          if (!image.complete || image.naturalWidth === 0) continue;
+          context.globalAlpha = offset < 0 ? 0.35 : 0.25;
+          context.drawImage(image, panX, panY, imageWidth, imageHeight);
+        }
+        context.globalAlpha = 1;
+      }
+    }
+
     if (bitmap) context.drawImage(bitmap, panX, panY, imageWidth, imageHeight);
 
     // In-progress stroke overlay.
@@ -188,7 +233,7 @@ export function PixelCanvas(): React.ReactNode {
         brushSize * zoom - 1,
       );
     }
-  }, [bitmap, zoom, viewport, width, height, editor.cursor, tool, primary, brushSize, panning, redrawCount]);
+  }, [bitmap, zoom, viewport, width, height, editor.cursor, tool, primary, brushSize, panning, redrawCount, onionSkin, onionBefore, onionAfter, sequence, frameId, thumbnails]);
 
   // ---- coordinate helpers --------------------------------------------------
 
