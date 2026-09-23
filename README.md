@@ -149,11 +149,11 @@ Client configuration (Claude Desktop, or any `mcpServers` JSON):
 
 ### What it exposes
 
-- **60 tools.** Every core command (41) is generated straight from its zod schema, plus
+- **70 tools.** Every core command (50) is generated straight from its zod schema, plus
   hand-written session and perception tools: `create_document`, `open_document`,
   `save_document`, `import_image`, `select_document`, `close_document`, `list_documents`,
   `get_document`, `get_preview`, `get_pixels`, `get_palette`, `get_history`, `undo`, `redo`,
-  `apply_ops`, `export_png`, `export_sheet`, `list_commands`, `read_skill`.
+  `apply_ops`, `export_png`, `export_sheet`, `export_tiled`, `list_commands`, `read_skill`.
 - **5 resources** (3 static + 2 templates). `pixel://documents`, `pixel://commands`,
   `pixel://skill` (a pixel-art craft guide), plus the templates `pixel://documents/{id}` and
   `pixel://documents/{id}/preview` — the latter a real `image/png` blob, so multimodal models
@@ -190,6 +190,24 @@ Client configuration (Claude Desktop, or any `mcpServers` JSON):
 - `squash { layer: "*", scaleX, scaleY, pivot: "bottom" }` scales about a pivot with
   nearest-neighbour sampling, keeping the canvas size so the artwork stays registered.
   `scaleY: 0.9, scaleX: 1.08` is the down beat of a bounce.
+
+### Tilemaps and auto-tiling
+
+A tilemap is a grid of tile indices, kept alongside the pixel layers. It is the right
+structure for terrain, walls and floors, and it is what an agent uses to build a level.
+
+- `create_tileset` cuts a tile sheet out of a layer you have already drawn.
+- `add_tilemap` / `remove_tilemap` / `resize_tilemap` manage the grids;
+  `set_tile` and `fill_tilemap` write cells (`-1` means empty); `get_tilemap` reads them back.
+- **`autotile` is the headline.** Lay the terrain down with one placeholder index, then let
+  it pick the transition tiles. `set: 16` uses the four edge neighbours (the classic cheap
+  set); `set: 47` uses all eight and counts a diagonal only when both of its adjacent edges
+  are solid — that rule is what makes 47 tiles cover every blob shape without chipped
+  corners. `offset` says where this terrain starts in the sheet, so one sheet can hold
+  several terrains, and the pass leaves the empty background alone.
+- `paint_tilemap` bakes the grid into a normal pixel layer, so it flows into `export_png`
+  and `export_sheet` unchanged.
+- `export_tiled` writes a Tiled `.tmj` map with one tile layer per tilemap.
 
 ## For AI agents
 

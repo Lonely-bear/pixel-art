@@ -165,7 +165,37 @@ passes, and look at the result between passes.
 - Too many shades of the same colour with no hue shift.
 - Jagged curves: pixel art curves should be smooth when viewed at 100%. Step
   lengths on a curve should change gradually, e.g. 2,1,1,2,1,1 - never 4,1,4.
-- Redrawing everything each frame instead of moving one element.
+- Redrawing everything each frame when \`translate\` or \`squash\` would move it in one operation.
+
+## 12. Tilemaps and auto-tiling
+
+A tilemap is a grid of tile indices, separate from the sprite's pixel layers. It is the
+right structure for terrain, walls and floors: cheaper to edit, and it exports straight
+into a game engine.
+
+- Cut a tileset out of artwork you have already drawn: \`create_tileset { layer, frame,
+  tileWidth, tileHeight, columns }\` slices that layer into a grid of tiles. Draw the tile
+  sheet once as a normal image, then cut it.
+- \`add_tilemap { width, height, tileWidth, tileHeight }\` makes an empty grid; \`-1\` means
+  empty. \`set_tile\` writes one cell or a batch of \`tiles\`, \`fill_tilemap\` fills a rect or
+  the whole map, \`resize_tilemap\` grows or shifts the grid, \`remove_tilemap\` deletes it.
+- \`autotile\` is the reason to use a tilemap at all. Lay the terrain down with a single
+  placeholder index, then let it choose the transition tiles:
+  \`autotile { tilemap, set: 47, offset: 1, indices: [1] }\`.
+  - \`set: 16\` uses only the four edge neighbours - 16 tiles, the classic cheap set.
+  - \`set: 47\` uses all eight, and counts a diagonal only when both of its adjacent edges
+    are also solid. That rule is what makes 47 tiles enough for every possible blob shape,
+    and it is what stops corners from looking chipped.
+  - \`offset\` is the first tile index of this terrain in the sheet, so one sheet can hold
+    several terrains.
+  - The pass only rewrites cells that are already terrain, so the empty background stays
+    empty. Pass \`only\` to narrow it further, or \`skipIsolated\` to leave single cells alone.
+- \`paint_tilemap\` bakes the grid into a normal pixel layer, which is how a tilemap becomes
+  a PNG or part of a spritesheet. \`get_tilemap\` reads the cells back as rows of indices
+  when you need to inspect or verify a level.
+- \`export_tiled\` writes a Tiled \`.tmj\` map with one tile layer per tilemap, ready for a
+  level editor.
+- A tilemap is for things that repeat on a grid. A pixel layer is for everything else.
 `;
 
 /** Short, always-included preamble for prompts that do not need the full guide. */

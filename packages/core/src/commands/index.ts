@@ -8,6 +8,7 @@ export * from './catalog.js';
 export * from './draw.js';
 export * from './structure.js';
 export * from './transform.js';
+export * from './tilemap.js';
 
 import {
   clearRegionCommand,
@@ -56,6 +57,7 @@ import {
   squashCommand,
   translateCommand,
 } from './transform.js';
+import { tilemapCommands } from './tilemap.js';
 
 /**
  * Every command the product knows about.
@@ -111,6 +113,8 @@ export const allCommands: Command[] = [
   // Per-cel motion
   translateCommand,
   squashCommand,
+  // Tilemaps and auto-tiling
+  ...tilemapCommands,
 ];
 
 export const defaultRegistry: CommandRegistry = createRegistry(allCommands);

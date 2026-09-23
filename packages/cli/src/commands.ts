@@ -15,6 +15,7 @@ import {
   spriteDurationMs,
   spriteFromPng,
   toAsepriteJson,
+  toTiledJson,
   type AtlasOptions,
 } from '@pixel/core';
 import { boolFlag, intFlag, listFlag, stringFlag, UsageError, type ParsedArgs } from './args.js';
@@ -218,6 +219,45 @@ const sheetCommand: CommandSpec = {
       rows: atlas.rows,
       frames: atlas.frames.length,
       tags: atlas.tags.map((tag) => tag.name),
+    });
+    return 0;
+  },
+};
+
+/* --------------------------------------------------------------- tiled -- */
+
+const tiledCommand: CommandSpec = {
+  name: 'tiled',
+  summary: 'Export the tilemaps as a Tiled (.tmj) map',
+  usage: 'pixel tiled <file.pixel> --out <file.tmj> [--image <tileset.png>] [--firstgid <n>]',
+  async run(ctx) {
+    const path = requirePath(ctx);
+    const sprite = await loadSprite(path);
+    const out = outputPath(ctx, null);
+    if (!sprite.tileset) {
+      throw new UsageError('This document has no tileset. Run `create_tileset` first.');
+    }
+    const tilemaps = sprite.tilemaps ?? [];
+    if (tilemaps.length === 0) {
+      throw new UsageError('This document has no tilemaps. Run `add_tilemap` first.');
+    }
+
+    const image = stringFlag(ctx.args.flags, 'image') ?? 'tileset.png';
+    const firstgid = intFlag(ctx.args.flags, 'firstgid') ?? 1;
+    const map = toTiledJson(sprite.tileset, tilemaps, { image, firstgid });
+    await writeText(out, `${JSON.stringify(map, null, 2)}\n`);
+
+    printJson({
+      ok: true,
+      path: out,
+      image,
+      firstgid,
+      width: map.width,
+      height: map.height,
+      tileWidth: map.tilewidth,
+      tileHeight: map.tileheight,
+      layers: map.layers.map((layer) => layer.name),
+      tiles: map.tilesets[0]?.tilecount ?? 0,
     });
     return 0;
   },
@@ -453,6 +493,7 @@ export const COMMANDS: CommandSpec[] = [
   infoCommand,
   exportCommand,
   sheetCommand,
+  tiledCommand,
   importCommand,
   applyCommand,
   pipelineCommand,
