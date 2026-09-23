@@ -32,6 +32,7 @@ export * from './transform.js';
 export * from './render.js';
 export * from './png.js';
 export * from './serialize.js';
+export * from './ase.js';
 export * from './atlas.js';
 export * from './gif.js';
 export * from './import.js';

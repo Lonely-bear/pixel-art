@@ -14,7 +14,9 @@ import {
   frameLayersWithCels,
   resolveFrame,
   scaleAtlas,
+  isAseprite,
   spriteDurationMs,
+  spriteFromAseprite,
   spriteFromPng,
   toAsepriteJson,
   toTiledJson,
@@ -312,14 +314,20 @@ const importCommand: CommandSpec = {
     const path = requirePath(ctx, 'png');
     const bytes = await readBytes(path);
     const out = outputPath(ctx, withExtension(path.replace(/\.png$/i, ''), '.pixel'));
-    const sprite = spriteFromPng(bytes, {
-      name: stringFlag(ctx.args.flags, 'name') ?? basename(path, extname(path)),
-      ...(stringFlag(ctx.args.flags, 'layer') ? { layerName: stringFlag(ctx.args.flags, 'layer')! } : {}),
-      derivePalette: !boolFlag(ctx.args.flags, 'no-palette'),
-      ...(intFlag(ctx.args.flags, 'palette-limit') !== undefined
-        ? { paletteLimit: intFlag(ctx.args.flags, 'palette-limit')! }
-        : {}),
-    });
+    // Aseprite files and PNGs both arrive here; the header tells them apart. An
+    // Aseprite file brings its layers, frames, durations and tags with it.
+    const sprite = isAseprite(bytes)
+      ? spriteFromAseprite(bytes, {
+          name: stringFlag(ctx.args.flags, 'name') ?? basename(path, extname(path)),
+        })
+      : spriteFromPng(bytes, {
+          name: stringFlag(ctx.args.flags, 'name') ?? basename(path, extname(path)),
+          ...(stringFlag(ctx.args.flags, 'layer') ? { layerName: stringFlag(ctx.args.flags, 'layer')! } : {}),
+          derivePalette: !boolFlag(ctx.args.flags, 'no-palette'),
+          ...(intFlag(ctx.args.flags, 'palette-limit') !== undefined
+            ? { paletteLimit: intFlag(ctx.args.flags, 'palette-limit')! }
+            : {}),
+        });
     await saveSprite(out, sprite);
     printJson({
       ok: true,

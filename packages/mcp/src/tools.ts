@@ -28,12 +28,14 @@ import {
   encodeGIF,
   encodePNG,
   frameRefSchema,
+  isAseprite,
   layerRefSchema,
   parseColor,
   PixelBuffer,
   resolveFrame,
   scaleAtlas,
   scaleNearest,
+  spriteFromAseprite,
   spriteFromPng,
   toAsepriteJson,
   toTiledJson,
@@ -427,9 +429,9 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     server,
     'import_image',
     {
-      title: 'Import a PNG',
+      title: 'Import an image',
       description:
-        'Import a PNG from disk as a new sprite document. Handy for bringing reference art or existing assets into the session; the image becomes the bottom layer, and a palette is derived from it unless `derivePalette` is false.',
+        'Import a PNG or Aseprite (`.ase`) file from disk as a new sprite document. Handy for bringing reference art or existing assets into the session. A PNG becomes the bottom layer with a palette derived from it unless `derivePalette` is false; an Aseprite file brings its own layers, frames, frame durations and animation tags.',
       inputSchema: z.object({
         path: z.string().describe('Path to a PNG file.'),
         name: z.string().optional().describe('Sprite name. Defaults to the file name.'),
@@ -444,12 +446,16 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
       const path = args.path as string;
       try {
         const bytes = readFileSync(path);
-        const sprite = spriteFromPng(bytes, {
-          name: args.name as string | undefined,
-          layerName: args.layerName as string | undefined,
-          derivePalette: args.derivePalette !== false,
-          paletteLimit: args.paletteLimit as number | undefined,
-        });
+        // Aseprite files and PNGs both arrive here; the header tells them apart.
+        // An Aseprite file brings its layers, frames, durations and tags with it.
+        const sprite = isAseprite(bytes)
+          ? spriteFromAseprite(bytes, { name: args.name as string | undefined })
+          : spriteFromPng(bytes, {
+              name: args.name as string | undefined,
+              layerName: args.layerName as string | undefined,
+              derivePalette: args.derivePalette !== false,
+              paletteLimit: args.paletteLimit as number | undefined,
+            });
         const doc = store.add(sprite, { path, select: args.select !== false });
         return ok({ ok: true, document: store.summary(doc) });
       } catch (error) {
