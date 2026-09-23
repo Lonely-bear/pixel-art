@@ -188,6 +188,15 @@ into a game engine.
     and it is what stops corners from looking chipped.
   - \`offset\` is the first tile index of this terrain in the sheet, so one sheet can hold
     several terrains.
+  - The tile order is fixed, so your sheet has to match it. The neighbour bits are
+    N=1, E=2, S=4, W=8, NE=16, SE=32, SW=64, NW=128, and the tile index for a cell is
+    \`offset\` plus the position of its mask in that canonical list, ascending - so with
+    \`offset: 0\`, tile 0 is the fully isolated cell and tile 46 the fully enclosed one.
+    In other words, draw your sheet in ascending mask order starting at \`offset\`.
+  - Re-running \`autotile\` needs care: the pass replaces your placeholder index with
+    transition tiles, so the same \`indices\` list no longer describes the terrain and a
+    second identical call silently leaves the map wrong. After editing terrain, re-run
+    with \`indices\` omitted - then any non-empty cell counts as solid.
   - The pass only rewrites cells that are already terrain, so the empty background stays
     empty. Pass \`only\` to narrow it further, or \`skipIsolated\` to leave single cells alone.
 - \`paint_tilemap\` bakes the grid into a normal pixel layer, which is how a tilemap becomes

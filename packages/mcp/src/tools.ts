@@ -34,6 +34,7 @@ import {
   scaleNearest,
   spriteFromPng,
   toAsepriteJson,
+  toTiledJson,
   type Command,
   type Sprite,
 } from '@pixel/core';
@@ -1056,6 +1057,56 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           rows: atlas.rows,
           frames: atlas.frames.length,
           tags: atlas.tags,
+        });
+      } catch (error) {
+        return fail((error as Error).message);
+      }
+    },
+  );
+
+  addTool(
+    server,
+    'export_tiled',
+    {
+      title: 'Export a Tiled map',
+      description:
+        'Write the tilemaps as a Tiled 1.10 `.tmj` map, ready to open in the Tiled level editor or to load from a game engine. One tile layer is written per tilemap, in order, and the tileset is referenced by `image` - so the tileset PNG has to sit next to the map under that name. Empty cells are exported as `0` and tile `n` becomes `n + firstgid`, which is how Tiled numbers tiles.',
+      inputSchema: z.object({
+        document: documentRef,
+        out: z.string().optional().describe('Destination .tmj path.'),
+        path: z.string().optional().describe('Alias for `out`, for callers who expect a source-style path argument.'),
+        image: z.string().optional().describe('Tileset image path the map references. Defaults to "tileset.png".'),
+        firstgid: z.number().int().min(1).optional().describe('First global tile id. Defaults to 1.'),
+      }),
+      annotations: { destructiveHint: false },
+    },
+    (args) => {
+      try {
+        const doc = store.require(args.document as string | undefined);
+        const sprite = doc.editor.sprite;
+        const out = (args.out as string | undefined) ?? (args.path as string | undefined);
+        if (!out) return fail('`out` (or `path`) is required: where should the Tiled map be written?');
+        if (!sprite.tileset) return fail('This document has no tileset. Run `create_tileset` first.');
+        const tilemaps = sprite.tilemaps ?? [];
+        if (tilemaps.length === 0) return fail('This document has no tilemaps. Run `add_tilemap` first.');
+
+        const image = (args.image as string | undefined) ?? 'tileset.png';
+        const firstgid = (args.firstgid as number | undefined) ?? 1;
+        const map = toTiledJson(sprite.tileset, tilemaps, { image, firstgid });
+        writeFile(out, Buffer.from(`${JSON.stringify(map, null, 2)}\n`, 'utf8'));
+
+        return ok({
+          ok: true,
+          path: out,
+          image,
+          firstgid,
+          width: map.width,
+          height: map.height,
+          tileWidth: map.tilewidth,
+          tileHeight: map.tileheight,
+          layers: map.layers.map((layer) => layer.name),
+          tiles: map.tilesets[0]?.tilecount ?? 0,
+          document: store.summary(doc),
         });
       } catch (error) {
         return fail((error as Error).message);

@@ -75,7 +75,7 @@ const setTileSchema = z
 export const createTilesetCommand = defineCommand({
   name: 'create_tileset',
   description:
-    'Cut a grid of tiles out of an existing layer and make it the document tileset. Point it at artwork you already drew: a sheet of 16x16 terrain pieces laid out on one layer becomes addressable tiles. Replaces any existing tileset. `source` limits the cut to a region of the layer; `columns` defaults to however many tiles fit across.',
+    'Cut a grid of tiles out of an existing layer and make it the document tileset. Point it at artwork you already drew: a sheet of 16x16 terrain pieces laid out on one layer becomes addressable tiles. Replaces any existing tileset. `source` limits the cut to a region of the layer; `columns` defaults to however many tiles fit across. Watch out on a large canvas: the default really is the whole cel, so cutting a 128x128 sheet out of a 1024x1024 canvas gives you 4096 tiles unless you pass `source` (and usually `columns`).',
   params: z.object({
     layer: layerRefSchema,
     frame: frameRefSchema,
@@ -83,7 +83,7 @@ export const createTilesetCommand = defineCommand({
     tileHeight: z.number().int().positive().describe('Tile height in pixels.'),
     columns: z.number().int().positive().optional().describe('Tiles per row. Defaults to as many as fit.'),
     name: z.string().optional().describe('Tileset name. Defaults to `Tileset`.'),
-    source: rectSchema.optional().describe('Region of the layer to cut up. Defaults to the whole cel.'),
+    source: rectSchema.optional().describe('Region of the layer to cut up. Defaults to the whole cel, so pass this when the sheet is smaller than the canvas.'),
   }),
   apply(ctx, p) {
     const buf = celOf(ctx, p.layer, p.frame, false);
@@ -244,7 +244,9 @@ export const resizeTilemapCommand = defineCommand({
 export const autotileCommand = defineCommand({
   name: 'autotile',
   description:
-    'Rewrite a tilemap so its tiles match the terrain around them. Declare which cells are solid (either by `indices`, or every non-empty cell by default) and this picks the right transition tile for each one, so you never hand-place corners. `set: 47` (default) uses the 47-blob set with diagonal-aware inner corners; `set: 16` uses the simpler 4-neighbour 16-tile set. `offset` is the first tile of this terrain in the tileset, so several terrains can share one sheet.',
+    'Rewrite a tilemap so its tiles match the terrain around them. Declare which cells are solid (either by `indices`, or every non-empty cell by default) and this picks the right transition tile for each one, so you never hand-place corners. `set: 47` (default) uses the 47-blob set with diagonal-aware inner corners; `set: 16` uses the simpler 4-neighbour 16-tile set. `offset` is the first tile of this terrain in the tileset, so several terrains can share one sheet. ' +
+    'THE TILE ORDER IS FIXED, so the sheet you draw has to match it. Neighbour bits: N=1, E=2, S=4, W=8, NE=16, SE=32, SW=64, NW=128. For `set: 47` a diagonal bit only counts when BOTH of its adjacent cardinals are also solid, which is what reduces 256 combinations to 47. The tile index for a cell is `offset` plus the position of its mask in that canonical list, in ascending mask order - so `offset: 0` means tile 0 is fully isolated, and `offset: 48` puts the same set at tiles 48-94. Use `autotileSheet(47)` in `@pixel/core` if you need the exact mask for each index. ' +
+    'IMPORTANT: this pass REWRITES the cells it touches, replacing the placeholder index with transition tiles. That means a second identical call with the same `indices` will find almost nothing solid any more and will silently leave the map wrong. To re-run after editing terrain, omit `indices` entirely (any non-empty cell counts as terrain) or list every transition index you now expect.',
   params: z.object({
     tilemap: tilemapRefSchema,
     set: z.union([z.literal(16), z.literal(47)]).optional().describe('Transition set. Defaults to 47 (47-blob).'),
@@ -252,7 +254,9 @@ export const autotileCommand = defineCommand({
     indices: z
       .array(z.number().int())
       .optional()
-      .describe('Which tile indices count as solid. Defaults to every non-empty cell.'),
+      .describe(
+        'Which tile indices count as solid, matched against the cells\' CURRENT values. Defaults to every non-empty cell, which is the safe choice on a re-run: a previous pass replaced your placeholder index with transition tiles, so the same `indices` list no longer describes the terrain.',
+      ),
     rect: rectSchema.optional().describe('Only rewrite this region, in tile coordinates.'),
     skipIsolated: z.boolean().optional().describe('Leave cells with no solid neighbours empty. Defaults to false.'),
   }),
@@ -299,12 +303,12 @@ export const paintTilemapCommand = defineCommand({
 export const getTilemapCommand = defineCommand({
   name: 'get_tilemap',
   description:
-    'Read-only view of a tilemap: its size, how many cells are filled, and the tile indices as rows of numbers. Use it to check a terrain layout without rendering an image. `rect` limits the read to a region.',
+    'Read-only view of a tilemap: its size, how many cells are filled, and the tile indices as rows of numbers. Use it to check a terrain layout without rendering an image. `rect` limits the read to a region. `max` defaults to 1024 tiles, so reading a whole 64x64 map (4096 cells) needs `max: 4096` or a `rect`.',
   readOnly: true,
   params: z.object({
     tilemap: tilemapRefSchema,
     rect: rectSchema.optional().describe('Region in tile coordinates. Defaults to the whole map.'),
-    max: z.number().int().positive().optional().describe('Largest region to return, in tiles. Defaults to 1024.'),
+    max: z.number().int().positive().optional().describe('Largest region to return, in tiles. Defaults to 1024, which is smaller than a 64x64 map - raise it or pass `rect` for a big map.'),
   }),
   apply(ctx, p) {
     const tilemap = resolveTilemap(ctx.sprite, p.tilemap);
