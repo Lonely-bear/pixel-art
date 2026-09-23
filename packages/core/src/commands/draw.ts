@@ -50,11 +50,15 @@ export const drawPixelsCommand = defineCommand({
     frame: frameRefSchema,
     pixels: z
       .array(
-        z.object({
-          x: z.number().int(),
-          y: z.number().int(),
-          color: nullableColorSchema.describe('Colour to write, or null to erase.'),
-        }),
+        // Strict, like the top level: a mistyped per-pixel key has to be an error,
+        // not a silently dropped property.
+        z
+          .object({
+            x: z.number().int(),
+            y: z.number().int(),
+            color: nullableColorSchema.describe('Colour to write, or null to erase.'),
+          })
+          .strict(),
       )
       .describe('Sparse pixel list. Only the listed pixels are touched.'),
     clip: clipSchema,
@@ -333,13 +337,15 @@ export const copyRegionCommand = defineCommand({
   description:
     'Copy a rect from one cel onto another position (optionally on a different layer or frame). Reads from a snapshot of the source, so overlapping source and destination is safe.',
   params: z.object({
-    from: z.object({ layer: layerRefSchema, frame: frameRefSchema, rect: rectSchema }),
-    to: z.object({
-      layer: layerRefSchema,
-      frame: frameRefSchema,
-      x: z.number().int().describe('Destination X of the region top-left.'),
-      y: z.number().int().describe('Destination Y of the region top-left.'),
-    }),
+    from: z.object({ layer: layerRefSchema, frame: frameRefSchema, rect: rectSchema }).strict(),
+    to: z
+      .object({
+        layer: layerRefSchema,
+        frame: frameRefSchema,
+        x: z.number().int().describe('Destination X of the region top-left.'),
+        y: z.number().int().describe('Destination Y of the region top-left.'),
+      })
+      .strict(),
     eraseSource: z.boolean().optional().describe('Clear the source rect afterwards. Defaults to false.'),
     ...blendOptionsShape,
   }),

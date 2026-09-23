@@ -619,3 +619,111 @@ describe('export', () => {
     expect((detail.palette as { size: number }).size).toBeGreaterThan(0);
   });
 });
+
+describe('iteration ergonomics', () => {
+  it('keeps going after a bad op and says how many it skipped', async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 8, height: 8, name: 'Batch', layers: ['base'] },
+    });
+
+    // The middle op names a parameter that does not exist. The old default was to
+    // stop there, which silently dropped everything after it - an agent would only
+    // notice from the preview, and would have no idea why.
+    const result = (await client.callTool({
+      name: 'apply_ops',
+      arguments: {
+        ops: [
+          { command: 'draw_rect', rect: { x: 0, y: 0, w: 2, h: 2 }, color: '#ff0000', fill: true },
+          { command: 'draw_rect', rect: { x: 2, y: 2, w: 2, h: 2 }, color: '#00ff00', fill: true, fill2: true },
+          { command: 'draw_rect', rect: { x: 4, y: 4, w: 2, h: 2 }, color: '#0000ff', fill: true },
+        ],
+      },
+    })) as ToolResult;
+
+    const body = payload(result);
+    expect(body.ok).toBe(false);
+    expect(body.applied).toBe(2);
+    expect(body.failed).toBe(1);
+    expect(body.skipped).toBe(0);
+
+    // The last op really did run.
+    const measured = (await client.callTool({
+      name: 'measure_region',
+      arguments: { layer: 'base', frame: 0 },
+    })) as ToolResult;
+    expect((payload(measured).summary as { opaque: number }).opaque).toBe(8);
+  });
+
+  it('reports the skipped tail when stopOnError is set', async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 8, height: 8, name: 'Halt', layers: ['base'] },
+    });
+
+    const result = (await client.callTool({
+      name: 'apply_ops',
+      arguments: {
+        stopOnError: true,
+        ops: [
+          { command: 'draw_rect', rect: { x: 0, y: 0, w: 2, h: 2 }, color: '#ff0000', fill: true },
+          { command: 'nope_not_a_command', rect: { x: 0, y: 0, w: 1, h: 1 }, color: '#fff' },
+          { command: 'draw_rect', rect: { x: 4, y: 4, w: 2, h: 2 }, color: '#0000ff', fill: true },
+        ],
+      },
+    })) as ToolResult;
+
+    const body = payload(result);
+    expect(body.applied).toBe(1);
+    expect(body.failed).toBe(1);
+    expect(body.skipped).toBe(1);
+  });
+
+  it('truncates a huge validation error instead of dumping it', async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 8, height: 8, name: 'Noisy', layers: ['base'] },
+    });
+
+    // A zod union error for a `draw_pixels` op with the wrong shape runs to several
+    // kilobytes of nested alternatives.
+    const result = (await client.callTool({
+      name: 'apply_ops',
+      arguments: {
+        ops: [
+          {
+            command: 'draw_pixels',
+            pixels: [
+              { x: 0, y: 0, color: '#fff', extra: 1 },
+              { x: 1, y: 1, color: '#fff', extra: 2 },
+            ],
+          },
+        ],
+      },
+    })) as ToolResult;
+
+    const body = payload(result);
+    expect(body.failed).toBe(1);
+    const failures = body.failures as Array<{ error: string }>;
+    expect(failures[0].error.length).toBeLessThanOrEqual(320);
+  });
+
+  it('accepts `path` as an alias for `out` on exports', async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 8, height: 8, name: 'Alias', layers: ['base'] },
+    });
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { rect: { x: 0, y: 0, w: 4, h: 4 }, color: '#ff0000', fill: true },
+    });
+
+    const target = join(tempDir, 'alias.png');
+    const result = (await client.callTool({
+      name: 'export_png',
+      arguments: { path: target },
+    })) as ToolResult;
+    expect(result.isError).toBeFalsy();
+    expect(readFileSync(target).subarray(0, 4).toString('hex')).toBe('89504e47');
+  });
+});

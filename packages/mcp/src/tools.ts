@@ -106,6 +106,19 @@ function fillDefaults(sprite: Sprite, command: Command, params: Record<string, u
   }
 }
 
+/**
+ * Shorten a validation error so a failed op does not bury the response.
+ *
+ * A zod union error for a six-pixel `draw_pixels` op runs to about five kilobytes of
+ * nested alternatives, and `quiet` cannot shrink it because the message is produced
+ * before `quiet` is consulted. The first few hundred characters always name the
+ * offending key, which is all an agent needs to fix the call.
+ */
+function briefError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.length <= 300 ? message : `${message.slice(0, 300)}…`;
+}
+
 function ok(payload: Record<string, unknown>, extra: ContentBlock[] = []): CallToolResult {
   return {
     content: [...extra, text(JSON.stringify(payload, null, 2))],
@@ -793,7 +806,12 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           .boolean()
           .optional()
           .describe('If true, undo every op that succeeded when one fails, so the document is unchanged. Defaults to false.'),
-        stopOnError: z.boolean().optional().describe('Stop at the first failing op. Defaults to true.'),
+        stopOnError: z
+          .boolean()
+          .optional()
+          .describe(
+            'Stop at the first failing op and skip the rest. Defaults to false: every op is attempted and every failure is reported, which is what you want while iterating.',
+          ),
         defaultLayer: layerRefSchema
           .optional()
           .describe('Layer applied to every op that needs one and does not name it. Defaults to the bottom layer.'),
@@ -829,7 +847,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
 
       const rawOps = args.ops as RawOp[];
       const atomic = args.atomic === true;
-      const stopOnError = args.stopOnError !== false;
+      const stopOnError = args.stopOnError === true;
       const quiet = args.quiet === true;
       const defaults = {
         layer: args.defaultLayer as string | number | undefined,
@@ -840,6 +858,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
       const failures: Array<Record<string, unknown>> = [];
       let applied = 0;
       let failed = 0;
+      let stoppedAt: number | null = null;
 
       for (let i = 0; i < rawOps.length; i++) {
         let op: { command: string; params: Record<string, unknown>; label?: string };
@@ -847,8 +866,11 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           op = normalizeOp(rawOps[i] ?? {});
         } catch (error) {
           failed++;
-          results.push({ index: i, ok: false, error: (error as Error).message });
-          if (stopOnError) break;
+          results.push({ index: i, ok: false, error: briefError(error) });
+          if (stopOnError) {
+            stoppedAt = i;
+            break;
+          }
           continue;
         }
 
@@ -871,11 +893,19 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           results.push({ index: i, command: op.command, ok: true, summary: result.summary });
         } else {
           failed++;
-          results.push({ index: i, command: op.command, ok: false, code: result.code, error: result.error });
-          failures.push({ index: i, command: op.command, code: result.code, error: result.error });
-          if (stopOnError) break;
+          const error = briefError(result.error);
+          results.push({ index: i, command: op.command, ok: false, code: result.code, error });
+          failures.push({ index: i, command: op.command, code: result.code, error });
+          if (stopOnError) {
+            stoppedAt = i;
+            break;
+          }
         }
       }
+
+      // A skipped tail is the one thing an agent cannot infer from the results, so say
+      // it out loud: ops after `stoppedAt` never ran.
+      const skipped = stoppedAt === null ? 0 : rawOps.length - stoppedAt - 1;
 
       if (applied > 0) store.touch(doc);
 
@@ -886,6 +916,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           rolledBack: true,
           applied: 0,
           failed,
+          skipped,
           version: doc.editor.version,
           failures,
         });
@@ -895,6 +926,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         ok: failed === 0,
         applied,
         failed,
+        skipped,
         version: doc.editor.version,
         document: store.summary(doc),
         // The failure list is small and always worth having; the per-op results
@@ -916,7 +948,8 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         'Write the composited sprite to a PNG file. One frame by default; pass `frames: "all"` to write one file per frame (`name_0.png`, `name_1.png`, ...). Use `scale` to write a larger preview.',
       inputSchema: z.object({
         document: documentRef,
-        out: z.string().describe('Destination PNG path.'),
+        out: z.string().optional().describe('Destination PNG path.'),
+        path: z.string().optional().describe('Alias for `out`, for callers who expect a source-style path argument.'),
         frame: frameRefSchema.optional().describe('Frame id or 0-based index. Defaults to frame 0.'),
         frames: z.enum(['one', 'all']).optional().describe('"one" (default) or "all" for one file per frame.'),
         scale: z.number().int().min(1).max(32).optional().describe('Integer upscale factor. Defaults to 1 (pixel-exact).'),
@@ -930,7 +963,10 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         const sprite = doc.editor.sprite;
         const background = resolveBackground(args.background as string | null | undefined);
         const scale = (args.scale as number | undefined) ?? 1;
-        const out = args.out as string;
+        // `path` is accepted as an alias so a caller does not have to remember that
+        // sources use `path` and destinations use `out`.
+        const out = (args.out as string | undefined) ?? (args.path as string | undefined);
+        if (!out) return fail('`out` (or `path`) is required: where should the PNG be written?');
 
         const written: string[] = [];
         if (args.frames === 'all' && sprite.frames.length > 1) {
@@ -974,7 +1010,8 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         'Write a spritesheet PNG plus Aseprite-compatible JSON, which Unity, Godot, Phaser and LÖVE all read. Use `layout: "grid"` with `columns` for a power-of-two sheet. Animation tags are exported as frame tags so the engine gets your loop ranges and directions.',
       inputSchema: z.object({
         document: documentRef,
-        out: z.string().describe('Destination PNG path.'),
+        out: z.string().optional().describe('Destination PNG path.'),
+        path: z.string().optional().describe('Alias for `out`, for callers who expect a source-style path argument.'),
         json: z.string().optional().describe('Destination JSON path. Defaults to the PNG path with a `.json` extension.'),
         layout: z.enum(['horizontal', 'vertical', 'grid']).optional().describe('Sheet layout. Defaults to "horizontal".'),
         columns: z.number().int().min(1).optional().describe('Columns for the "grid" layout.'),
@@ -988,7 +1025,8 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
       try {
         const doc = store.require(args.document as string | undefined);
         const sprite = doc.editor.sprite;
-        const out = args.out as string;
+        const out = (args.out as string | undefined) ?? (args.path as string | undefined);
+        if (!out) return fail('`out` (or `path`) is required: where should the spritesheet be written?');
         const jsonPath = (args.json as string | undefined) ?? out.replace(/\.png$/i, '') + '.json';
 
         const atlas = buildSpritesheet(sprite, {

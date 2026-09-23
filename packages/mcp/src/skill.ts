@@ -101,7 +101,11 @@ passes, and look at the result between passes.
   pivot with nearest-neighbour sampling and keeps the canvas size, so the artwork stays
   registered: \`scaleY: 0.9, scaleX: 1.08\` on the down beat, the reverse on the up beat.
   Pass \`layer: "*"\` so all layers share one pivot - scaling them separately shears the
-  sprite.
+  sprite. Order matters when you use both: \`squash\` first, then \`translate\`, because
+  \`translate\` clears the band it vacates and would wipe out the squashed artwork if it
+  ran first. A named pivot is measured against the artwork's bounding box, which
+  includes any outline you have drawn - so \`pivot: "bottom"\` sits on the outline's
+  bottom row, one pixel below the body.
 - Check the loop: the last frame should lead back into the first. Look at the
   sprite sheet, not just the individual frames.
 
@@ -130,9 +134,10 @@ passes, and look at the result between passes.
   \`{x:5, y:8, w:22, h:22}\` is a full circle whose bottom edge is \`y = 29\`. A flat-bottomed
   dome is not an ellipse: either use an ellipse whose bottom equals the baseline, or cut
   the bottom off with \`clear_region\`.
-- Shape commands take the colour once. \`draw_pixels\` is the exception: it takes a
-  top-level \`color\` for the whole list *and* a per-pixel \`color\`, and the per-pixel value
-  wins. That is how you draw several colours in one call.
+- Shape commands take the colour once, as a \`color\` parameter. \`draw_pixels\` is
+  different: it has **no** top-level colour, and every entry in \`pixels\` carries its own
+  \`color\` (which may be \`null\` to erase). That is how you draw several colours, or erase
+  some pixels and paint others, in one call.
 
 ## 10. Working with a game engine
 
