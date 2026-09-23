@@ -2,12 +2,14 @@ import { basename, extname } from 'node:path';
 import {
   Editor,
   allCommands,
+  animationSequence,
   buildSpritesheet,
   compositeFrame,
   createEditor,
   createPalette,
   createSprite,
   describeCommands,
+  encodeGIF,
   encodePNG,
   frameLayersWithCels,
   resolveFrame,
@@ -263,6 +265,43 @@ const tiledCommand: CommandSpec = {
   },
 };
 
+/* ----------------------------------------------------------------- gif -- */
+
+const gifCommand: CommandSpec = {
+  name: 'gif',
+  summary: 'Export the animation as an animated GIF',
+  usage: 'pixel gif <file.pixel> --out <file.gif> [--tag <name>] [--scale <n>] [--background <hex>] [--no-loop]',
+  async run(ctx) {
+    const path = requirePath(ctx);
+    const sprite = await loadSprite(path);
+    const out = outputPath(ctx, null);
+    const scale = intFlag(ctx.args.flags, 'scale', 1)!;
+    if (scale < 1) throw new UsageError('--scale must be at least 1');
+
+    const tag = stringFlag(ctx.args.flags, 'tag');
+    const background = stringFlag(ctx.args.flags, 'background') ?? null;
+    // `--no-loop` forces a single play-through even for a tag that repeats forever.
+    const loop = boolFlag(ctx.args.flags, 'loop') ? true : boolFlag(ctx.args.flags, 'no-loop') ? false : undefined;
+
+    const bytes = encodeGIF(sprite, { tag, scale, background, loop });
+    await writeBytes(out, bytes);
+
+    const sequence = animationSequence(sprite, tag);
+    printJson({
+      ok: true,
+      path: out,
+      width: sprite.width * scale,
+      height: sprite.height * scale,
+      frames: sequence.frames.length,
+      durationMs: sequence.durationMs,
+      tag: sequence.name,
+      loops: sequence.loops,
+      bytes: bytes.length,
+    });
+    return 0;
+  },
+};
+
 /* --------------------------------------------------------------- import -- */
 
 const importCommand: CommandSpec = {
@@ -494,6 +533,7 @@ export const COMMANDS: CommandSpec[] = [
   exportCommand,
   sheetCommand,
   tiledCommand,
+  gifCommand,
   importCommand,
   applyCommand,
   pipelineCommand,

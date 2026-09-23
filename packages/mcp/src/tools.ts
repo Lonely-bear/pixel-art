@@ -20,10 +20,12 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult, ContentBlock, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import {
   allCommands,
+  animationSequence,
   buildSpritesheet,
   compositeFrame,
   defaultRegistry,
   describeCommands,
+  encodeGIF,
   encodePNG,
   frameRefSchema,
   layerRefSchema,
@@ -1106,6 +1108,66 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           tileHeight: map.tileheight,
           layers: map.layers.map((layer) => layer.name),
           tiles: map.tilesets[0]?.tilecount ?? 0,
+          document: store.summary(doc),
+        });
+      } catch (error) {
+        return fail((error as Error).message);
+      }
+    },
+  );
+
+  addTool(
+    server,
+    'export_gif',
+    {
+      title: 'Export an animated GIF',
+      description:
+        'Write the animation to an animated GIF. By default every frame is written in order and the GIF loops forever. Pass `tag` to export one named animation instead: the tag\'s direction (`forward`, `reverse`, `pingpong`) and its repeat count decide the frame order, so a `pingpong` idle bounces without you duplicating any frames. `scale` upscales the whole GIF by an integer factor for a preview, and `background` fills transparency for targets that cannot show it.',
+      inputSchema: z.object({
+        document: documentRef,
+        out: z.string().optional().describe('Destination GIF path.'),
+        path: z.string().optional().describe('Alias for `out`, for callers who expect a source-style path argument.'),
+        tag: z
+          .union([z.string(), z.number().int()])
+          .optional()
+          .describe('Animation tag name, ID or index. Omit to export every frame in order.'),
+        scale: z.number().int().min(1).max(32).optional().describe('Integer upscale factor. Defaults to 1.'),
+        background: z
+          .string()
+          .optional()
+          .describe('Fill transparent pixels with this colour instead of leaving them transparent.'),
+        loop: z.boolean().optional().describe("Force looping on or off, overriding the tag's repeat setting."),
+      }),
+      annotations: { destructiveHint: false },
+    },
+    (args) => {
+      try {
+        const doc = store.require(args.document as string | undefined);
+        const sprite = doc.editor.sprite;
+        const out = (args.out as string | undefined) ?? (args.path as string | undefined);
+        if (!out) return fail('`out` (or `path`) is required: where should the GIF be written?');
+
+        const tag = args.tag as string | number | undefined;
+        const scale = (args.scale as number | undefined) ?? 1;
+        const bytes = encodeGIF(sprite, {
+          tag,
+          scale,
+          background: (args.background as string | undefined) ?? null,
+          loop: args.loop as boolean | undefined,
+        });
+        writeFile(out, bytes);
+
+        const sequence = animationSequence(sprite, tag);
+        return ok({
+          ok: true,
+          path: out,
+          width: sprite.width * scale,
+          height: sprite.height * scale,
+          frames: sequence.frames.length,
+          durationMs: sequence.durationMs,
+          tag: sequence.name,
+          loops: sequence.loops,
+          bytes: bytes.length,
           document: store.summary(doc),
         });
       } catch (error) {

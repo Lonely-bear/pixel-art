@@ -33,6 +33,7 @@ export * from './render.js';
 export * from './png.js';
 export * from './serialize.js';
 export * from './atlas.js';
+export * from './gif.js';
 export * from './import.js';
 
 // Brings in the command bus (`Editor`, `applyCommand`, `undo`, ...) transitively.
