@@ -35,8 +35,8 @@ an Electron renderer, a test runner, and a headless CI job — from the same sou
 - [x] **M0** core document model, command bus, rasteriser, PNG, `.pixel` serialisation, CLI
 - [x] **M1** MCP server (tools + image resources + prompts)
 - [x] **M2** Electron UI
-- [ ] **M3** tilemaps, auto-tiling, Tiled export
-- [ ] **M4** animation tags, spritesheet / GIF export
+- [x] **M3** tilemaps, auto-tiling, Tiled export
+- [x] **M4** animation tags, spritesheet / GIF export, Aseprite `.ase` import
 - [ ] **M5** scripting sandbox, plugins
 
 ## Commands
@@ -59,7 +59,9 @@ node packages/cli/dist/index.js info hero.pixel
 node packages/cli/dist/index.js export hero.pixel --out hero.png --scale 4
 node packages/cli/dist/index.js export hero.pixel --out hero.png --all      # one PNG per frame
 node packages/cli/dist/index.js sheet hero.pixel --out hero-sheet.png      # Aseprite-style JSON alongside
-node packages/cli/dist/index.js import hero.png --out hero.pixel           # PNG -> document, palette derived
+node packages/cli/dist/index.js tiled hero.pixel --out hero.tmj            # Tiled map from the tilemaps
+node packages/cli/dist/index.js gif hero.pixel --out hero.gif --tag idle   # animated GIF, tag-driven order
+node packages/cli/dist/index.js import hero.png --out hero.pixel           # PNG or .ase -> document
 node packages/cli/dist/index.js apply hero.pixel --ops ops.json            # run commands (the AI entry point)
 node packages/cli/dist/index.js pipeline hero.pixel --ops ops.json --out preview.png
 node packages/cli/dist/index.js thumb hero.pixel --out thumb.png --max 128
@@ -103,11 +105,21 @@ What it has:
 - **Layers** — visibility, locking, opacity, six blend modes, reorder, duplicate, merge down.
 - **Frames and tags** — frame strip with per-frame thumbnails and durations, plus animation
   tags for named ranges, and `translate` / `squash` for moving whole layers between frames.
+- **Playback** — the canvas plays the selected animation tag in its real order (the same
+  `animationSequence` the GIF export uses, so the preview and the file cannot disagree), with
+  play/pause, a tag selector and a speed control.
+- **Onion skinning** — the neighbouring frames ghost behind the current one, previous at 35%
+  and next at 25%, with adjustable before/after counts.
+- **Tilemaps** — a panel that shows the tileset as a clickable tile picker and the tilemap as
+  a grid you can paint: left-click lays the active tile, right-click erases, dragging paints a
+  run. Add or remove a tilemap, run `autotile` with the 16 or 47 set and an offset, bake the
+  grid into a pixel layer, and export a Tiled `.tmj`. With no tileset yet, it offers to cut one
+  out of the current layer.
 - **Palette** — click to set the primary colour, right-click for the secondary, and
   `quantize_to_palette` to snap existing artwork to the palette (with dithering).
-- **Import / export** — open and save `.pixel`, import a PNG as a new document (deriving a
-  palette from it), export a PNG at 1x–16x, or export a spritesheet with Aseprite-compatible
-  JSON.
+- **Import / export** — open and save `.pixel`, import a PNG or an Aseprite `.ase` file as a
+  new document, export a PNG at 1x–16x, export a spritesheet with Aseprite-compatible JSON,
+  export an animated GIF (honouring the tag's direction and repeat), or export a Tiled map.
 
 ### The AI-facing part
 
@@ -149,11 +161,12 @@ Client configuration (Claude Desktop, or any `mcpServers` JSON):
 
 ### What it exposes
 
-- **70 tools.** Every core command (50) is generated straight from its zod schema, plus
+- **71 tools.** Every core command (50) is generated straight from its zod schema, plus
   hand-written session and perception tools: `create_document`, `open_document`,
-  `save_document`, `import_image`, `select_document`, `close_document`, `list_documents`,
-  `get_document`, `get_preview`, `get_pixels`, `get_palette`, `get_history`, `undo`, `redo`,
-  `apply_ops`, `export_png`, `export_sheet`, `export_tiled`, `list_commands`, `read_skill`.
+  `save_document`, `import_image` (PNG or Aseprite), `select_document`, `close_document`,
+  `list_documents`, `get_document`, `get_preview`, `get_pixels`, `get_palette`, `get_history`,
+  `undo`, `redo`, `apply_ops`, `export_png`, `export_sheet`, `export_tiled`, `export_gif`,
+  `list_commands`, `read_skill`.
 - **5 resources** (3 static + 2 templates). `pixel://documents`, `pixel://commands`,
   `pixel://skill` (a pixel-art craft guide), plus the templates `pixel://documents/{id}` and
   `pixel://documents/{id}/preview` — the latter a real `image/png` blob, so multimodal models
@@ -208,6 +221,18 @@ structure for terrain, walls and floors, and it is what an agent uses to build a
 - `paint_tilemap` bakes the grid into a normal pixel layer, so it flows into `export_png`
   and `export_sheet` unchanged.
 - `export_tiled` writes a Tiled `.tmj` map with one tile layer per tilemap.
+
+### Exporting an animation
+
+- `export_gif` writes an animated GIF. Omit `tag` for every frame in order, or pass one and the
+  tag's `direction` (`forward`, `reverse`, `pingpong`) and `repeat` decide the frame order and
+  whether it loops — a pingpong idle bounces without duplicating any frames. `scale` upscales
+  by an integer factor and `background` fills transparency.
+- `export_sheet` writes the same frames as a spritesheet PNG plus Aseprite-compatible JSON,
+  with the animation tags exported as `meta.frameTags`. `export_png` with `frames: "all"`
+  writes one file per frame.
+- All three read the frame order from the same `animationSequence` the canvas plays, so a
+  preview and an export always agree.
 
 ## For AI agents
 

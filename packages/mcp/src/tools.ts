@@ -433,7 +433,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
       description:
         'Import a PNG or Aseprite (`.ase`) file from disk as a new sprite document. Handy for bringing reference art or existing assets into the session. A PNG becomes the bottom layer with a palette derived from it unless `derivePalette` is false; an Aseprite file brings its own layers, frames, frame durations and animation tags.',
       inputSchema: z.object({
-        path: z.string().describe('Path to a PNG file.'),
+        path: z.string().describe('Path to a PNG or Aseprite (.ase) file.'),
         name: z.string().optional().describe('Sprite name. Defaults to the file name.'),
         layerName: z.string().optional().describe('Name for the layer the image lands on.'),
         derivePalette: z.boolean().optional().describe('Derive a palette from the image colours. Defaults to true.'),

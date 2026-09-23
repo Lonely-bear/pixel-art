@@ -155,6 +155,18 @@ passes, and look at the result between passes.
   JSON carries the timing.
 - Leave a 1px transparent margin between frames in a sheet (\`padding: 1\`) or
   engines will bleed neighbouring frames when filtering.
+- \`export_gif\` writes an animated GIF. Omit \`tag\` and every frame goes in order;
+  pass one and the tag's \`direction\` and \`repeat\` decide the frame order and the
+  looping, so a \`pingpong\` idle bounces without you duplicating any frames. Add
+  \`scale\` for a larger preview and \`background\` if the target cannot show
+  transparency.
+- The GIF, the sheet and the per-frame PNGs all read their frame order from the
+  same \`animationSequence\` the editor's preview uses, so what plays on the canvas
+  is what gets written. If a loop looks wrong on the canvas, it will be wrong in
+  the file.
+- \`import_image\` opens an Aseprite \`.ase\` file as well as a PNG, and an Aseprite
+  file brings its own layers, frames, durations and animation tags with it. That
+  is the easiest way to start from art someone already drew.
 
 ## 11. Things that look bad
 
