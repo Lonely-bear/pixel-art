@@ -14,6 +14,19 @@ const TOOLS: Array<{ id: ToolId; glyph: string; label: string; key: string }> = 
   { id: 'pan', glyph: '✥', label: 'Pan', key: 'H' },
 ];
 
+const DITHER_PATTERNS = [
+  'checker',
+  'checker-inv',
+  'bayer4',
+  'bayer8',
+  'dots',
+  'sparse',
+  'dense',
+  'horizontal',
+  'vertical',
+  'diagonal',
+] as const;
+
 export function Toolbar(): React.ReactNode {
   const editor = useEditor();
   const { tool, setTool, brushSize, setBrushSize, primary, setPrimary, secondary, setSecondary } =
@@ -59,6 +72,49 @@ export function Toolbar(): React.ReactNode {
             onChange={(event) => editor.setFillShapes(event.target.checked)}
           />
           <span>Filled shapes</span>
+        </label>
+      </div>
+
+      <div className="toolbar-section">
+        <label className="field" title="Keep paint inside pixels that already exist">
+          <span>Clip</span>
+          <select
+            className="doc-select"
+            value={editor.clip}
+            onChange={(event) => editor.setClip(event.target.value as 'none' | 'cel' | 'composite')}
+          >
+            <option value="none">None</option>
+            <option value="cel">This layer</option>
+            <option value="composite">Silhouette</option>
+          </select>
+        </label>
+        <label className="field" title="Stipple every write instead of laying paint down solid">
+          <span>Dither</span>
+          <select
+            className="doc-select"
+            value={editor.ditherPattern}
+            onChange={(event) => editor.setDitherPattern(event.target.value)}
+          >
+            <option value="">Off</option>
+            {DITHER_PATTERNS.map((pattern) => (
+              <option key={pattern} value={pattern}>
+                {pattern}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>Level</span>
+          <input
+            type="range"
+            min={0.05}
+            max={1}
+            step={0.05}
+            value={editor.ditherLevel}
+            disabled={!editor.ditherPattern}
+            onChange={(event) => editor.setDitherLevel(Number(event.target.value))}
+          />
+          <output>{Math.round(editor.ditherLevel * 100)}%</output>
         </label>
       </div>
 

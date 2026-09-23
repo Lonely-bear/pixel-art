@@ -350,11 +350,32 @@ export function PixelCanvas(): React.ReactNode {
       const frame = editor.frameId;
       if (!layer || !frame) return;
       const hex = rgbaToHex(color);
+      // The toolbar's clip and dither settings are optional parameters, so they
+      // are only sent when they are actually in use.
+      const clip = editor.clip === 'none' ? {} : { clip: editor.clip };
+      const dither = editor.ditherPattern
+        ? { pattern: editor.ditherPattern, level: editor.ditherLevel }
+        : {};
       if (activeTool === 'fill') {
-        await editor.execute('fill', { layer, frame, x: point.x, y: point.y, color: hex, contiguous: true });
+        await editor.execute('fill', {
+          layer,
+          frame,
+          x: point.x,
+          y: point.y,
+          color: hex,
+          contiguous: true,
+          ...clip,
+          ...dither,
+        });
       } else if (activeTool === 'replace') {
         const target = editor.hoverColor ?? color;
-        await editor.execute('replace_color', { layer, frame, from: rgbaToHex(target), to: hex });
+        await editor.execute('replace_color', {
+          layer,
+          frame,
+          from: rgbaToHex(target),
+          to: hex,
+          ...clip,
+        });
       }
     },
     [editor],
@@ -409,10 +430,18 @@ export function PixelCanvas(): React.ReactNode {
       if (!layer || !frame) return;
 
       const color = stroke.erase ? null : rgbaToHex(stroke.color);
+      // One stroke is one command, so it carries the toolbar's clip and dither
+      // settings as a single undo step.
+      const clip = editor.clip === 'none' ? {} : { clip: editor.clip };
+      const dither = editor.ditherPattern
+        ? { pattern: editor.ditherPattern, level: editor.ditherLevel }
+        : {};
       await editor.execute('draw_pixels', {
         layer,
         frame,
         pixels: points.map((point) => ({ x: point.x, y: point.y, color })),
+        ...clip,
+        ...dither,
       });
     },
     [editor, redraw],

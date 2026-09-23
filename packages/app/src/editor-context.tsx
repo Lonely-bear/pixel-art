@@ -95,6 +95,12 @@ export interface EditorValue {
   setTilemapRef(ref: string | null): void;
   activeTile: number;
   setActiveTile(index: number): void;
+  clip: 'none' | 'cel' | 'composite';
+  setClip(clip: 'none' | 'cel' | 'composite'): void;
+  ditherPattern: string;
+  setDitherPattern(pattern: string): void;
+  ditherLevel: number;
+  setDitherLevel(level: number): void;
   exportGif(tag?: string): Promise<void>;
   exportTiled(): Promise<void>;
   importImage(): Promise<void>;
@@ -151,6 +157,13 @@ export function EditorProvider({ children }: { children: ReactNode }): ReactNode
   const [tilemapData, setTilemapData] = useState<TilemapInfo | null>(null);
   const [tilemapRef, setTilemapRef] = useState<string | null>(null);
   const [activeTile, setActiveTile] = useState(0);
+
+  // Painting constraints. `clip` keeps a shape inside the silhouette the other
+  // layers define, and the dither pattern stipples every write instead of laying
+  // paint down solid.
+  const [clip, setClip] = useState<'none' | 'cel' | 'composite'>('none');
+  const [ditherPattern, setDitherPattern] = useState('');
+  const [ditherLevel, setDitherLevel] = useState(0.5);
 
   const activeIdRef = useRef<string | undefined>(undefined);
   const frameIdRef = useRef<string | null>(null);
@@ -555,6 +568,12 @@ export function EditorProvider({ children }: { children: ReactNode }): ReactNode
     setTilemapRef,
     activeTile,
     setActiveTile,
+    clip,
+    setClip,
+    ditherPattern,
+    setDitherPattern,
+    ditherLevel,
+    setDitherLevel,
     exportGif,
     exportTiled,
     importImage,
