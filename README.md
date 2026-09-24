@@ -10,6 +10,7 @@ model** in `packages/core`. The Electron app and the MCP server are both just cl
 | Package | Role |
 | --- | --- |
 | `packages/core` | Pure TypeScript. Document model, command bus, rasteriser, PNG, serialisation. **No DOM, no Electron, no Node APIs.** |
+| `packages/script` | Sandboxed JavaScript runtime + plugin loader (`node:vm`). **Node only.** |
 | `packages/cli` | Headless command line over `core` (M0). |
 | `packages/mcp` | MCP server exposing `core` as tools/resources/prompts (M1). |
 | `packages/app` | Electron + React + Vite editor, with the MCP server embedded (M2). |
@@ -37,7 +38,7 @@ an Electron renderer, a test runner, and a headless CI job — from the same sou
 - [x] **M2** Electron UI
 - [x] **M3** tilemaps, auto-tiling, Tiled export
 - [x] **M4** animation tags, spritesheet / GIF export, Aseprite `.ase` import
-- [ ] **M5** scripting sandbox, plugins
+- [x] **M5** scripting sandbox, plugins
 
 ## Commands
 
@@ -64,6 +65,8 @@ node packages/cli/dist/index.js gif hero.pixel --out hero.gif --tag idle   # ani
 node packages/cli/dist/index.js import hero.png --out hero.pixel           # PNG or .ase -> document
 node packages/cli/dist/index.js apply hero.pixel --ops ops.json            # run commands (the AI entry point)
 node packages/cli/dist/index.js pipeline hero.pixel --ops ops.json --out preview.png
+node packages/cli/dist/index.js script hero.pixel --src script.js          # sandboxed JS, one undo step
+node packages/cli/dist/index.js commands --plugin stripe.js                # extra commands from a plugin
 node packages/cli/dist/index.js thumb hero.pixel --out thumb.png --max 128
 node packages/cli/dist/index.js pixels hero.pixel --rect 0,0,16,16
 node packages/cli/dist/index.js commands --json                            # every command + its JSON Schema
@@ -79,6 +82,13 @@ send over MCP:
   { "command": "dither_fill", "params": { "layer": "Shade", "rect": { "x": 2, "y": 2, "w": 12, "h": 12 }, "color": "#101820", "pattern": "bayer4", "level": 0.25 } }
 ] }
 ```
+
+Any colour in a command can be given as a **palette index shorthand** — the number `9` or the
+string `"pal:9"` (also `"palette 9"` / `"pal#9"`, case-insensitive) — resolved against the
+document's palette. An agent can therefore work in palette terms instead of hard-coding hex:
+`{ "command": "draw_rect", "params": { "layer": "Ink", "rect": {...}, "color": "pal:3", "fill": true } }`.
+Explicit hex/RGB input is unchanged, and an out-of-range index fails loudly rather than
+silently drawing the wrong colour.
 
 ## Desktop app
 
@@ -100,8 +110,16 @@ What it has:
   stroke is one undo step.
 - **Tools** — pencil, eraser, line, rectangle, ellipse, bucket fill, colour replace,
   eyedropper, pan. Brush size 1–8, filled-shape toggle, primary/secondary colours with alpha.
-- **Clipping** — any draw can be restricted with `clip`, so shading, highlights and dither
-  bands stay inside the silhouette instead of filling their bounding box.
+- **Clipping** — any draw can be restricted with `clip`: `"composite"` (the rest of the
+  frame), `"cel"` (this layer), or named layers (`{layer: "hair"}`, `{layers: [...]}`), so
+  shading, highlights and dither bands stay inside the silhouette — or one part of it —
+  instead of filling their bounding box. Clipping to a layer that renders *above* the one
+  you paint hides the result, and the tool returns a `warning` when it detects that.
+- **Replace** — `draw_rect`, `draw_ellipse`, `draw_polygon` and `dither_fill` take
+  `replace: true` to clear the pixels they cover before painting, so a re-drawn or
+  re-stippled shape does not stack on the previous pass. It clears only the new shape's
+  footprint, so shrinking a shape leaves the old pixels behind. `draw_line` takes a
+  `width` (1–64) for thick strokes such as staffs and limbs.
 - **Layers** — visibility, locking, opacity, six blend modes, reorder, duplicate, merge down.
 - **Frames and tags** — frame strip with per-frame thumbnails and durations, plus animation
   tags for named ranges, and `translate` / `squash` for moving whole layers between frames.
@@ -116,7 +134,9 @@ What it has:
   grid into a pixel layer, and export a Tiled `.tmj`. With no tileset yet, it offers to cut one
   out of the current layer.
 - **Palette** — click to set the primary colour, right-click for the secondary, and
-  `quantize_to_palette` to snap existing artwork to the palette (with dithering).
+  `quantize_to_palette` to snap existing artwork to the palette (with dithering). A document
+  can also be created with `paletteLocked: true`, which snaps every painted colour to the
+  nearest swatch (alpha preserved).
 - **Import / export** — open and save `.pixel`, import a PNG or an Aseprite `.ase` file as a
   new document, export a PNG at 1x–16x, export a spritesheet with Aseprite-compatible JSON,
   export an animated GIF (honouring the tag's direction and repeat), or export a Tiled map.
@@ -136,14 +156,18 @@ The server binds to loopback only, and each MCP client gets its own session tran
 ## MCP server
 
 `packages/mcp` exposes the same command bus over the Model Context Protocol, so an agent
-can drive the editor directly. It runs two ways:
+can drive the editor directly. It runs three ways:
 
 - **stdio** — the standalone server below, for any MCP client, no GUI required.
 - **HTTP** — embedded in the Electron app (see above), for attaching to a live session.
+- **`--attach <url>`** — a transparent stdio→HTTP bridge, so a client that only speaks stdio
+  (Claude Desktop and friends) can drive a *running* app, sharing its document store and undo
+  history. It relays every request, notification and capability verbatim.
 
 ```bash
 pnpm build
 node packages/mcp/dist/cli.js          # speaks JSON-RPC on stdin/stdout
+node packages/mcp/dist/cli.js --attach http://127.0.0.1:7331/mcp   # bridge stdio -> running app
 ```
 
 Client configuration (Claude Desktop, or any `mcpServers` JSON):
@@ -154,6 +178,14 @@ Client configuration (Claude Desktop, or any `mcpServers` JSON):
     "pixel-art": {
       "command": "node",
       "args": ["G:/AI项目/pixel-art/packages/mcp/dist/cli.js"]
+    },
+    "pixel-art-live": {
+      "command": "node",
+      "args": [
+        "G:/AI项目/pixel-art/packages/mcp/dist/cli.js",
+        "--attach",
+        "http://127.0.0.1:7331/mcp"
+      ]
     }
   }
 }
@@ -161,34 +193,53 @@ Client configuration (Claude Desktop, or any `mcpServers` JSON):
 
 ### What it exposes
 
-- **71 tools.** Every core command (50) is generated straight from its zod schema, plus
+- **74 tools.** Every core command (50) is generated straight from its zod schema, plus
   hand-written session and perception tools: `create_document`, `open_document`,
   `save_document`, `import_image` (PNG or Aseprite), `select_document`, `close_document`,
   `list_documents`, `get_document`, `get_preview`, `get_pixels`, `get_palette`, `get_history`,
   `undo`, `redo`, `apply_ops`, `export_png`, `export_sheet`, `export_tiled`, `export_gif`,
-  `list_commands`, `read_skill`.
-- **5 resources** (3 static + 2 templates). `pixel://documents`, `pixel://commands`,
-  `pixel://skill` (a pixel-art craft guide), plus the templates `pixel://documents/{id}` and
+  `list_commands`, `read_skill`, and the scripting tools `run_script`, `load_plugin`,
+  `list_plugins`. Loading a plugin registers its commands as real tools on the fly.
+  `list_commands` returns the runnable command catalogue plus a `sessionTools` list, so
+  `undo`/`redo`/`get_history` and the perception/export tools are discoverable from one
+  call. `undo`/`redo` take `steps` (alias `count`). `create_document` takes `select: false`
+  to build a scratch document without stealing focus, `select_document` accepts an id or a
+  name, and `get_preview` takes `rect` to crop-zoom a detail.
+- **6 resources** (4 static + 2 templates). `pixel://documents`, `pixel://commands`,
+  `pixel://skill` (a pixel-art craft guide), `pixel://script-guide` (the sandbox/plugin API),
+  plus the templates `pixel://documents/{id}` and
   `pixel://documents/{id}/preview` — the latter a real `image/png` blob, so multimodal models
-  can *see* the art.
+  can *see* the art. The preview template takes the same view options as `get_preview` as
+  query parameters: `?frame=N`, `?frames=all`, `?scale=N`, `?layers=a,b`, `?onion=N`
+  (plus `?onionBefore`, `?onionAfter`, `?onionOpacity`, `?loop`, `?beforeTint`, `?afterTint`).
 - **4 prompts.** `draw_sprite`, `animate_sprite`, `improve_sprite`, `pixel_art_basics`.
 
 ### Five details that matter for agents
 
 1. **`get_preview` returns an actual PNG image**, not a pixel array. A 32x32 sprite is ~10k
-   tokens as JSON and ~200 tokens as an image, and the model can actually look at it.
+   tokens as JSON and ~200 tokens as an image, and the model can actually look at it. It also
+   takes `layers` to isolate one or more layers, `rect` to crop-zoom a detail (a face, a hand),
+   and `onion` to ghost the neighbouring frames
+   (`before`/`after` counts, `opacity`, `loop`, and separate `beforeTint`/`afterTint`), so an
+   agent can inspect a single layer or judge motion without exporting anything.
 2. **`apply_ops` batches.** An agent sends a list of commands in one round trip; with
    `atomic: true` a failure rolls the whole batch back. It also takes `defaultLayer` /
    `defaultFrame` so a long batch does not repeat itself, and `quiet: true` to drop the
-   per-op summaries.
+   per-op summaries. Pass `preview: true` (optionally with `previewFrame`) and the same call
+   returns the resulting PNG alongside the JSON, closing the draw→look→adjust loop in one
+   round trip instead of two.
 3. **`expectedVersion` gives optimistic concurrency.** Read a version, pass it back on the
    next write, and a stale edit fails with `version_conflict` instead of clobbering someone
    else's work. Read-only commands never bump the version or eat your redo stack.
 4. **`clip` is the constraint that makes drawing tractable.** `clip: "composite"` paints
    only where the *other* layers already have pixels, so a shadow, highlight or dither band
    cannot spill into the transparent corners of its bounding box. `clip: "cel"` clips
-   against the layer being painted. Paired with `scope: "composite"` on `outline` and
-   `measure_region`, it removes the whole class of "must stay inside the silhouette" bugs.
+   against the layer being painted, and `clip: {layer: "hair"}` / `{layers: [...]}` clip to
+   named layers — handy for shading one part of a body. When the clip layer renders
+   *above* the layer being painted the paint would be hidden, so the command returns a
+   `warning`. Paired with `scope: "composite"` on `outline` and `measure_region`, it removes
+   the whole class of "must stay inside the silhouette" bugs; `outline` also takes
+   `alphaThreshold` so a faint glow is not traced as a hard contour.
 5. **Dithering is a write rule, not a special command.** `dither_fill` takes a `shape`
    (`{rect}`, `{ellipse}` or `{polygon}`) so a transition band can follow a curve instead of
    being a box, and every paint command (`draw_rect`, `draw_ellipse`, `draw_polygon`,
@@ -234,6 +285,67 @@ structure for terrain, walls and floors, and it is what an agent uses to build a
 - All three read the frame order from the same `animationSequence` the canvas plays, so a
   preview and an export always agree.
 
+## Scripting and plugins
+
+`packages/script` adds a sandboxed JavaScript layer on top of the same command bus. It is
+**Node-only** — `core` stays platform-free — and it is deliberately narrow: a script can only
+drive the editor through the commands, never touch the filesystem, the network or `process`.
+
+A script runs inside a hardened `node:vm` context with no `require`, no `process`, no `module`,
+no `eval`/`new Function` and no string code generation, under a timeout (2 s by default). It is
+handed a small **context-native** API — `exec`, `tryExec`, `commands`, `command`, `document`,
+`layers`, `frames`, `tags`, `palette`, `getPixel`, `sample`, `log` — and its return value and
+logs come back as JSON:
+
+```js
+const base = layers()[0].id;
+exec('draw_rect', { layer: base, frame: 0, rect: { x: 0, y: 0, w: 8, h: 8 }, color: 'pal:3', fill: true });
+exec('draw_pixels', { layer: base, frame: 0, pixels: [{ x: 0, y: 0, color: '#101820' }] });
+log('done', commands().length);
+return { w: document().width };
+```
+
+**A whole script is one undo step.** The runtime wraps every call in `editor.transaction`, so
+a fifty-command script is a single `Ctrl+Z`, exactly like one brush stroke. A script that only
+reads creates no undo entry at all.
+
+A **plugin** is just a script that calls `defineCommand(...)`. The command it declares is
+validated by a generated zod schema and registered on the live registry, so it shows up in the
+MCP tool list, in `pixel commands` and in every open document at once:
+
+```js
+defineCommand({
+  name: 'stripe_fill',
+  description: 'Fill the canvas with horizontal stripes of two colours.',
+  params: {
+    a: { type: 'color', required: true },
+    b: { type: 'color', required: true },
+    step: { type: 'int', min: 1, default: 2 },
+  },
+  run(api, { a, b, step }) {
+    const doc = api.document();
+    for (let y = 0; y < doc.height; y += step) {
+      api.exec('draw_rect', { layer: doc.layers[0].id, frame: 0,
+        rect: { x: 0, y, w: doc.width, h: 1 }, color: y % (step * 2) === 0 ? a : b, fill: true });
+    }
+  },
+});
+```
+
+`params` types are `number | int | boolean | string | color | layer | frame | rect | point |
+json`, each accepting `required`, `default`, `description`, `min`, `max` and (for strings)
+`values`. A plugin command's parameters are strict: it accepts exactly what it declares.
+
+Ways to run them:
+
+- **MCP** — `run_script` (`{ document, source, timeoutMs?, preview? }`), `load_plugin`
+  (`{ source? | path?, name? }`, which hot-registers the new tools and emits
+  `notifications/tools/list_changed`) and `list_plugins`. `pixel://script-guide` is the API
+  reference an agent reads first.
+- **CLI** — `pixel script <file.pixel> --src script.js` (or `--code "..."`) with
+  `--timeout`, `--dry-run`, `--preview out.png`; and a repeatable `--plugin <file.js>` on
+  `script`, `apply`, `pipeline` and `commands`.
+
 ## For AI agents
 
 The command catalogue is the contract. `describeCommands(allCommands)` in `@pixel/core`
@@ -245,6 +357,6 @@ node packages/cli/dist/index.js commands --json > tools.json
 ```
 
 The MCP server uses exactly this — the tools it advertises *are* the commands in
-`allCommands`, validated by the same schemas. There is no second, hand-maintained list to
-fall out of date.
+`allCommands`, validated by the same schemas. Plugins extend that same registry at runtime, so
+a new command is a new tool with no second, hand-maintained list to fall out of date.
 

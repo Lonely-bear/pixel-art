@@ -22,7 +22,7 @@ import {
   toAsepriteJson,
   toTiledJson,
 } from '@pixel/core';
-import { CHANNELS, type DocumentSummary, type PreviewRequest } from '../shared/types.js';
+import { CHANNELS, type AppLocale, type DocumentSummary, type PreviewRequest } from '../shared/types.js';
 import {
   describeDocument,
   execute,
@@ -43,6 +43,21 @@ function summaries(): DocumentSummary[] {
   return store.list().map((doc) => store.summary(doc));
 }
 
+let appLocale: AppLocale = 'en';
+const dialogText = {
+  en: {
+    open: 'Open sprite', save: 'Save sprite', saveAs: 'Save sprite as',
+    png: 'Export PNG', sheet: 'Export spritesheet', gif: 'Export GIF',
+    tiled: 'Export Tiled map', importImage: 'Import image',
+  },
+  'zh-CN': {
+    open: '打开角色文件', save: '保存角色', saveAs: '角色另存为',
+    png: '导出 PNG', sheet: '导出精灵图', gif: '导出 GIF',
+    tiled: '导出 Tiled 地图', importImage: '导入图片',
+  },
+} as const;
+const text = () => dialogText[appLocale];
+
 function broadcast(): void {
   const activeId = store.activeDocumentId;
   for (const window of BrowserWindow.getAllWindows()) {
@@ -62,6 +77,9 @@ async function ensureDir(filePath: string): Promise<void> {
 }
 
 export function registerIpc(getMcpStatus: () => unknown): void {
+  ipcMain.on(CHANNELS.setLocale, (_event, locale: AppLocale) => {
+    if (locale === 'en' || locale === 'zh-CN') appLocale = locale;
+  });
   ipcMain.handle(CHANNELS.listDocuments, () => summaries());
 
   ipcMain.handle(CHANNELS.status, () => ({
@@ -125,7 +143,7 @@ export function registerIpc(getMcpStatus: () => unknown): void {
   ipcMain.handle(CHANNELS.openFile, async () => {
     const window = focusedWindow();
     const picked = await dialog.showOpenDialog(window!, {
-      title: 'Open sprite',
+      title: text().open,
       filters: [{ name: 'Pixel Art sprite', extensions: ['pixel'] }],
       properties: ['openFile'],
     });
@@ -142,7 +160,7 @@ export function registerIpc(getMcpStatus: () => unknown): void {
     let filePath = doc.path;
     if (!filePath) {
       const picked = await dialog.showSaveDialog(focusedWindow()!, {
-        title: 'Save sprite',
+        title: text().save,
         defaultPath: `${doc.name}.pixel`,
         filters: [{ name: 'Pixel Art sprite', extensions: ['pixel'] }],
       });
@@ -160,7 +178,7 @@ export function registerIpc(getMcpStatus: () => unknown): void {
   ipcMain.handle(CHANNELS.saveFileAs, async (_event, id: string | undefined) => {
     const doc = store.require(id);
     const picked = await dialog.showSaveDialog(focusedWindow()!, {
-      title: 'Save sprite as',
+      title: text().saveAs,
       defaultPath: doc.path ?? `${doc.name}.pixel`,
       filters: [{ name: 'Pixel Art sprite', extensions: ['pixel'] }],
     });
@@ -182,7 +200,7 @@ export function registerIpc(getMcpStatus: () => unknown): void {
     ) => {
       const doc = store.require(id);
       const picked = await dialog.showSaveDialog(focusedWindow()!, {
-        title: 'Export PNG',
+        title: text().png,
         defaultPath: `${doc.name}.png`,
         filters: [{ name: 'PNG image', extensions: ['png'] }],
       });
@@ -202,7 +220,7 @@ export function registerIpc(getMcpStatus: () => unknown): void {
   ipcMain.handle(CHANNELS.exportSheet, async (_event, id: string | undefined, options: { layout?: 'horizontal' | 'vertical' | 'grid'; columns?: number; padding?: number; margin?: number; scale?: number } = {}) => {
     const doc = store.require(id);
     const picked = await dialog.showSaveDialog(focusedWindow()!, {
-      title: 'Export spritesheet',
+      title: text().sheet,
       defaultPath: `${doc.name}-sheet.png`,
       filters: [{ name: 'PNG image', extensions: ['png'] }],
     });
@@ -231,7 +249,7 @@ export function registerIpc(getMcpStatus: () => unknown): void {
     ) => {
       const doc = store.require(id);
       const picked = await dialog.showSaveDialog(focusedWindow()!, {
-        title: 'Export GIF',
+        title: text().gif,
         defaultPath: `${doc.name}.gif`,
         filters: [{ name: 'Animated GIF', extensions: ['gif'] }],
       });
@@ -266,7 +284,7 @@ export function registerIpc(getMcpStatus: () => unknown): void {
     if (tilemaps.length === 0) throw new Error('This document has no tilemaps. Run `add_tilemap` first.');
 
     const picked = await dialog.showSaveDialog(focusedWindow()!, {
-      title: 'Export Tiled map',
+      title: text().tiled,
       defaultPath: `${doc.name}.tmj`,
       filters: [{ name: 'Tiled map', extensions: ['tmj', 'json'] }],
     });
@@ -336,7 +354,7 @@ export function registerIpc(getMcpStatus: () => unknown): void {
 
   ipcMain.handle(CHANNELS.importImage, async () => {
     const picked = await dialog.showOpenDialog(focusedWindow()!, {
-      title: 'Import image',
+      title: text().importImage,
       filters: [{ name: 'Images', extensions: ['png'] }],
       properties: ['openFile'],
     });

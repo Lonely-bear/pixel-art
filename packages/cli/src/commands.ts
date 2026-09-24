@@ -6,6 +6,7 @@ import {
   buildSpritesheet,
   compositeFrame,
   createEditor,
+  createMutableRegistry,
   createPalette,
   createSprite,
   describeCommands,
@@ -21,8 +22,10 @@ import {
   toAsepriteJson,
   toTiledJson,
   type AtlasOptions,
+  type MutableCommandRegistry,
 } from '@pixel/core';
-import { boolFlag, intFlag, listFlag, stringFlag, UsageError, type ParsedArgs } from './args.js';
+import { ScriptRuntime } from '@pixel/script';
+import { boolFlag, intFlag, listFlag, repeatFlag, stringFlag, UsageError, type ParsedArgs } from './args.js';
 import { loadSprite, printJson, readBytes, readText, saveSprite, writeBytes, writeText } from './io.js';
 
 export interface CommandContext {
@@ -53,6 +56,31 @@ function outputPath(ctx: CommandContext, fallback: string | null): string {
   if (out) return out;
   if (fallback) return fallback;
   throw new UsageError('missing --out <path>');
+}
+
+/**
+ * Build a mutable command registry seeded with the core commands, then load any
+ * plugins named by repeated `--plugin <file.js>` flags into it. The resulting
+ * registry is what the editor (and therefore scripts and `apply`) sees, so a
+ * plugin command is callable exactly like a built-in one.
+ */
+async function registryWithPlugins(ctx: CommandContext): Promise<MutableCommandRegistry> {
+  const registry = createMutableRegistry(allCommands);
+  const pluginPaths = repeatFlag(ctx.args.flags, 'plugin');
+  if (pluginPaths.length === 0) return registry;
+
+  const runtime = new ScriptRuntime();
+  for (const pluginPath of pluginPaths) {
+    let source: string;
+    try {
+      source = await readText(pluginPath);
+    } catch {
+      throw new UsageError(`cannot read plugin "${pluginPath}"`);
+    }
+    const outcome = runtime.loadPlugin(source, { name: basename(pluginPath), registry });
+    if (!outcome.ok) throw new UsageError(`plugin "${pluginPath}" failed to load: ${outcome.error}`);
+  }
+  return registry;
 }
 
 /* ------------------------------------------------------------------ new -- */
@@ -374,7 +402,7 @@ function normalizeOps(value: unknown): Op[] {
 const applyCommand: CommandSpec = {
   name: 'apply',
   summary: 'Run a list of core commands against a document (the scripted/AI entry point)',
-  usage: 'pixel apply <file.pixel> --ops <ops.json> [--out <file.pixel>] [--dry-run]',
+  usage: 'pixel apply <file.pixel> --ops <ops.json> [--out <file.pixel>] [--dry-run] [--plugin <file.js>]...',
   async run(ctx) {
     const path = requirePath(ctx);
     const opsPath = stringFlag(ctx.args.flags, 'ops');
@@ -382,7 +410,7 @@ const applyCommand: CommandSpec = {
     const sprite = await loadSprite(path);
     const ops = normalizeOps(JSON.parse(await readText(opsPath)));
 
-    const editor = createEditor(sprite);
+    const editor = createEditor(sprite, await registryWithPlugins(ctx));
     const results: unknown[] = [];
     let failed = 0;
 
@@ -408,10 +436,10 @@ const applyCommand: CommandSpec = {
 
 const commandsCommand: CommandSpec = {
   name: 'commands',
-  summary: 'List every core command with its JSON schema (used by the MCP layer)',
-  usage: 'pixel commands [--json]',
+  summary: 'List every command with its JSON schema (used by the MCP layer)',
+  usage: 'pixel commands [--json] [--plugin <file.js>]...',
   async run(ctx) {
-    const list = describeCommands(allCommands);
+    const list = describeCommands((await registryWithPlugins(ctx)).list());
     if (boolFlag(ctx.args.flags, 'json')) {
       printJson({ commands: list });
       return 0;
@@ -456,7 +484,7 @@ const thumbCommand: CommandSpec = {
 const pipelineCommand: CommandSpec = {
   name: 'pipeline',
   summary: 'Apply ops to a document and export the result in one call (AI batch workflow)',
-  usage: 'pixel pipeline <file.pixel> --ops <ops.json> --out <file.png> [--scale <n>] [--background <hex>] [--save <file.pixel>] [--json <file.json>]',
+  usage: 'pixel pipeline <file.pixel> --ops <ops.json> --out <file.png> [--scale <n>] [--background <hex>] [--save <file.pixel>] [--json <file.json>] [--plugin <file.js>]...',
   async run(ctx) {
     const path = requirePath(ctx);
     const opsPath = stringFlag(ctx.args.flags, 'ops');
@@ -464,7 +492,7 @@ const pipelineCommand: CommandSpec = {
     const sprite = await loadSprite(path);
     const ops = normalizeOps(JSON.parse(await readText(opsPath)));
 
-    const editor = createEditor(sprite);
+    const editor = createEditor(sprite, await registryWithPlugins(ctx));
     const results: unknown[] = [];
     for (const op of ops) {
       const result = editor.tryExecute(op.command, op.params);
@@ -535,6 +563,49 @@ const pixelsCommand: CommandSpec = {
   },
 };
 
+/* -------------------------------------------------------------- script -- */
+
+const scriptCommand: CommandSpec = {
+  name: 'script',
+  summary: 'Run a sandboxed JavaScript snippet against a document (Node-only)',
+  usage:
+    'pixel script <file.pixel> (--src <script.js> | --code <js>) [--out <file.pixel>] [--timeout <ms>] [--dry-run] [--preview <file.png>] [--plugin <file.js>]...',
+  async run(ctx) {
+    const path = requirePath(ctx);
+    const srcPath = stringFlag(ctx.args.flags, 'src');
+    const code = stringFlag(ctx.args.flags, 'code');
+    if (!srcPath && code === undefined) {
+      throw new UsageError('missing --src <script.js> or --code <js>');
+    }
+    const source = srcPath ? await readText(srcPath) : code!;
+
+    const sprite = await loadSprite(path);
+    const editor = createEditor(sprite, await registryWithPlugins(ctx));
+    const runtime = new ScriptRuntime({ timeoutMs: intFlag(ctx.args.flags, 'timeout', 2000)! });
+    const outcome = runtime.run(source, editor);
+
+    const out = stringFlag(ctx.args.flags, 'out') ?? path;
+    if (outcome.ok && !boolFlag(ctx.args.flags, 'dry-run')) await saveSprite(out, editor.sprite);
+
+    const previewPath = stringFlag(ctx.args.flags, 'preview');
+    if (outcome.ok && previewPath) {
+      const frame = resolveFrame(editor.sprite, 0);
+      await writeBytes(previewPath, encodePNG(compositeFrame(editor.sprite, frame.id)));
+    }
+
+    printJson({
+      ok: outcome.ok,
+      result: outcome.result,
+      logs: outcome.logs,
+      error: outcome.error,
+      version: editor.version,
+      path: out,
+      ...(previewPath && outcome.ok ? { preview: previewPath } : {}),
+    });
+    return outcome.ok ? 0 : 1;
+  },
+};
+
 export const COMMANDS: CommandSpec[] = [
   newCommand,
   infoCommand,
@@ -545,6 +616,7 @@ export const COMMANDS: CommandSpec[] = [
   importCommand,
   applyCommand,
   pipelineCommand,
+  scriptCommand,
   thumbCommand,
   pixelsCommand,
   commandsCommand,

@@ -8,12 +8,28 @@
 export interface ParsedArgs {
   command: string | null;
   positionals: string[];
-  flags: Record<string, string | boolean>;
+  /** A flag given more than once becomes an array, newest last. */
+  flags: Record<string, string | boolean | string[]>;
+}
+
+/**
+ * Record a flag, keeping every occurrence. A repeated flag (e.g. `--plugin a
+ * --plugin b`) accumulates into an array instead of the last one winning.
+ */
+function pushFlag(flags: ParsedArgs['flags'], key: string, value: string | boolean): void {
+  const existing = flags[key];
+  if (existing === undefined) {
+    flags[key] = value;
+  } else if (Array.isArray(existing)) {
+    existing.push(String(value));
+  } else {
+    flags[key] = [String(existing), String(value)];
+  }
 }
 
 export function parseArgs(argv: readonly string[]): ParsedArgs {
   const positionals: string[] = [];
-  const flags: Record<string, string | boolean> = {};
+  const flags: ParsedArgs['flags'] = {};
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -26,22 +42,22 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     if (arg.startsWith('--')) {
       const eq = arg.indexOf('=');
       if (eq !== -1) {
-        flags[arg.slice(2, eq)] = arg.slice(eq + 1);
+        pushFlag(flags, arg.slice(2, eq), arg.slice(eq + 1));
       } else {
         const key = arg.slice(2);
         const next = argv[i + 1];
         if (next !== undefined && !next.startsWith('-')) {
-          flags[key] = next;
+          pushFlag(flags, key, next);
           i++;
         } else {
-          flags[key] = true;
+          pushFlag(flags, key, true);
         }
       }
       continue;
     }
 
     if (arg.startsWith('-') && arg.length > 1) {
-      flags[arg.slice(1)] = true;
+      pushFlag(flags, arg.slice(1), true);
       continue;
     }
 
@@ -52,14 +68,27 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   return { command, positionals, flags };
 }
 
+/** The last value of a flag, if any. */
 export function stringFlag(flags: ParsedArgs['flags'], key: string): string | undefined {
   const value = flags[key];
-  return typeof value === 'string' ? value : undefined;
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value[value.length - 1];
+  return undefined;
+}
+
+/** Every value of a repeatable flag, in order. */
+export function repeatFlag(flags: ParsedArgs['flags'], key: string): string[] {
+  const value = flags[key];
+  if (value === undefined || value === false) return [];
+  if (Array.isArray(value)) return value;
+  if (value === true) return [''];
+  return [value];
 }
 
 export function boolFlag(flags: ParsedArgs['flags'], key: string): boolean {
   const value = flags[key];
-  return value === true || value === 'true' || value === '1' || value === '';
+  const raw = Array.isArray(value) ? value[value.length - 1] : value;
+  return raw === true || raw === 'true' || raw === '1' || raw === '';
 }
 
 export function numberFlag(

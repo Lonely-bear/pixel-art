@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useEditor } from './editor-context.js';
+import { useI18n } from './i18n.js';
 import { api } from './api.js';
 import { TopBar } from './components/TopBar.js';
 import { Toolbar } from './components/Toolbar.js';
@@ -24,6 +25,7 @@ const TOOL_KEYS: Record<string, string> = {
 
 export function App(): React.ReactNode {
   const editor = useEditor();
+  const { t } = useI18n();
   const { ready, detail, notice } = editor;
 
   // Keyboard shortcuts. Ignored while typing in a field.
@@ -83,7 +85,12 @@ export function App(): React.ReactNode {
   }, [editor]);
 
   if (!ready) {
-    return <div className="boot">Starting the pixel editor…</div>;
+    return (
+      <div className="boot">
+        <div className="boot-mark" />
+        <strong>{t('app.starting')}</strong>
+      </div>
+    );
   }
 
   return (
@@ -104,10 +111,14 @@ export function App(): React.ReactNode {
           </aside>
         </div>
       ) : (
-        <div className="boot">No document open.</div>
+        <div className="boot">{t('app.noDocument')}</div>
       )}
       <StatusBar />
-      {notice && <div className={`toast ${notice.kind}`}>{notice.text}</div>}
+      {notice && (
+        <div className={`toast ${notice.kind}`} role="status" aria-live="polite">
+          {notice.text}
+        </div>
+      )}
     </div>
   );
 }

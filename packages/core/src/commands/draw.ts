@@ -13,14 +13,17 @@ import {
   extractRegion,
   fillShape,
   floodFill,
+  maskFromBuffer,
   outline,
   replaceColor,
+  type DrawOptions,
 } from '../raster.js';
 import {
   blendOptionsShape,
   celOf,
   clipMask,
   clipSchema,
+  clipWarning,
   colorSchema,
   defineCommand,
   ditherOptionsShape,
@@ -32,9 +35,11 @@ import {
   nullableColorSchema,
   pointSchema,
   rectSchema,
+  resolveColor,
   shapeSchema,
   toShapeSpec,
 } from './types.js';
+import type { ColorInput } from '../types.js';
 
 /**
  * Drawing commands.
@@ -44,10 +49,30 @@ import {
  * rather than an exception.
  */
 
+/**
+ * Run an erase pass then the paint pass, for `replace: true`.
+ *
+ * The erase pass reuses the exact same geometry as the paint pass, so only the pixels
+ * the shape is about to cover are cleared — never the transparent corners of its
+ * bounding box. `pattern`/`level` are dropped for the erase so the whole shape clears
+ * rather than just the stippled pixels.
+ */
+function withReplace(
+  replace: boolean | undefined,
+  paint: (color: ColorInput | null, opts: DrawOptions) => number,
+  color: ColorInput | null,
+  opts: DrawOptions,
+): { painted: number; replaced: number } {
+  let replaced = 0;
+  if (replace) replaced = paint(null, { ...opts, pattern: undefined, level: undefined });
+  const painted = paint(color, opts);
+  return { painted, replaced };
+}
+
 export const drawPixelsCommand = defineCommand({
   name: 'draw_pixels',
   description:
-    'Write an explicit list of pixels. `color: null` erases the pixel. Coordinates outside the canvas are ignored. Use this for precise, hand-authored detail; prefer the shape and dither commands for anything regular.',
+    'Write an explicit list of pixels. There is no top-level `color`: every entry in `pixels` carries its own `{x, y, color}`, and `color: null` erases that pixel. Coordinates outside the canvas are ignored. Use this for precise, hand-authored detail; prefer the shape and dither commands for anything regular.',
   params: z.object({
     layer: layerRefSchema,
     frame: frameRefSchema,
@@ -63,14 +88,17 @@ export const drawPixelsCommand = defineCommand({
           })
           .strict(),
       )
-      .describe('Sparse pixel list. Only the listed pixels are touched.'),
+      .describe(
+        'Sparse pixel list, each `{x, y, color}`. Only the listed pixels are touched. There is no shared top-level colour.',
+      ),
     clip: clipSchema,
     ...ditherOptionsShape,
     ...blendOptionsShape,
   }),
   apply(ctx, p) {
     const buf = celOf(ctx, p.layer, p.frame);
-    const painted = drawPixels(buf, p.pixels, {
+    const pixels = p.pixels.map((px) => ({ x: px.x, y: px.y, color: resolveColor(ctx.sprite, px.color) }));
+    const painted = drawPixels(buf, pixels, {
       blend: p.blend,
       opacity: p.opacity,
       pattern: p.pattern as never,
@@ -83,6 +111,7 @@ export const drawPixelsCommand = defineCommand({
       requested: p.pixels.length,
       painted,
       clipped: p.pixels.length - painted,
+      ...clipWarning(ctx, p.clip, p.layer),
     };
   },
 });
@@ -90,111 +119,128 @@ export const drawPixelsCommand = defineCommand({
 export const drawLineCommand = defineCommand({
   name: 'draw_line',
   description:
-    'Draw a 1px-wide Bresenham line between two pixels, inclusive of both endpoints.',
+    'Draw a Bresenham line between two pixels, inclusive of both endpoints. Defaults to 1px wide; set `width` for a thicker stroke (limbs, staffs, poles).',
   params: z.object({
     layer: layerRefSchema,
     frame: frameRefSchema,
     from: pointSchema.describe('Start pixel, inclusive.'),
     to: pointSchema.describe('End pixel, inclusive.'),
     color: nullableColorSchema,
+    width: z.number().int().min(1).max(64).optional().describe('Stroke thickness in pixels. Defaults to 1.'),
     clip: clipSchema,
     ...ditherOptionsShape,
     ...blendOptionsShape,
   }),
   apply(ctx, p) {
     const buf = celOf(ctx, p.layer, p.frame);
-    const painted = drawLine(buf, p.from.x, p.from.y, p.to.x, p.to.y, p.color, {
+    const painted = drawLine(buf, p.from.x, p.from.y, p.to.x, p.to.y, resolveColor(ctx.sprite, p.color), {
+      width: p.width,
       blend: p.blend,
       opacity: p.opacity,
       pattern: p.pattern as never,
       level: p.level,
       mask: clipMask(ctx, p.clip, p.layer, p.frame),
     });
-    return { painted };
+    return { painted, width: p.width ?? 1, ...clipWarning(ctx, p.clip, p.layer) };
   },
 });
 
 export const drawRectCommand = defineCommand({
   name: 'draw_rect',
   description:
-    'Draw an axis-aligned rectangle. Set `fill: true` for a solid block, otherwise just the 1px border.',
+    'Draw an axis-aligned rectangle. Set `fill: true` for a solid block, otherwise just the 1px border. `replace: true` erases the pixels this shape covers before drawing, so the result is not layered over what was already there.',
   params: z.object({
     layer: layerRefSchema,
     frame: frameRefSchema,
     rect: rectSchema,
     color: nullableColorSchema,
     fill: z.boolean().optional().describe('Fill the interior. Defaults to false (border only).'),
+    replace: z.boolean().optional().describe('Erase the pixels this shape covers before drawing. Defaults to false.'),
     clip: clipSchema,
     ...ditherOptionsShape,
     ...blendOptionsShape,
   }),
   apply(ctx, p) {
     const buf = celOf(ctx, p.layer, p.frame);
-    const painted = drawRect(buf, p.rect, p.color, {
-      fill: p.fill,
-      blend: p.blend,
-      opacity: p.opacity,
-      pattern: p.pattern as never,
-      level: p.level,
-      mask: clipMask(ctx, p.clip, p.layer, p.frame),
-    });
-    return { painted };
+    const { painted, replaced } = withReplace(
+      p.replace,
+      (color, opts) => drawRect(buf, p.rect, color, { ...opts, fill: p.fill }),
+      resolveColor(ctx.sprite, p.color),
+      {
+        blend: p.blend,
+        opacity: p.opacity,
+        pattern: p.pattern as never,
+        level: p.level,
+        mask: clipMask(ctx, p.clip, p.layer, p.frame),
+      },
+    );
+    return { painted, replaced, ...clipWarning(ctx, p.clip, p.layer) };
   },
 });
 
 export const drawEllipseCommand = defineCommand({
   name: 'draw_ellipse',
   description:
-    'Draw an ellipse inscribed in the given rect, correct for both odd and even diameters. Set `fill: true` for a solid disc.',
+    'Draw an ellipse inscribed in the given rect, correct for both odd and even diameters. Set `fill: true` for a solid disc. `replace: true` erases the pixels this shape covers first.',
   params: z.object({
     layer: layerRefSchema,
     frame: frameRefSchema,
     rect: rectSchema.describe('Bounding box the ellipse is inscribed in.'),
     color: nullableColorSchema,
     fill: z.boolean().optional(),
+    replace: z.boolean().optional().describe('Erase the pixels this shape covers before drawing. Defaults to false.'),
     clip: clipSchema,
     ...ditherOptionsShape,
     ...blendOptionsShape,
   }),
   apply(ctx, p) {
     const buf = celOf(ctx, p.layer, p.frame);
-    const painted = drawEllipse(buf, p.rect, p.color, {
-      fill: p.fill,
-      blend: p.blend,
-      opacity: p.opacity,
-      pattern: p.pattern as never,
-      level: p.level,
-      mask: clipMask(ctx, p.clip, p.layer, p.frame),
-    });
-    return { painted };
+    const { painted, replaced } = withReplace(
+      p.replace,
+      (color, opts) => drawEllipse(buf, p.rect, color, { ...opts, fill: p.fill }),
+      resolveColor(ctx.sprite, p.color),
+      {
+        blend: p.blend,
+        opacity: p.opacity,
+        pattern: p.pattern as never,
+        level: p.level,
+        mask: clipMask(ctx, p.clip, p.layer, p.frame),
+      },
+    );
+    return { painted, replaced, ...clipWarning(ctx, p.clip, p.layer) };
   },
 });
 
 export const drawPolygonCommand = defineCommand({
   name: 'draw_polygon',
   description:
-    'Draw a closed polygon through the given points. `fill: true` uses an even-odd scanline fill, which handles concave shapes.',
+    'Draw a closed polygon through the given points. `fill: true` uses an even-odd scanline fill, which handles concave shapes. `replace: true` erases the pixels this shape covers first.',
   params: z.object({
     layer: layerRefSchema,
     frame: frameRefSchema,
     points: z.array(pointSchema).min(2).describe('Vertices in order; the path closes automatically.'),
     color: nullableColorSchema,
     fill: z.boolean().optional(),
+    replace: z.boolean().optional().describe('Erase the pixels this shape covers before drawing. Defaults to false.'),
     clip: clipSchema,
     ...ditherOptionsShape,
     ...blendOptionsShape,
   }),
   apply(ctx, p) {
     const buf = celOf(ctx, p.layer, p.frame);
-    const painted = drawPolygon(buf, p.points, p.color, {
-      fill: p.fill,
-      blend: p.blend,
-      opacity: p.opacity,
-      pattern: p.pattern as never,
-      level: p.level,
-      mask: clipMask(ctx, p.clip, p.layer, p.frame),
-    });
-    return { painted };
+    const { painted, replaced } = withReplace(
+      p.replace,
+      (color, opts) => drawPolygon(buf, p.points, color, { ...opts, fill: p.fill }),
+      resolveColor(ctx.sprite, p.color),
+      {
+        blend: p.blend,
+        opacity: p.opacity,
+        pattern: p.pattern as never,
+        level: p.level,
+        mask: clipMask(ctx, p.clip, p.layer, p.frame),
+      },
+    );
+    return { painted, replaced, ...clipWarning(ctx, p.clip, p.layer) };
   },
 });
 
@@ -217,7 +263,7 @@ export const fillCommand = defineCommand({
   }),
   apply(ctx, p) {
     const buf = celOf(ctx, p.layer, p.frame);
-    const painted = floodFill(buf, p.x, p.y, p.color, {
+    const painted = floodFill(buf, p.x, p.y, resolveColor(ctx.sprite, p.color), {
       tolerance: p.tolerance,
       contiguous: p.contiguous,
       rect: p.rect,
@@ -227,14 +273,14 @@ export const fillCommand = defineCommand({
       level: p.level,
       mask: clipMask(ctx, p.clip, p.layer, p.frame),
     });
-    return { painted };
+    return { painted, ...clipWarning(ctx, p.clip, p.layer) };
   },
 });
 
 export const ditherFillCommand = defineCommand({
   name: 'dither_fill',
   description:
-    'Fill a region with a named dither pattern. This is the intended way to shade: pick a pattern such as `bayer4` or `checker` and a coverage level instead of emitting individual pixels. Pass `shape: {ellipse}` or `shape: {polygon}` when the band should follow a curve; a plain `rect` (or nothing, for the whole cel) fills a box. Patterns: checker, checker-inv, bayer4, bayer8, dots, sparse, dense, horizontal, vertical, diagonal.',
+    'Fill a region with a named dither pattern. This is the intended way to shade: pick a pattern such as `bayer4` or `checker` and a coverage level instead of emitting individual pixels. Pass `shape: {ellipse}` or `shape: {polygon}` when the band should follow a curve; a plain `rect` (or nothing, for the whole cel) fills a box. `replace: true` clears the pixels this region covers solid first, then stipples them. Patterns: checker, checker-inv, bayer4, bayer8, dots, sparse, dense, horizontal, vertical, diagonal.',
   params: z.object({
     layer: layerRefSchema,
     frame: frameRefSchema,
@@ -243,6 +289,7 @@ export const ditherFillCommand = defineCommand({
     color: nullableColorSchema,
     pattern: ditherPatternSchema.describe('Named dither pattern.'),
     level: z.number().min(0).max(1).optional().describe('Coverage 0-1. Defaults to 0.5.'),
+    replace: z.boolean().optional().describe('Clear the pixels this region covers before stippling. Defaults to false.'),
     clip: clipSchema,
     ...blendOptionsShape,
   }),
@@ -251,14 +298,19 @@ export const ditherFillCommand = defineCommand({
     const shape = p.shape
       ? toShapeSpec(p.shape)
       : ({ kind: 'rect', rect: p.rect ?? fullRect(buf.width, buf.height) } as const);
-    const painted = fillShape(buf, shape, p.color, {
-      pattern: p.pattern as never,
-      level: p.level,
-      blend: p.blend,
-      opacity: p.opacity,
-      mask: clipMask(ctx, p.clip, p.layer, p.frame),
-    });
-    return { painted, pattern: p.pattern, level: p.level ?? 0.5, kind: shape.kind };
+    const { painted, replaced } = withReplace(
+      p.replace,
+      (color, opts) => fillShape(buf, shape, color, opts),
+      resolveColor(ctx.sprite, p.color),
+      {
+        pattern: p.pattern as never,
+        level: p.level,
+        blend: p.blend,
+        opacity: p.opacity,
+        mask: clipMask(ctx, p.clip, p.layer, p.frame),
+      },
+    );
+    return { painted, replaced, pattern: p.pattern, level: p.level ?? 0.5, kind: shape.kind, ...clipWarning(ctx, p.clip, p.layer) };
   },
 });
 
@@ -276,6 +328,14 @@ export const outlineCommand = defineCommand({
       .describe('What to trace: this layer (`cel`, default) or the whole frame (`composite`).'),
     mode: z.enum(['outside', 'inside', 'both']).optional().describe('Defaults to `outside`.'),
     diagonal: z.boolean().optional().describe('Use 8-connected neighbours. Defaults to false.'),
+    alphaThreshold: z
+      .number()
+      .min(0)
+      .max(255)
+      .optional()
+      .describe(
+        'Ignore pixels below this alpha (0-255) when tracing. Raise it to skip faint glows or semi-transparent wisps; the default treats any non-zero pixel as solid.',
+      ),
     rect: rectSchema.optional().describe('Limit outlining to this rect.'),
     clip: clipSchema,
     ...blendOptionsShape,
@@ -284,8 +344,15 @@ export const outlineCommand = defineCommand({
     const buf = celOf(ctx, p.layer, p.frame);
     const frameId = frameIdOf(ctx.sprite, p.frame);
     const source =
-      p.scope === 'composite' ? frameMask(ctx.sprite, frameId, { excludeLayerId: layerIdOf(ctx.sprite, p.layer) }) : null;
-    const painted = outline(buf, p.color, {
+      p.scope === 'composite'
+        ? frameMask(ctx.sprite, frameId, {
+            excludeLayerId: layerIdOf(ctx.sprite, p.layer),
+            alphaThreshold: p.alphaThreshold,
+          })
+        : p.alphaThreshold === undefined
+          ? null
+          : maskFromBuffer(buf, { alphaThreshold: p.alphaThreshold });
+    const painted = outline(buf, resolveColor(ctx.sprite, p.color), {
       mode: p.mode,
       diagonal: p.diagonal,
       rect: p.rect,
@@ -294,7 +361,7 @@ export const outlineCommand = defineCommand({
       opacity: p.opacity,
       mask: clipMask(ctx, p.clip, p.layer, p.frame),
     });
-    return { painted, scope: p.scope ?? 'cel' };
+    return { painted, scope: p.scope ?? 'cel', ...clipWarning(ctx, p.clip, p.layer) };
   },
 });
 
@@ -314,14 +381,14 @@ export const replaceColorCommand = defineCommand({
   }),
   apply(ctx, p) {
     const buf = celOf(ctx, p.layer, p.frame);
-    const painted = replaceColor(buf, p.from, p.to, {
+    const painted = replaceColor(buf, resolveColor(ctx.sprite, p.from), resolveColor(ctx.sprite, p.to), {
       rect: p.rect,
       tolerance: p.tolerance,
       blend: p.blend,
       opacity: p.opacity,
       mask: clipMask(ctx, p.clip, p.layer, p.frame),
     });
-    return { painted };
+    return { painted, ...clipWarning(ctx, p.clip, p.layer) };
   },
 });
 
@@ -337,7 +404,7 @@ export const clearRegionCommand = defineCommand({
   apply(ctx, p) {
     const buf = celOf(ctx, p.layer, p.frame);
     const mask = clipMask(ctx, p.clip, p.layer, p.frame);
-    if (!mask) return { cleared: clearRegion(buf, p.rect) };
+    if (!mask) return { cleared: clearRegion(buf, p.rect), ...clipWarning(ctx, p.clip, p.layer) };
     // Erasing is a write like any other, so it respects the clip too.
     let cleared = 0;
     const rect = p.rect ? clipRect(p.rect, buf.width, buf.height) : fullRect(buf.width, buf.height);
@@ -353,7 +420,7 @@ export const clearRegionCommand = defineCommand({
         cleared++;
       }
     }
-    return { cleared };
+    return { cleared, ...clipWarning(ctx, p.clip, p.layer) };
   },
 });
 

@@ -1,17 +1,19 @@
 import { useEditor } from '../editor-context.js';
 import type { ToolId } from '../../shared/types.js';
 import { rgbaToCss, rgbaToHex, toColor } from '../color-utils.js';
+import { useI18n, type TranslationKey } from '../i18n.js';
+import { Icon, type IconName } from './Icon.js';
 
-const TOOLS: Array<{ id: ToolId; glyph: string; label: string; key: string }> = [
-  { id: 'pencil', glyph: '✏', label: 'Pencil', key: 'B' },
-  { id: 'eraser', glyph: '⌫', label: 'Eraser', key: 'E' },
-  { id: 'line', glyph: '╱', label: 'Line', key: 'L' },
-  { id: 'rect', glyph: '▭', label: 'Rectangle', key: 'R' },
-  { id: 'ellipse', glyph: '◯', label: 'Ellipse', key: 'O' },
-  { id: 'fill', glyph: '▩', label: 'Flood fill', key: 'F' },
-  { id: 'replace', glyph: '⇄', label: 'Replace colour under cursor', key: 'X' },
-  { id: 'eyedropper', glyph: '⊙', label: 'Pick colour', key: 'I' },
-  { id: 'pan', glyph: '✥', label: 'Pan', key: 'H' },
+const TOOLS: Array<{ id: ToolId; icon: IconName; labelKey: TranslationKey; key: string }> = [
+  { id: 'pencil', icon: 'pencil', labelKey: 'tools.pencil', key: 'B' },
+  { id: 'eraser', icon: 'eraser', labelKey: 'tools.eraser', key: 'E' },
+  { id: 'line', icon: 'line', labelKey: 'tools.line', key: 'L' },
+  { id: 'rect', icon: 'rectangle', labelKey: 'tools.rect', key: 'R' },
+  { id: 'ellipse', icon: 'ellipse', labelKey: 'tools.ellipse', key: 'O' },
+  { id: 'fill', icon: 'fill', labelKey: 'tools.fill', key: 'F' },
+  { id: 'replace', icon: 'replace', labelKey: 'tools.replace', key: 'X' },
+  { id: 'eyedropper', icon: 'eyedropper', labelKey: 'tools.eyedropper', key: 'I' },
+  { id: 'pan', icon: 'pan', labelKey: 'tools.pan', key: 'H' },
 ];
 
 const DITHER_PATTERNS = [
@@ -29,8 +31,10 @@ const DITHER_PATTERNS = [
 
 export function Toolbar(): React.ReactNode {
   const editor = useEditor();
+  const { t } = useI18n();
   const { tool, setTool, brushSize, setBrushSize, primary, setPrimary, secondary, setSecondary } =
     editor;
+  const activeTool = TOOLS.find((entry) => entry.id === tool) ?? TOOLS[0];
 
   const swap = () => {
     setPrimary(secondary);
@@ -38,110 +42,147 @@ export function Toolbar(): React.ReactNode {
   };
 
   return (
-    <aside className="toolbar">
-      <div className="tool-grid">
-        {TOOLS.map((entry) => (
-          <button
-            key={entry.id}
-            type="button"
-            className={`tool-button${tool === entry.id ? ' active' : ''}`}
-            title={`${entry.label} (${entry.key})`}
-            onClick={() => setTool(entry.id)}
-          >
-            <span aria-hidden="true">{entry.glyph}</span>
-          </button>
-        ))}
-      </div>
+    <aside className="toolbar" aria-label={t('tools.tools')}>
+      <section className="rail-section tool-section">
+        <div className="rail-heading">
+          <span>{t('tools.tools')}</span>
+          <kbd>{activeTool.key}</kbd>
+        </div>
+        <div className="tool-grid">
+          {TOOLS.map((entry) => (
+            <button
+              key={entry.id}
+              type="button"
+              className={`tool-button${tool === entry.id ? ' active' : ''}`}
+              title={`${t(entry.labelKey)} (${entry.key})`}
+              aria-label={t(entry.labelKey)}
+              aria-pressed={tool === entry.id}
+              onClick={() => setTool(entry.id)}
+            >
+              <Icon name={entry.icon} size={19} />
+            </button>
+          ))}
+        </div>
+        <div className="active-tool" aria-live="polite">
+          <span><Icon name={activeTool.icon} size={16} /></span>
+          <strong>{t(activeTool.labelKey)}</strong>
+        </div>
+      </section>
 
-      <div className="toolbar-section">
-        <label className="field">
-          <span>Brush</span>
-          <input
-            type="range"
-            min={1}
-            max={8}
-            value={brushSize}
-            onChange={(event) => setBrushSize(Number(event.target.value))}
-          />
-          <output>{brushSize}px</output>
+      <section className="rail-section">
+        <div className="rail-heading">
+          <span>{t('tools.drawSettings')}</span>
+        </div>
+        <label className="compact-field">
+          <span>{t('tools.brush')}</span>
+          <div className="slider-row">
+            <input
+              type="range"
+              min={1}
+              max={8}
+              value={brushSize}
+              onChange={(event) => setBrushSize(Number(event.target.value))}
+            />
+            <output>{brushSize}px</output>
+          </div>
         </label>
-        <label className="checkbox">
+        <label className="switch-row">
           <input
             type="checkbox"
             checked={editor.fillShapes}
             onChange={(event) => editor.setFillShapes(event.target.checked)}
           />
-          <span>Filled shapes</span>
+          <span className="switch-track"><span /></span>
+          <span>{t('tools.filledShapes')}</span>
         </label>
-      </div>
+      </section>
 
-      <div className="toolbar-section">
-        <label className="field" title="Keep paint inside pixels that already exist">
-          <span>Clip</span>
+      <section className="rail-section">
+        <div className="rail-heading">
+          <span>{t('tools.effects')}</span>
+        </div>
+        <label className="compact-field" title={t('tools.clipHint')}>
+          <span>{t('tools.clip')}</span>
           <select
             className="doc-select"
             value={editor.clip}
             onChange={(event) => editor.setClip(event.target.value as 'none' | 'cel' | 'composite')}
           >
-            <option value="none">None</option>
-            <option value="cel">This layer</option>
-            <option value="composite">Silhouette</option>
+            <option value="none">{t('tools.clipNone')}</option>
+            <option value="cel">{t('tools.clipLayer')}</option>
+            <option value="composite">{t('tools.clipComposite')}</option>
           </select>
         </label>
-        <label className="field" title="Stipple every write instead of laying paint down solid">
-          <span>Dither</span>
+        <label className="compact-field" title={t('tools.ditherHint')}>
+          <span>{t('tools.dither')}</span>
           <select
             className="doc-select"
             value={editor.ditherPattern}
             onChange={(event) => editor.setDitherPattern(event.target.value)}
           >
-            <option value="">Off</option>
+            <option value="">{t('tools.off')}</option>
             {DITHER_PATTERNS.map((pattern) => (
               <option key={pattern} value={pattern}>
-                {pattern}
+                {pattern.replaceAll('-', ' ')}
               </option>
             ))}
           </select>
         </label>
-        <label className="field">
-          <span>Level</span>
-          <input
-            type="range"
-            min={0.05}
-            max={1}
-            step={0.05}
-            value={editor.ditherLevel}
-            disabled={!editor.ditherPattern}
-            onChange={(event) => editor.setDitherLevel(Number(event.target.value))}
-          />
-          <output>{Math.round(editor.ditherLevel * 100)}%</output>
+        <label className="compact-field">
+          <span>{t('tools.level')}</span>
+          <div className="slider-row">
+            <input
+              type="range"
+              min={0.05}
+              max={1}
+              step={0.05}
+              value={editor.ditherLevel}
+              disabled={!editor.ditherPattern}
+              onChange={(event) => editor.setDitherLevel(Number(event.target.value))}
+            />
+            <output>{Math.round(editor.ditherLevel * 100)}%</output>
+          </div>
         </label>
-      </div>
+      </section>
 
-      <div className="toolbar-section">
-        <div className="swatch-stack">
-          <label className="swatch primary" title="Primary colour (left click)">
-            <input
-              type="color"
-              value={rgbaToHex(primary).slice(0, 7)}
-              onChange={(event) => setPrimary(toColor(event.target.value, primary))}
-            />
-            <span style={{ background: rgbaToCss(primary) }} />
-          </label>
-          <label className="swatch secondary" title="Secondary colour (right click)">
-            <input
-              type="color"
-              value={rgbaToHex(secondary).slice(0, 7)}
-              onChange={(event) => setSecondary(toColor(event.target.value, secondary))}
-            />
-            <span style={{ background: rgbaToCss(secondary) }} />
-          </label>
+      <section className="rail-section color-section">
+        <div className="rail-heading">
+          <span>{t('tools.colors')}</span>
         </div>
-        <button type="button" className="link-button" onClick={swap} title="Swap colours (Tab)">
-          swap
-        </button>
-        <label className="field">
-          <span>Alpha</span>
+        <div className="color-well">
+          <div className="swatch-stack">
+            <label className="swatch primary" title={t('tools.primary')}>
+              <input
+                type="color"
+                value={rgbaToHex(primary).slice(0, 7)}
+                onChange={(event) => setPrimary(toColor(event.target.value, primary))}
+              />
+              <span style={{ background: rgbaToCss(primary) }} />
+              <em>1</em>
+            </label>
+            <label className="swatch secondary" title={t('tools.secondary')}>
+              <input
+                type="color"
+                value={rgbaToHex(secondary).slice(0, 7)}
+                onChange={(event) => setSecondary(toColor(event.target.value, secondary))}
+              />
+              <span style={{ background: rgbaToCss(secondary) }} />
+              <em>2</em>
+            </label>
+          </div>
+          <button
+            type="button"
+            className="icon-button color-swap"
+            onClick={swap}
+            title={`${t('tools.swap')} (Tab)`}
+            aria-label={t('tools.swap')}
+          >
+            <Icon name="swap" size={16} />
+          </button>
+          <code className="hex">{rgbaToHex(primary)}</code>
+        </div>
+        <label className="compact-field alpha-field">
+          <span>{t('tools.alpha')}</span>
           <input
             type="range"
             min={0}
@@ -150,8 +191,7 @@ export function Toolbar(): React.ReactNode {
             onChange={(event) => setPrimary({ ...primary, a: Number(event.target.value) })}
           />
         </label>
-        <code className="hex">{rgbaToHex(primary)}</code>
-      </div>
+      </section>
     </aside>
   );
 }

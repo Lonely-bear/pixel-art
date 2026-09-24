@@ -76,6 +76,11 @@ export interface Sprite {
   frames: Frame[];
   tags: AnimationTag[];
   palette: Palette;
+  /**
+   * When true, every colour written through a command is snapped to the nearest
+   * palette swatch (alpha is preserved). Keeps an agent from drifting off the palette.
+   */
+  paletteLocked?: boolean;
   tileset?: Tileset;
   tilemaps?: TilemapLayer[];
 }
@@ -92,6 +97,8 @@ export interface CreateSpriteOptions {
   frameDurationMs?: number;
   /** Fill every frame's bottom layer with this colour. `null`/omitted leaves it transparent. */
   background?: ColorInput | null;
+  /** Snap every painted colour to the nearest palette swatch. Defaults to false. */
+  paletteLocked?: boolean;
 }
 
 export function defaultLayerName(index: number): string {
@@ -134,6 +141,7 @@ export function createSprite(opts: CreateSpriteOptions): Sprite {
     frames,
     tags: [],
     palette: opts.palette ?? createDefaultPalette(),
+    paletteLocked: opts.paletteLocked ?? false,
   };
 }
 

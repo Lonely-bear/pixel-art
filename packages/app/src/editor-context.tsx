@@ -28,6 +28,7 @@ import type {
   ToolId,
 } from '../shared/types.js';
 import { api } from './api.js';
+import { useI18n } from './i18n.js';
 
 export interface Notice {
   kind: 'info' | 'error';
@@ -122,6 +123,7 @@ const DEFAULT_PRIMARY: Color = { r: 0xe4, g: 0x3b, b: 0x44, a: 255 };
 const DEFAULT_SECONDARY: Color = { r: 0x14, g: 0x16, b: 0x1c, a: 255 };
 
 export function EditorProvider({ children }: { children: ReactNode }): ReactNode {
+  const { t, commandLabel } = useI18n();
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [detail, setDetail] = useState<DocumentDetail | null>(null);
@@ -188,9 +190,9 @@ export function EditorProvider({ children }: { children: ReactNode }): ReactNode
         return next;
       });
     } catch (error) {
-      setNotice({ kind: 'error', text: `Preview failed: ${describeError(error)}` });
+      setNotice({ kind: 'error', text: t('notice.previewFailed', { error: describeError(error) }) });
     }
-  }, []);
+  }, [t]);
 
   const loadThumbnails = useCallback(async (documentId: string | undefined, frames: string[]) => {
     const urls: string[] = [];
@@ -251,7 +253,7 @@ export function EditorProvider({ children }: { children: ReactNode }): ReactNode
         activeIdRef.current = next.activeId;
         await refresh({ thumbnails: true });
       } catch (error) {
-        setNotice({ kind: 'error', text: `Could not open the editor: ${describeError(error)}` });
+        setNotice({ kind: 'error', text: t('notice.openFailed', { error: describeError(error) }) });
       } finally {
         if (alive) setReady(true);
       }
@@ -259,7 +261,7 @@ export function EditorProvider({ children }: { children: ReactNode }): ReactNode
     return () => {
       alive = false;
     };
-  }, [refresh]);
+  }, [refresh, t]);
 
   // React to edits from anywhere: this window, another window, or an agent.
   useEffect(() => {
@@ -382,18 +384,27 @@ export function EditorProvider({ children }: { children: ReactNode }): ReactNode
       try {
         const result = await api.execute(activeIdRef.current, name, params);
         if (!result.ok) {
-          setNotice({ kind: 'error', text: `${name}: ${result.error ?? 'failed'}` });
+          setNotice({
+            kind: 'error',
+            text: t('notice.failed', {
+              action: commandLabel(name),
+              error: result.error ?? 'failed',
+            }),
+          });
           return result;
         }
         await refresh();
         void refreshHistory();
         return result;
       } catch (error) {
-        setNotice({ kind: 'error', text: `${name}: ${describeError(error)}` });
+        setNotice({
+          kind: 'error',
+          text: t('notice.failed', { action: commandLabel(name), error: describeError(error) }),
+        });
         return null;
       }
     },
-    [refresh, refreshHistory],
+    [refresh, refreshHistory, t, commandLabel],
   );
 
   const undo = useCallback(async () => {
@@ -423,12 +434,12 @@ export function EditorProvider({ children }: { children: ReactNode }): ReactNode
         ? await api.saveFileAs(activeIdRef.current)
         : await api.saveFile(activeIdRef.current);
       if (result) {
-        setNotice({ kind: 'info', text: `Saved ${result.path}` });
+        setNotice({ kind: 'info', text: t('notice.saved', { path: result.path }) });
         setStatus(await api.status());
         await refresh();
       }
     },
-    [refresh],
+    [refresh, t],
   );
 
   const exportPng = useCallback(
@@ -438,27 +449,34 @@ export function EditorProvider({ children }: { children: ReactNode }): ReactNode
         scale,
         background: null,
       });
-      if (result) setNotice({ kind: 'info', text: `Exported ${result.path}` });
+      if (result) setNotice({ kind: 'info', text: t('notice.exported', { path: result.path }) });
     },
-    [],
+    [t],
   );
 
   const exportSheet = useCallback(async () => {
     const result = await api.exportSheet(activeIdRef.current, { layout: 'horizontal' });
-    if (result) setNotice({ kind: 'info', text: `Exported ${result.path} + ${result.json}` });
-  }, []);
+    if (result) {
+      setNotice({
+        kind: 'info',
+        text: t('notice.exportedSheet', { path: result.path, json: result.json ?? '' }),
+      });
+    }
+  }, [t]);
 
   const exportGif = useCallback(async (tag?: string) => {
     // The tag decides the frame order, through the same sequence the GIF writer
     // uses, so the export matches whatever was playing on the canvas.
     const result = await api.exportGif(activeIdRef.current, { tag, scale: 1 });
-    if (result) setNotice({ kind: 'info', text: `Exported ${result.path} (${result.frames} frames)` });
-  }, []);
+    if (result) {
+      setNotice({ kind: 'info', text: t('notice.exportedGif', { path: result.path, count: result.frames ?? 0 }) });
+    }
+  }, [t]);
 
   const exportTiled = useCallback(async () => {
     const result = await api.exportTiled(activeIdRef.current, {});
-    if (result) setNotice({ kind: 'info', text: `Exported ${result.path}` });
-  }, []);
+    if (result) setNotice({ kind: 'info', text: t('notice.exported', { path: result.path }) });
+  }, [t]);
 
   const importImage = useCallback(async () => {
     const imported = await api.importImage();

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useEditor } from '../editor-context.js';
+import { useI18n } from '../i18n.js';
+import { Icon } from './Icon.js';
 
 /** How much the tileset preview and the tilemap grid are blown up. */
 const PREVIEW_SCALE = 3;
@@ -8,6 +10,7 @@ const GRID_SCALE = 8;
 export function TilemapPanel(): React.ReactNode {
   const editor = useEditor();
   const detail = editor.detail;
+  const { t } = useI18n();
   const { tilesetInfo, tilemapData, tilemapRef, activeTile } = editor;
 
   const previewRef = useRef<HTMLCanvasElement | null>(null);
@@ -54,7 +57,7 @@ export function TilemapPanel(): React.ReactNode {
     const image = imageRef.current;
     if (image) context.drawImage(image, 0, 0, canvas.width, canvas.height);
 
-    context.strokeStyle = 'rgba(255, 255, 255, 0.14)';
+    context.strokeStyle = 'rgba(47, 52, 77, 0.18)';
     context.lineWidth = 1;
     for (let x = 0; x <= tilesetInfo.columns; x += 1) {
       context.beginPath();
@@ -72,7 +75,7 @@ export function TilemapPanel(): React.ReactNode {
     const column = activeTile % tilesetInfo.columns;
     const row = Math.floor(activeTile / tilesetInfo.columns);
     if (row < tilesetInfo.rows) {
-      context.strokeStyle = '#4f8cff';
+      context.strokeStyle = '#6366f1';
       context.lineWidth = 2;
       context.strokeRect(column * tileWidth + 1, row * tileHeight + 1, tileWidth - 2, tileHeight - 2);
     }
@@ -110,7 +113,7 @@ export function TilemapPanel(): React.ReactNode {
         }
       }
     }
-    context.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+    context.strokeStyle = 'rgba(47, 52, 77, 0.16)';
     context.lineWidth = 1;
     for (let x = 0; x <= tilemapData.width; x += 1) {
       context.beginPath();
@@ -130,16 +133,20 @@ export function TilemapPanel(): React.ReactNode {
 
   if (!detail.hasTileset || !tilesetInfo) {
     return (
-      <section className="panel">
+      <section className="panel tilemap-panel empty-panel">
         <header className="panel-header">
-          <h2>Tilemap</h2>
+          <div className="panel-title">
+            <span className="panel-title-icon"><Icon name="map" size={15} /></span>
+            <h2>{t('tilemap.title')}</h2>
+          </div>
         </header>
-        <p className="muted">
-          No tileset yet. Cut one out of the layer you have drawn, then come back here to lay tiles.
-        </p>
-        <div className="panel-actions">
+        <div className="empty-state">
+          <span className="empty-state-icon"><Icon name="grid" size={23} /></span>
+          <strong>{t('tilemap.noTileset')}</strong>
+          <p>{t('tilemap.noTilesetHelp')}</p>
           <button
             type="button"
+            className="secondary-button full-width"
             disabled={!editor.layerId}
             onClick={() =>
               void editor.execute('create_tileset', {
@@ -150,7 +157,8 @@ export function TilemapPanel(): React.ReactNode {
               })
             }
           >
-            Create a 16px tileset from this layer
+            <Icon name="grid" size={15} />
+            {t('tilemap.create')}
           </button>
         </div>
       </section>
@@ -180,13 +188,18 @@ export function TilemapPanel(): React.ReactNode {
   };
 
   return (
-    <section className="panel">
+    <section className="panel tilemap-panel">
       <header className="panel-header">
-        <h2>Tilemap</h2>
+        <div className="panel-title">
+          <span className="panel-title-icon"><Icon name="map" size={15} /></span>
+          <h2>{t('tilemap.title')}</h2>
+        </div>
         <div className="panel-actions">
           <button
             type="button"
-            title="Add a tilemap"
+            className="panel-icon-button"
+            title={t('tilemap.add')}
+            aria-label={t('tilemap.add')}
             onClick={() =>
               void editor.execute('add_tilemap', {
                 width: 16,
@@ -196,19 +209,22 @@ export function TilemapPanel(): React.ReactNode {
               })
             }
           >
-            +
+            <Icon name="plus" size={16} />
           </button>
           <button
             type="button"
-            title="Remove this tilemap"
+            className="panel-icon-button danger"
+            title={t('tilemap.remove')}
+            aria-label={t('tilemap.remove')}
             disabled={!tilemapRef}
             onClick={() => void editor.execute('remove_tilemap', { tilemap: tilemapRef ?? 0 })}
           >
-            ✕
+            <Icon name="trash" size={15} />
           </button>
           <button
             type="button"
-            title="Paint the grid into the selected layer"
+            className="bake-button"
+            title={t('tilemap.bakeHint')}
             disabled={!tilemapRef || !editor.layerId}
             onClick={() =>
               void editor.execute('paint_tilemap', {
@@ -218,22 +234,30 @@ export function TilemapPanel(): React.ReactNode {
               })
             }
           >
-            Bake
+            <Icon name="image" size={14} />
+            {t('tilemap.bake')}
           </button>
-          <button type="button" title="Export a Tiled (.tmj) map" onClick={() => void editor.exportTiled()}>
+          <button
+            type="button"
+            className="bake-button"
+            title={t('top.exportTiled')}
+            onClick={() => void editor.exportTiled()}
+          >
+            <Icon name="export" size={14} />
             Tiled
           </button>
         </div>
       </header>
 
-      <label className="field">
-        Tilemap
+      <label className="field full-width-field">
+        <span>{t('tilemap.map')}</span>
         <select
           className="doc-select"
           value={tilemapRef ?? ''}
+          title={t('tilemap.map')}
           onChange={(event) => editor.setTilemapRef(event.target.value || null)}
         >
-          <option value="">None</option>
+          <option value="">{t('tilemap.none')}</option>
           {detail.tilemaps.map((name) => (
             <option key={name} value={name}>
               {name}
@@ -242,43 +266,61 @@ export function TilemapPanel(): React.ReactNode {
         </select>
       </label>
 
-      <canvas
-        ref={previewRef}
-        className="tileset-preview"
-        onClick={pickTile}
-        title="Click a tile to paint with it"
-      />
-      <p className="muted">
-        Painting with tile {activeTile} · {tilesetInfo.columns}×{tilesetInfo.rows} sheet
-      </p>
+      <div className="tileset-card">
+        <div className="canvas-card-heading">
+          <span>{t('tilemap.title')}</span>
+          <span className="muted">{tilesetInfo.columns}×{tilesetInfo.rows}</span>
+        </div>
+        <canvas
+          ref={previewRef}
+          className="tileset-preview"
+          onClick={pickTile}
+          title={t('tilemap.pickTile')}
+          aria-label={t('tilemap.pickTile')}
+        />
+        <p className="panel-help">
+          {t('tilemap.activeTile', {
+            index: activeTile,
+            columns: tilesetInfo.columns,
+            rows: tilesetInfo.rows,
+          })}
+        </p>
+      </div>
 
       {tilemapData ? (
-        <canvas
-          ref={gridRef}
-          className="tilemap-grid"
-          onMouseDown={(event) => {
-            draggingRef.current = true;
-            paintCell(event, event.button === 2);
-          }}
-          onMouseMove={(event) => {
-            if (draggingRef.current) paintCell(event, event.buttons === 2);
-          }}
-          onMouseUp={() => {
-            draggingRef.current = false;
-          }}
-          onMouseLeave={() => {
-            draggingRef.current = false;
-          }}
-          onContextMenu={(event) => event.preventDefault()}
-          title="Left-click to paint, right-click to erase"
-        />
+        <div className="tileset-card map-card">
+          <div className="canvas-card-heading">
+            <span>{t('tilemap.map')}</span>
+            <span className="muted">{tilemapData.width}×{tilemapData.height}</span>
+          </div>
+          <canvas
+            ref={gridRef}
+            className="tilemap-grid"
+            onMouseDown={(event) => {
+              draggingRef.current = true;
+              paintCell(event, event.button === 2);
+            }}
+            onMouseMove={(event) => {
+              if (draggingRef.current) paintCell(event, event.buttons === 2);
+            }}
+            onMouseUp={() => {
+              draggingRef.current = false;
+            }}
+            onMouseLeave={() => {
+              draggingRef.current = false;
+            }}
+            onContextMenu={(event) => event.preventDefault()}
+            title={t('tilemap.paintGrid')}
+            aria-label={t('tilemap.paintGrid')}
+          />
+        </div>
       ) : (
-        <p className="muted">Add or pick a tilemap to edit it.</p>
+        <p className="empty-note map-empty">{t('tilemap.chooseMap')}</p>
       )}
 
-      <div className="panel-actions">
+      <div className="tilemap-options">
         <label className="field">
-          Set
+          <span>{t('tilemap.set')}</span>
           <select
             className="doc-select"
             value={autoSet}
@@ -289,7 +331,7 @@ export function TilemapPanel(): React.ReactNode {
           </select>
         </label>
         <label className="field">
-          Offset
+          <span>{t('tilemap.offset')}</span>
           <input
             type="number"
             min={0}
@@ -299,13 +341,15 @@ export function TilemapPanel(): React.ReactNode {
         </label>
         <button
           type="button"
-          title="Pick transition tiles from the terrain already laid down"
+          className="secondary-button autotile-button"
+          title={t('tilemap.autotileHint')}
           disabled={!tilemapRef}
           onClick={() =>
             void editor.execute('autotile', { tilemap: tilemapRef ?? 0, set: autoSet, offset: autoOffset })
           }
         >
-          Autotile
+          <Icon name="magic" size={14} />
+          {t('tilemap.autotile')}
         </button>
       </div>
     </section>

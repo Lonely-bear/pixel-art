@@ -1,4 +1,18 @@
-import { GIFEncoder, applyPalette, quantize } from 'gifenc';
+import * as gifencModule from 'gifenc';
+
+type GifencApi = typeof import('gifenc');
+
+// `gifenc` publishes a CommonJS bundle whose named exports are registered via a
+// runtime helper. Depending on the host loader, those functions are available
+// directly on the module namespace or below its CommonJS `default` export.
+function resolveGifenc(candidate: unknown): GifencApi {
+  const module = candidate as Partial<GifencApi> & { default?: unknown };
+  if (typeof module.quantize === 'function') return module as GifencApi;
+  if (module.default) return resolveGifenc(module.default);
+  throw new Error('The gifenc module did not expose its encoder API.');
+}
+
+const { GIFEncoder, applyPalette, quantize } = resolveGifenc(gifencModule);
 import { PixelBuffer } from './buffer.js';
 import type { AnimationTag, Sprite } from './document.js';
 import { compositeFrame } from './render.js';

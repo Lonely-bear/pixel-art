@@ -11,16 +11,18 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ReadResourceResult } from '@modelcontextprotocol/sdk/types.js';
 import {
-  allCommands,
   compositeFrame,
+  compositeWithOnion,
   describeCommands,
   encodePNG,
+  extractRegion,
   PixelBuffer,
   resolveFrame,
+  resolveLayer,
   scaleNearest,
 } from '@pixel/core';
 import type { DocumentStore } from './session.js';
-import { PIXEL_ART_SKILL, SKILL_URI } from './skill.js';
+import { PIXEL_ART_SKILL, SCRIPT_GUIDE, SCRIPT_GUIDE_URI, SKILL_URI } from './skill.js';
 
 function json(uri: URL, value: unknown): ReadResourceResult {
   return {
@@ -80,7 +82,7 @@ export function registerResources(server: McpServer, store: DocumentStore): void
           index,
           id: f.id,
           durationMs: f.durationMs,
-          layers: [...f.cels.keys()],
+          layers: sprite.layers.filter((l) => f.cels.has(l.id)).map((l) => l.id),
         })),
         tags: sprite.tags,
         palette: {
@@ -96,39 +98,96 @@ export function registerResources(server: McpServer, store: DocumentStore): void
     },
   );
 
+  // Query strings are part of the URI, but the SDK's RFC 6570 matcher anchors the
+  // template at `$`, so `pixel://documents/{id}/preview?frame=1` never reaches the
+  // plain template. A second template with an exploded `{+query}` segment matches the
+  // query form; both share one reader, which parses `uri.searchParams`.
+  const previewConfig = {
+    title: 'Document preview',
+    description:
+      'The composited sprite as a PNG image. Query options: `?frame=N` for a specific frame, `?frames=all` for a horizontal strip of every frame, `?scale=K` to upscale, `?rect=x,y,w,h` to crop-zoom a detail, `?layer=name` (repeatable, or `?layers=a,b`) to isolate layers, and `?onion=1` (or `?onionBefore=1&onionAfter=1`, with `?onionOpacity=`, `?loop=1`, `?beforeTint=`, `?afterTint=`) to ghost the neighbouring frames.',
+    mimeType: 'image/png',
+  };
+
+  const readPreview = (uri: URL, variables: Record<string, unknown>): ReadResourceResult => {
+    const doc = store.require(String(variables.id));
+    const sprite = doc.editor.sprite;
+    const params = new URL(uri.href).searchParams;
+
+    const layerRefs = [
+      ...params.getAll('layer'),
+      ...(params.get('layers')?.split(',') ?? []),
+    ]
+      .map((ref) => ref.trim())
+      .filter(Boolean);
+    const layers = layerRefs.length > 0 ? layerRefs.map((ref) => resolveLayer(sprite, ref).id) : undefined;
+
+    const numberParam = (name: string): number | undefined => {
+      const raw = params.get(name);
+      if (raw === null) return undefined;
+      const value = Number(raw);
+      return Number.isFinite(value) ? value : undefined;
+    };
+    const onionAll = params.get('onion');
+    const onionBefore = Math.max(0, Math.floor(numberParam('onionBefore') ?? (onionAll !== null ? Math.max(1, numberParam('onion') ?? 1) : 0)));
+    const onionAfter = Math.max(0, Math.floor(numberParam('onionAfter') ?? (onionAll !== null ? Math.max(1, numberParam('onion') ?? 1) : 0)));
+    const onion =
+      onionBefore > 0 || onionAfter > 0
+        ? {
+            before: onionBefore,
+            after: onionAfter,
+            opacity: numberParam('onionOpacity'),
+            loop: params.get('loop') === '1' || params.get('loop') === 'true',
+            beforeTint: params.get('beforeTint') ?? undefined,
+            afterTint: params.get('afterTint') ?? undefined,
+          }
+        : undefined;
+
+    const render = (frameId: string): PixelBuffer =>
+      onion
+        ? compositeWithOnion(sprite, frameId, { layers, ...onion })
+        : compositeFrame(sprite, frameId, { layers });
+
+    let buffer;
+    if (params.get('frames') === 'all' && sprite.frames.length > 1) {
+      const frames = sprite.frames.map((f) => render(f.id));
+      const strip = new PixelBuffer(frames.length * sprite.width + (frames.length - 1), sprite.height);
+      frames.forEach((img, i) => strip.blit(img, i * (sprite.width + 1), 0));
+      buffer = strip;
+    } else {
+      const frameIndex = Number(params.get('frame') ?? 0);
+      const frame = resolveFrame(sprite, Number.isFinite(frameIndex) ? frameIndex : 0);
+      buffer = render(frame.id);
+    }
+
+    const rectParam = params.get('rect');
+    if (rectParam) {
+      const [rx, ry, rw, rh] = rectParam.split(',').map((n) => Math.floor(Number(n)));
+      if ([rx, ry, rw, rh].every((n) => Number.isFinite(n)) && rw > 0 && rh > 0) {
+        buffer = extractRegion(buffer, { x: rx, y: ry, w: rw, h: rh });
+      }
+    }
+
+    const scaleParam = params.get('scale');
+    const factor = scaleParam
+      ? Math.max(1, Math.min(32, Math.floor(Number(scaleParam)) || 1))
+      : Math.max(1, Math.min(16, Math.floor(256 / Math.max(buffer.width, buffer.height)) || 1));
+    const shown = factor > 1 ? scaleNearest(buffer, factor) : buffer;
+    return png(uri, encodePNG(shown));
+  };
+
   server.registerResource(
     'document-preview',
     new ResourceTemplate('pixel://documents/{id}/preview', { list: undefined }),
-    {
-      title: 'Document preview',
-      description:
-        'The composited sprite as a PNG image. Add `?frame=N` for a specific frame or `?frames=all` for a horizontal strip of every frame.',
-      mimeType: 'image/png',
-    },
-    (uri, variables) => {
-      const doc = store.require(String(variables.id));
-      const sprite = doc.editor.sprite;
-      const params = new URL(uri.href).searchParams;
+    previewConfig,
+    readPreview,
+  );
 
-      let buffer;
-      if (params.get('frames') === 'all' && sprite.frames.length > 1) {
-        const frames = sprite.frames.map((f) => compositeFrame(sprite, f.id));
-        const strip = new PixelBuffer(frames.length * sprite.width + (frames.length - 1), sprite.height);
-        frames.forEach((img, i) => strip.blit(img, i * (sprite.width + 1), 0));
-        buffer = strip;
-      } else {
-        const frameIndex = Number(params.get('frame') ?? 0);
-        const frame = resolveFrame(sprite, Number.isFinite(frameIndex) ? frameIndex : 0);
-        buffer = compositeFrame(sprite, frame.id);
-      }
-
-      const scaleParam = params.get('scale');
-      const factor = scaleParam
-        ? Math.max(1, Math.min(32, Math.floor(Number(scaleParam)) || 1))
-        : Math.max(1, Math.min(16, Math.floor(256 / Math.max(buffer.width, buffer.height)) || 1));
-      const shown = factor > 1 ? scaleNearest(buffer, factor) : buffer;
-      return png(uri, encodePNG(shown));
-    },
+  server.registerResource(
+    'document-preview-query',
+    new ResourceTemplate('pixel://documents/{id}/preview{+query}', { list: undefined }),
+    previewConfig,
+    readPreview,
   );
 
   server.registerResource(
@@ -140,7 +199,7 @@ export function registerResources(server: McpServer, store: DocumentStore): void
         'Every command the editor understands, with its JSON Schema. Anything here can be run through the `apply_ops` tool.',
       mimeType: 'application/json',
     },
-    (uri) => json(uri, { commands: describeCommands(allCommands) }),
+    (uri) => json(uri, { commands: describeCommands(store.registry.list()) }),
   );
 
   server.registerResource(
@@ -154,6 +213,20 @@ export function registerResources(server: McpServer, store: DocumentStore): void
     },
     (uri) => ({
       contents: [{ uri: uri.href, mimeType: 'text/markdown', text: PIXEL_ART_SKILL }],
+    }),
+  );
+
+  server.registerResource(
+    'script-guide',
+    SCRIPT_GUIDE_URI,
+    {
+      title: 'Scripting and plugin guide',
+      description:
+        'How to use run_script and load_plugin: the sandbox API, its limits, the single-undo-step rule, and how defineCommand turns a plugin into real tools.',
+      mimeType: 'text/markdown',
+    },
+    (uri) => ({
+      contents: [{ uri: uri.href, mimeType: 'text/markdown', text: SCRIPT_GUIDE }],
     }),
   );
 }

@@ -42,6 +42,13 @@ export interface DrawOptions extends BlendOptions {
   pattern?: DitherPattern;
   /** Coverage for `pattern`, 0-1. Defaults to 0.5. */
   level?: number;
+  /**
+   * Stroke thickness for `drawLine`, in pixels. Defaults to 1.
+   *
+   * Widths above 1 stamp a filled square at each step of the line and de-duplicate
+   * the overlap, so a translucent stroke does not double-blend where it crosses itself.
+   */
+  width?: number;
 }
 
 export interface PixelSpec {
@@ -140,6 +147,7 @@ export function drawLine(
   opts: DrawOptions = {},
 ): number {
   const c = color === null ? null : parseColor(color);
+  const width = Math.max(1, Math.floor(opts.width ?? 1));
   let x = Math.round(x0);
   let y = Math.round(y0);
   const ex = Math.round(x1);
@@ -153,8 +161,24 @@ export function drawLine(
   // The step count is bounded by the Manhattan distance, so this cannot spin forever
   // even if a caller passes absurd coordinates.
   const limit = dx - dy + 2;
+  const half = Math.floor((width - 1) / 2);
+  const seen = width > 1 ? new Set<number>() : undefined;
   for (let step = 0; step < limit; step++) {
-    if (putPixel(buf, x, y, c, opts)) painted++;
+    if (width === 1) {
+      if (putPixel(buf, x, y, c, opts)) painted++;
+    } else {
+      // Stamp a square centred on this step; `seen` keeps a shared pixel to one write.
+      for (let oy = 0; oy < width; oy++) {
+        for (let ox = 0; ox < width; ox++) {
+          const px = x - half + ox;
+          const py = y - half + oy;
+          const key = py * buf.width + px;
+          if (seen!.has(key)) continue;
+          seen!.add(key);
+          if (putPixel(buf, px, py, c, opts)) painted++;
+        }
+      }
+    }
     if (x === ex && y === ey) break;
     const e2 = 2 * err;
     if (e2 >= dy) {

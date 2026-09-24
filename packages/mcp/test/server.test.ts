@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { decodePNG } from '@pixel/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createPixelServer, type PixelServer } from '../src/server.js';
 
@@ -93,7 +94,9 @@ describe('tool surface', () => {
     expect(typeof (entry?.params as Record<string, string>).color).toBe('string');
 
     // This used to be ~188 kB of JSON Schema, which an agent had to script around.
-    expect(JSON.stringify(body).length).toBeLessThan(20_000);
+    // It now also carries the hand-registered session tools (undo/redo/history,
+    // perception, export), which is why the budget is a little larger.
+    expect(JSON.stringify(body).length).toBeLessThan(24_000);
 
     const verbose = (await client.callTool({
       name: 'list_commands',
@@ -260,11 +263,12 @@ describe('editing', () => {
 
   it('rejects an unknown parameter on a hand-registered tool too', async () => {
     // The command tools get strictness from `defineCommand`. The hand-written
-    // tools need it from `addTool`, or `undo {count: 99}` silently undoes one
-    // edit and reports success - a data-loss-shaped bug.
+    // tools need it from `addTool`, so a mistyped parameter is an error rather
+    // than a silent fallback to the default. (`undo` also accepts `count` as an
+    // explicit alias for `steps`; `nope` is not a parameter at all.)
     const result = (await client.callTool({
       name: 'undo',
-      arguments: { count: 99 },
+      arguments: { nope: 99 },
     })) as ToolResult;
 
     expect(result.isError).toBe(true);
@@ -427,6 +431,196 @@ describe('clip, scope and per-cel motion', () => {
     })) as ToolResult;
     expect(squashed.isError).toBeFalsy();
     expect((payload(squashed).summary as { cels: number }).cels).toBe(2);
+  });
+});
+
+describe('agent-ergonomics additions', () => {
+  beforeEach(async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: {
+        width: 16,
+        height: 16,
+        name: 'Ergo',
+        layers: ['base', 'hair', 'shade'],
+        palette: 'dawnbringer16',
+      },
+    });
+  });
+
+  it('clips to a named layer over the wire', async () => {
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { layer: 'hair', rect: { x: 2, y: 2, w: 4, h: 4 }, color: '#d04648', fill: true },
+    });
+
+    const result = (await client.callTool({
+      name: 'draw_rect',
+      arguments: {
+        layer: 'shade',
+        rect: { x: 0, y: 0, w: 16, h: 16 },
+        color: '#346524',
+        fill: true,
+        clip: { layer: 'hair' },
+      },
+    })) as ToolResult;
+
+    expect(result.isError).toBeFalsy();
+    expect((payload(result).summary as { painted: number }).painted).toBe(16);
+  });
+
+  it('creates a palette-locked document and reports the flag', async () => {
+    const created = (await client.callTool({
+      name: 'create_document',
+      arguments: {
+        width: 8,
+        height: 8,
+        name: 'Locked',
+        layers: ['base'],
+        palette: ['#000000', '#ffffff'],
+        paletteLocked: true,
+      },
+    })) as ToolResult;
+
+    expect(created.isError).toBeFalsy();
+    expect((payload(created) as { paletteLocked: boolean }).paletteLocked).toBe(true);
+  });
+
+  it('replaces the pixels a shape covers', async () => {
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { rect: { x: 0, y: 0, w: 8, h: 8 }, color: '#ff0000', fill: true },
+    });
+
+    const result = (await client.callTool({
+      name: 'dither_fill',
+      arguments: {
+        rect: { x: 0, y: 0, w: 8, h: 8 },
+        color: '#00ff00',
+        pattern: 'checker',
+        level: 0.5,
+        replace: true,
+      },
+    })) as ToolResult;
+
+    const summary = payload(result).summary as { painted: number; replaced: number };
+    expect(summary.replaced).toBe(64);
+    expect(summary.painted).toBe(32);
+  });
+
+  it('names the offending path in a validation error', async () => {
+    const result = (await client.callTool({
+      name: 'apply_ops',
+      arguments: {
+        ops: [
+          {
+            command: 'draw_pixels',
+            pixels: [{ x: 0, y: 0, color: '#ffffff', extra: 1 }],
+          },
+        ],
+      },
+    })) as ToolResult;
+
+    const failures = payload(result).failures as Array<{ error: string }>;
+    expect(failures[0].error).toMatch(/Unrecognized key/);
+  });
+});
+
+describe('follow-up ergonomics', () => {
+  it('warns when a named clip is occluded by a higher layer', async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 16, height: 16, name: 'Occlude', layers: ['base', 'hair', 'shade'] },
+    });
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { layer: 'shade', rect: { x: 2, y: 2, w: 4, h: 4 }, color: '#ffffff', fill: true },
+    });
+
+    const result = (await client.callTool({
+      name: 'draw_rect',
+      arguments: {
+        layer: 'base',
+        rect: { x: 0, y: 0, w: 16, h: 16 },
+        color: '#000000',
+        fill: true,
+        clip: { layer: 'shade' },
+      },
+    })) as ToolResult;
+
+    expect((payload(result).summary as { warning?: string }).warning).toMatch(/render above/);
+  });
+
+  it('reports counts under unambiguous names, keeping the layer array top-level', async () => {
+    const created = (await client.callTool({
+      name: 'create_document',
+      arguments: { width: 16, height: 16, name: 'Counts', layers: ['base', 'shade'] },
+    })) as ToolResult;
+    const body = payload(created);
+    const doc = body.document as Record<string, unknown>;
+
+    expect(doc.layerCount).toBe(2);
+    expect(doc.frameCount).toBe(1);
+    expect(doc.tagCount).toBe(0);
+    expect(doc.layers).toBeUndefined();
+    expect((body.layers as Array<{ name: string }>).map((l) => l.name)).toEqual(['base', 'shade']);
+  });
+
+  it('does not steal focus when create_document is called with select:false', async () => {
+    const first = (await client.callTool({
+      name: 'create_document',
+      arguments: { width: 8, height: 8, name: 'Focused' },
+    })) as ToolResult;
+    const firstId = (payload(first).document as { id: string }).id;
+
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 8, height: 8, name: 'Scratch', select: false },
+    });
+
+    const list = (await client.callTool({ name: 'list_documents', arguments: {} })) as ToolResult;
+    expect(payload(list).activeDocument).toBe(firstId);
+  });
+
+  it('crops get_preview to a rect and upscales it', async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 32, height: 32, name: 'Crop', layers: ['base'] },
+    });
+
+    const result = (await client.callTool({
+      name: 'get_preview',
+      arguments: { rect: { x: 0, y: 0, w: 8, h: 8 } },
+    })) as ToolResult;
+    const body = payload(result);
+
+    expect(body.rect).toEqual({ x: 0, y: 0, w: 8, h: 8 });
+    expect(body.imageWidth).toBeGreaterThanOrEqual(64);
+    expect(body.imageWidth).toBe(body.imageHeight);
+  });
+
+  it('returns the absolute path alongside a written export', async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 8, height: 8, name: 'Abs', layers: ['base'] },
+    });
+
+    const out = join(tempDir, 'abs.png');
+    const result = (await client.callTool({
+      name: 'export_png',
+      arguments: { out },
+    })) as ToolResult;
+
+    expect((payload(result).absolute as string[])[0]).toBe(out);
+  });
+
+  it('advertises undo, redo and get_history in list_commands sessionTools', async () => {
+    const result = (await client.callTool({ name: 'list_commands', arguments: {} })) as ToolResult;
+    const names = (payload(result).sessionTools as Array<{ name: string }>).map((t) => t.name);
+
+    expect(names).toContain('undo');
+    expect(names).toContain('redo');
+    expect(names).toContain('get_history');
   });
 });
 
@@ -725,5 +919,310 @@ describe('iteration ergonomics', () => {
     })) as ToolResult;
     expect(result.isError).toBeFalsy();
     expect(readFileSync(target).subarray(0, 4).toString('hex')).toBe('89504e47');
+  });
+});
+
+describe('layered and onion previews', () => {
+  function decodedImage(result: ToolResult) {
+    const image = result.content.find((c) => c.type === 'image');
+    expect(image?.mimeType).toBe('image/png');
+    return decodePNG(Buffer.from(image!.data!, 'base64'));
+  }
+
+  it('renders only the requested layers', async () => {
+    const created = (await client.callTool({
+      name: 'create_document',
+      arguments: { width: 4, height: 4, layers: ['base', 'ink'] },
+    })) as ToolResult;
+    const id = (payload(created).document as { id: string }).id;
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { rect: { x: 0, y: 0, w: 4, h: 4 }, color: '#ff0000', fill: true, layer: 'base' },
+    });
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { rect: { x: 0, y: 0, w: 4, h: 4 }, color: '#00ff00', fill: true, layer: 'ink' },
+    });
+
+    const detail = (await client.callTool({ name: 'get_document', arguments: { document: id } })) as ToolResult;
+    const base = (payload(detail).layers as Array<{ id: string }>)[0].id;
+    const result = (await client.callTool({
+      name: 'get_preview',
+      arguments: { layers: [base], scale: 1 },
+    })) as ToolResult;
+
+    // Isolating the bottom layer hides the green ink on top of it.
+    expect(decodedImage(result).getColor(0, 0)).toEqual({ r: 255, g: 0, b: 0, a: 255 });
+    expect(payload(result).layers).toEqual([base]);
+  });
+
+  it('ghosts neighbouring frames when onion skinning is requested', async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 4, height: 4, layers: ['base'], frames: 3 },
+    });
+    await client.callTool({ name: 'draw_rect', arguments: { rect: { x: 0, y: 0, w: 1, h: 1 }, color: '#ff0000', fill: true, frame: 0 } });
+    await client.callTool({ name: 'draw_rect', arguments: { rect: { x: 1, y: 1, w: 1, h: 1 }, color: '#00ff00', fill: true, frame: 1 } });
+    await client.callTool({ name: 'draw_rect', arguments: { rect: { x: 2, y: 2, w: 1, h: 1 }, color: '#0000ff', fill: true, frame: 2 } });
+
+    const result = (await client.callTool({
+      name: 'get_preview',
+      arguments: { frame: 1, onion: { before: 1, after: 1, opacity: 0.5 }, scale: 1 },
+    })) as ToolResult;
+    const buf = decodedImage(result);
+
+    // The current pose stays crisp while its neighbours show through as ghosts.
+    expect(buf.getColor(1, 1)).toEqual({ r: 0, g: 255, b: 0, a: 255 });
+    const past = buf.getColor(0, 0);
+    expect(past.r).toBe(255);
+    expect(past.a).toBeGreaterThan(0);
+    expect(past.a).toBeLessThan(255);
+    const future = buf.getColor(2, 2);
+    expect(future.b).toBe(255);
+    expect(future.a).toBeGreaterThan(0);
+    expect(future.a).toBeLessThan(255);
+  });
+});
+
+describe('apply_ops preview', () => {
+  it('returns the resulting frame as an image when asked', async () => {
+    await client.callTool({ name: 'create_document', arguments: { width: 8, height: 8, layers: ['base'] } });
+    const result = (await client.callTool({
+      name: 'apply_ops',
+      arguments: {
+        ops: [{ command: 'draw_rect', rect: { x: 0, y: 0, w: 8, h: 8 }, color: '#ff0000', fill: true }],
+        preview: true,
+      },
+    })) as ToolResult;
+
+    const image = result.content.find((c) => c.type === 'image');
+    expect(image?.mimeType).toBe('image/png');
+    expect(Buffer.from(image!.data!, 'base64').subarray(0, 4).toString('hex')).toBe('89504e47');
+    const body = payload(result);
+    expect(body.ok).toBe(true);
+    expect(body.preview).toBeTruthy();
+  });
+
+  it('stays text-only by default', async () => {
+    await client.callTool({ name: 'create_document', arguments: { width: 8, height: 8, layers: ['base'] } });
+    const result = (await client.callTool({
+      name: 'apply_ops',
+      arguments: { ops: [{ command: 'draw_rect', rect: { x: 0, y: 0, w: 2, h: 2 }, color: '#00ff00', fill: true }] },
+    })) as ToolResult;
+    expect(result.content.some((c) => c.type === 'image')).toBe(false);
+  });
+});
+
+describe('preview resource query params', () => {
+  it('isolates a layer named in the query string', async () => {
+    const created = (await client.callTool({
+      name: 'create_document',
+      arguments: { width: 4, height: 4, layers: ['base', 'ink'] },
+    })) as ToolResult;
+    const id = (payload(created).document as { id: string }).id;
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { rect: { x: 0, y: 0, w: 4, h: 4 }, color: '#ff0000', fill: true, layer: 'base' },
+    });
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { rect: { x: 0, y: 0, w: 4, h: 4 }, color: '#00ff00', fill: true, layer: 'ink' },
+    });
+
+    const detail = (await client.callTool({ name: 'get_document', arguments: { document: id } })) as ToolResult;
+    const base = (payload(detail).layers as Array<{ id: string }>)[0].id;
+
+    const preview = await client.readResource({
+      uri: `pixel://documents/${id}/preview?layers=${base}&scale=1`,
+    });
+    const buf = decodePNG(Buffer.from((preview.contents[0] as { blob: string }).blob, 'base64'));
+    expect(buf.getColor(0, 0)).toEqual({ r: 255, g: 0, b: 0, a: 255 });
+  });
+
+  it('ghosts neighbours when onion is set', async () => {
+    const created = (await client.callTool({
+      name: 'create_document',
+      arguments: { width: 4, height: 4, layers: ['base'], frames: 3 },
+    })) as ToolResult;
+    const id = (payload(created).document as { id: string }).id;
+    await client.callTool({ name: 'draw_rect', arguments: { rect: { x: 0, y: 0, w: 1, h: 1 }, color: '#ff0000', fill: true, frame: 0 } });
+    await client.callTool({ name: 'draw_rect', arguments: { rect: { x: 1, y: 1, w: 1, h: 1 }, color: '#00ff00', fill: true, frame: 1 } });
+
+    const preview = await client.readResource({ uri: `pixel://documents/${id}/preview?frame=1&onion=1&scale=1` });
+    const buf = decodePNG(Buffer.from((preview.contents[0] as { blob: string }).blob, 'base64'));
+    expect(buf.getColor(1, 1)).toEqual({ r: 0, g: 255, b: 0, a: 255 });
+    const ghost = buf.getColor(0, 0);
+    expect(ghost.r).toBe(255);
+    expect(ghost.a).toBeGreaterThan(0);
+    expect(ghost.a).toBeLessThan(255);
+  });
+
+  it('crops to a rect named in the query string', async () => {
+    const created = (await client.callTool({
+      name: 'create_document',
+      arguments: { width: 8, height: 8, layers: ['base'] },
+    })) as ToolResult;
+    const id = (payload(created).document as { id: string }).id;
+
+    const preview = await client.readResource({ uri: `pixel://documents/${id}/preview?rect=2,2,4,4&scale=1` });
+    const buf = decodePNG(Buffer.from((preview.contents[0] as { blob: string }).blob, 'base64'));
+    expect({ width: buf.width, height: buf.height }).toEqual({ width: 4, height: 4 });
+  });
+});
+
+describe('scripting and plugins', () => {
+  async function makeDoc(width = 4, height = 4): Promise<string> {
+    const created = (await client.callTool({
+      name: 'create_document',
+      arguments: { width, height, layers: ['base'] },
+    })) as ToolResult;
+    return (payload(created).document as { id: string }).id;
+  }
+
+  it('runs a script, returns its result and logs, and folds it into one undo step', async () => {
+    const id = await makeDoc();
+    const run = (await client.callTool({
+      name: 'run_script',
+      arguments: {
+        document: id,
+        source: `
+          const base = layers()[0].id;
+          exec('draw_pixels', { layer: base, frame: 0, pixels: [{ x: 0, y: 0, color: '#ff0000' }] });
+          exec('draw_pixels', { layer: base, frame: 0, pixels: [{ x: 1, y: 0, color: '#00ff00' }] });
+          log('drew', 2, 'pixels');
+          return { width: document().width };
+        `,
+      },
+    })) as ToolResult;
+
+    const body = payload(run);
+    expect(body.ok).toBe(true);
+    expect(body.result).toEqual({ width: 4 });
+    expect(JSON.stringify(body.logs)).toContain('drew');
+
+    // Both edits vanish with a single undo.
+    await client.callTool({ name: 'undo', arguments: { document: id } });
+    const preview = await client.readResource({ uri: `pixel://documents/${id}/preview?scale=1` });
+    const buf = decodePNG(Buffer.from((preview.contents[0] as { blob: string }).blob, 'base64'));
+    expect(buf.getColor(0, 0).a).toBe(0);
+    expect(buf.getColor(1, 0).a).toBe(0);
+  });
+
+  it('returns an image alongside the result when preview is set', async () => {
+    const id = await makeDoc();
+    const run = (await client.callTool({
+      name: 'run_script',
+      arguments: { document: id, source: 'return 7;', preview: true },
+    })) as ToolResult;
+    expect(run.content.some((c) => c.type === 'image')).toBe(true);
+    expect(payload(run).preview).toBeTruthy();
+  });
+
+  it('reports a script failure with its logs', async () => {
+    const id = await makeDoc();
+    const run = (await client.callTool({
+      name: 'run_script',
+      arguments: { document: id, source: 'log("before"); throw new Error("boom");' },
+    })) as ToolResult;
+    expect(run.isError).toBe(true);
+    expect(String(payload(run).error)).toContain('boom');
+    expect(JSON.stringify(payload(run).logs)).toContain('before');
+  });
+
+  it('loads a plugin whose command becomes a real tool', async () => {
+    const id = await makeDoc();
+    const plugin = `
+      defineCommand({
+        name: 'test_border',
+        description: 'Draw a one-pixel border around the canvas.',
+        params: { color: { type: 'color', required: true } },
+        run(api, { color }) {
+          const doc = api.document();
+          api.exec('draw_rect', {
+            layer: doc.layers[0].id,
+            frame: 0,
+            rect: { x: 0, y: 0, w: doc.width, h: doc.height },
+            color,
+            fill: false,
+          });
+          return { frames: doc.frames.length };
+        },
+      });
+    `;
+
+    const load = (await client.callTool({
+      name: 'load_plugin',
+      arguments: { source: plugin, name: 'test' },
+    })) as ToolResult;
+    expect(payload(load).commands).toEqual(['test_border']);
+
+    // It shows up in the catalogue...
+    const listed = (await client.callTool({ name: 'list_commands', arguments: {} })) as ToolResult;
+    expect((payload(listed).commands as Array<{ name: string }>).map((c) => c.name)).toContain('test_border');
+
+    // ...as a real tool...
+    const tools = (await client.listTools()).tools.map((t) => t.name);
+    expect(tools).toContain('test_border');
+
+    // ...and is callable, running against the caller's document.
+    const called = (await client.callTool({
+      name: 'test_border',
+      arguments: { document: id, color: '#ff0000' },
+    })) as ToolResult;
+    expect(payload(called).ok).toBe(true);
+
+    // Its params are validated like any other command.
+    const bad = (await client.callTool({ name: 'test_border', arguments: { document: id } })) as ToolResult;
+    expect(bad.isError).toBe(true);
+
+    const plugins = (await client.callTool({ name: 'list_plugins', arguments: {} })) as ToolResult;
+    expect(payload(plugins).plugins).toContainEqual({ name: 'test', commands: ['test_border'] });
+  });
+
+  it('serves the scripting guide as a resource', async () => {
+    const guide = await client.readResource({ uri: 'pixel://script-guide' });
+    expect((guide.contents[0] as { text: string }).text).toContain('run_script');
+  });
+});
+
+describe('third-round ergonomics', () => {
+  it('selects a document by name as well as id', async () => {
+    const first = (await client.callTool({
+      name: 'create_document',
+      arguments: { width: 8, height: 8, name: 'Byid' },
+    })) as ToolResult;
+    const firstId = (payload(first).document as { id: string }).id;
+    await client.callTool({ name: 'create_document', arguments: { width: 8, height: 8, name: 'Byname' } });
+
+    const result = (await client.callTool({
+      name: 'select_document',
+      arguments: { document: 'Byid' },
+    })) as ToolResult;
+
+    expect(result.isError).toBeFalsy();
+    expect((payload(result).document as { id: string }).id).toBe(firstId);
+  });
+
+  it('accepts count as an alias for undo/redo steps', async () => {
+    await client.callTool({ name: 'create_document', arguments: { width: 8, height: 8, name: 'Steps' } });
+    for (let i = 0; i < 3; i++) {
+      await client.callTool({
+        name: 'draw_rect',
+        arguments: { layer: 0, rect: { x: i, y: 0, w: 1, h: 1 }, color: '#ff0000', fill: true },
+      });
+    }
+
+    const undone = (await client.callTool({ name: 'undo', arguments: { count: 3 } })) as ToolResult;
+    expect(payload(undone).undone).toBe(3);
+    const redone = (await client.callTool({ name: 'redo', arguments: { count: 3 } })) as ToolResult;
+    expect(payload(redone).redone).toBe(3);
+  });
+
+  it('reports the preview scale under both names', async () => {
+    await client.callTool({ name: 'create_document', arguments: { width: 32, height: 32, name: 'Scale' } });
+    const result = (await client.callTool({ name: 'get_preview', arguments: { scale: 4 } })) as ToolResult;
+    const body = payload(result);
+    expect(body.scale).toBe(4);
+    expect(body.upscale).toBe(4);
   });
 });

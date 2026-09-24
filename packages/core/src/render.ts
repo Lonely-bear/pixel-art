@@ -3,7 +3,7 @@ import { PixelBuffer } from './buffer.js';
 import { parseColor } from './color.js';
 import { getFrame, type Layer, type Sprite } from './document.js';
 import { maskFromBuffer } from './raster.js';
-import type { ColorInput, FrameId, LayerId } from './types.js';
+import type { Color, ColorInput, FrameId, LayerId } from './types.js';
 
 export interface CompositeOptions {
   /** Restrict to these layers (by ID), bottom-first order still applies. */
@@ -135,4 +135,82 @@ export function flattenAlpha(source: PixelBuffer, background: ColorInput): Pixel
     blendMode: 'normal',
   });
   return out;
+}
+
+export interface OnionSkinOptions extends CompositeOptions {
+  /** Number of frames *before* the current one to ghost in. Defaults to 0. */
+  before?: number;
+  /** Number of frames *after* the current one to ghost in. Defaults to 0. */
+  after?: number;
+  /** Alpha multiplier for the ghosted frames, 0-1. Defaults to 0.35. */
+  opacity?: number;
+  /** Wrap around the frame list, so frame 0 sees the last frame as "before". Defaults to false. */
+  loop?: boolean;
+  /** Replace the RGB of earlier frames with this colour, keeping their alpha. */
+  beforeTint?: ColorInput;
+  /** Replace the RGB of later frames with this colour, keeping their alpha. */
+  afterTint?: ColorInput;
+}
+
+/**
+ * Composite a frame with onion-skin ghosts of its neighbours.
+ *
+ * The ghosts are drawn *behind* the current frame at reduced alpha, so the artist sees
+ * the motion arc without it competing with the pose being drawn. Tints (typically a warm
+ * colour for the past and a cool one for the future) turn the ghosts into silhouettes and
+ * make the direction of motion readable at a glance.
+ *
+ * With `before` and `after` both 0 this is exactly `compositeFrame`.
+ */
+export function compositeWithOnion(
+  sprite: Sprite,
+  frameId: FrameId,
+  opts: OnionSkinOptions = {},
+): PixelBuffer {
+  const before = Math.max(0, Math.floor(opts.before ?? 0));
+  const after = Math.max(0, Math.floor(opts.after ?? 0));
+  const opacity = Math.min(1, Math.max(0, opts.opacity ?? 0.35));
+  const current = sprite.frames.findIndex((f) => f.id === frameId);
+  const out = new PixelBuffer(sprite.width, sprite.height);
+  if (opts.background != null) out.fill(opts.background);
+
+  if ((before === 0 && after === 0) || current < 0) {
+    blendBuffer(out, compositeFrame(sprite, frameId, opts), 1, null);
+    return out;
+  }
+
+  const count = sprite.frames.length;
+  const ghost = (offset: number, tint: ColorInput | undefined): void => {
+    let index = current + offset;
+    if (opts.loop) index = ((index % count) + count) % count;
+    if (index < 0 || index >= count || index === current) return;
+    const buffer = compositeFrame(sprite, sprite.frames[index].id, {
+      layers: opts.layers,
+      respectVisibility: opts.respectVisibility,
+    });
+    blendBuffer(out, buffer, opacity, tint === undefined ? null : parseColor(tint));
+  };
+
+  // Farther ghosts first, so the nearest frame ends up on top of the older ones.
+  for (let offset = before; offset >= 1; offset--) ghost(-offset, opts.beforeTint);
+  for (let offset = after; offset >= 1; offset--) ghost(offset, opts.afterTint);
+
+  blendBuffer(out, compositeFrame(sprite, frameId, {
+    layers: opts.layers,
+    respectVisibility: opts.respectVisibility,
+  }), 1, null);
+  return out;
+}
+
+/** Alpha-composite `source` onto `target`, optionally tinting it and fading it out. */
+function blendBuffer(target: PixelBuffer, source: PixelBuffer, opacity: number, tint: Color | null): void {
+  if (opacity <= 0) return;
+  const dst = target.data;
+  const src = source.data;
+  for (let i = 0; i < src.length; i += 4) {
+    const a = src[i + 3];
+    if (a === 0) continue;
+    const color: Color = tint ? { r: tint.r, g: tint.g, b: tint.b, a } : { r: src[i], g: src[i + 1], b: src[i + 2], a };
+    blendInto(dst, i, color, { opacity });
+  }
 }

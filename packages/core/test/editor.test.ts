@@ -244,6 +244,69 @@ describe('command bus', () => {
   });
 });
 
+describe('editor.transaction', () => {
+  it('collapses every command in the callback into one undo step', () => {
+    const editor = createEditor(makeSprite());
+    const summary = editor.transaction('script', () => {
+      editor.execute('draw_rect', redRect);
+      editor.execute('draw_rect', { ...redRect, rect: { x: 4, y: 4, w: 2, h: 2 } });
+      editor.execute('draw_rect', { ...redRect, rect: { x: 6, y: 6, w: 2, h: 2 } });
+      return 'done';
+    });
+
+    expect(summary).toBe('done');
+    expect(editor.history()).toHaveLength(1);
+    expect(editor.history()[0].command).toBe('transaction');
+    expect(editor.history()[0].label).toBe('script');
+
+    editor.undo();
+    expect(editor.canUndo()).toBe(false);
+    const cel = editor.sprite.frames[0].cels.get(editor.sprite.layers[0].id);
+    expect(cel?.getColor(0, 0).a ?? 0).toBe(0);
+  });
+
+  it('rolls back and rethrows when the callback throws', () => {
+    const editor = createEditor(makeSprite());
+    expect(() =>
+      editor.transaction('script', () => {
+        editor.execute('draw_rect', redRect);
+        throw new Error('halfway');
+      }),
+    ).toThrow('halfway');
+
+    expect(editor.history()).toHaveLength(0);
+    expect(editor.canUndo()).toBe(false);
+    const cel = editor.sprite.frames[0].cels.get(editor.sprite.layers[0].id);
+    expect(cel?.getColor(0, 0).a ?? 0).toBe(0);
+  });
+
+  it('leaves history and the redo stack alone when nothing changes', () => {
+    const editor = createEditor(makeSprite());
+    editor.execute('draw_rect', redRect);
+    editor.undo();
+    expect(editor.canRedo()).toBe(true);
+
+    editor.transaction('read-only', () => 42);
+
+    expect(editor.history()).toHaveLength(0);
+    expect(editor.canRedo()).toBe(true);
+  });
+
+  it('discards the redo stack once it records a step', () => {
+    const editor = createEditor(makeSprite());
+    editor.execute('draw_rect', redRect);
+    editor.undo();
+    expect(editor.canRedo()).toBe(true);
+
+    editor.transaction('script', () => {
+      editor.execute('draw_rect', { ...redRect, rect: { x: 4, y: 4, w: 2, h: 2 } });
+    });
+
+    expect(editor.canRedo()).toBe(false);
+    expect(editor.history()).toHaveLength(1);
+  });
+});
+
 function registryWith(extra: Command) {
   // Reuse the default registry contents plus the extra command.
   const editor = createEditor(makeSprite());

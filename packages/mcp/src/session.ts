@@ -12,13 +12,16 @@
  * apply to agent edits exactly as they do to GUI edits.
  */
 import {
+  allCommands,
   createEditor,
+  createMutableRegistry,
   createPalette,
   createSprite,
   deserializeSprite,
   makeId,
   serializeSprite,
   type Editor,
+  type MutableCommandRegistry,
   type Palette,
   type Sprite,
 } from '@pixel/core';
@@ -49,8 +52,12 @@ export interface CreateDocumentOptions {
    */
   palette?: PaletteInput;
   background?: string | null;
+  /** Snap every painted colour to the nearest palette swatch. */
+  paletteLocked?: boolean;
   path?: string;
   id?: string;
+  /** Make the new document active. Defaults to true. */
+  select?: boolean;
 }
 
 export type PaletteInput = readonly string[] | Palette | string;
@@ -80,9 +87,12 @@ export interface DocumentSummary {
   path?: string;
   width: number;
   height: number;
-  layers: number;
-  frames: number;
-  tags: number;
+  /** Number of layers in the stack. The layer *array* is on `describeSprite`, not here. */
+  layerCount: number;
+  /** Number of animation frames. */
+  frameCount: number;
+  /** Number of animation tags. */
+  tagCount: number;
   version: number;
   dirty: boolean;
   active: boolean;
@@ -120,6 +130,15 @@ export class DocumentStore {
   private readonly documents = new Map<string, PixelDocument>();
   private activeId: string | null = null;
 
+  /**
+   * One command registry for the whole session, shared by every document's editor.
+   *
+   * It is mutable so a plugin loaded at runtime makes its commands visible to the tool
+   * list, the command catalogue and every open document at once — without rebuilding
+   * editors or reloading documents.
+   */
+  readonly registry: MutableCommandRegistry = createMutableRegistry(allCommands);
+
   /** Create a blank sprite and register it. */
   create(options: CreateDocumentOptions): PixelDocument {
     const palette = normalizePaletteInput(
@@ -136,8 +155,9 @@ export class DocumentStore {
       frameDurationMs: options.frameDurationMs,
       palette,
       background: options.background ?? null,
+      paletteLocked: options.paletteLocked,
     });
-    return this.add(sprite, { path: options.path, id: options.id });
+    return this.add(sprite, { path: options.path, id: options.id, select: options.select });
   }
 
   /** Register an existing sprite (e.g. one just imported or deserialized). */
@@ -147,7 +167,7 @@ export class DocumentStore {
       id: options.id ?? makeId('doc'),
       name: sprite.name,
       path: options.path,
-      editor: createEditor(sprite),
+      editor: createEditor(sprite, this.registry),
       createdAt: now,
       updatedAt: now,
       dirty: false,
@@ -238,9 +258,9 @@ export class DocumentStore {
       path: doc.path,
       width: sprite.width,
       height: sprite.height,
-      layers: sprite.layers.length,
-      frames: sprite.frames.length,
-      tags: sprite.tags.length,
+      layerCount: sprite.layers.length,
+      frameCount: sprite.frames.length,
+      tagCount: sprite.tags.length,
       version: doc.editor.version,
       dirty: doc.dirty,
       active: doc.id === this.activeId,

@@ -40,6 +40,7 @@ export interface SpriteManifest {
     frames: { id: string; durationMs: number }[];
     tags: AnimationTag[];
     palette: Palette;
+    paletteLocked?: boolean;
   };
   cels: CelIndexEntry[];
   tileset?: {
@@ -87,6 +88,7 @@ export function serializeSprite(sprite: Sprite): Uint8Array {
       frames: sprite.frames.map((f) => ({ id: f.id, durationMs: f.durationMs })),
       tags: sprite.tags,
       palette: sprite.palette,
+      paletteLocked: sprite.paletteLocked,
     },
     cels,
   };
@@ -165,6 +167,7 @@ export function deserializeSprite(bytes: Uint8Array): Sprite {
     frames,
     tags: source.tags ?? [],
     palette: normalizePalette(source.palette),
+    paletteLocked: source.paletteLocked ?? false,
   };
 
   if (manifest.tileset) {

@@ -1,13 +1,19 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, Menu, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, shell } from 'electron';
+import { CHANNELS, type AppLocale } from '../shared/types.js';
 import { DEFAULT_MCP_PORT, startMcpHost, type McpHost } from './mcp-host.js';
 import { registerIpc } from './ipc.js';
 import { store } from './host.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const devServer = process.env.PIXEL_DEV_SERVER;
+
+// Escape hatch for machines where the GPU process misbehaves and the window
+// never appears. Must be called before the app is ready.
+//   PIXEL_DISABLE_GPU=1 pnpm --filter @pixel/app dev
+if (process.env.PIXEL_DISABLE_GPU === '1') app.disableHardwareAcceleration();
 
 let window: BrowserWindow | undefined;
 let mcp: McpHost | undefined;
@@ -19,8 +25,8 @@ function createWindow(): BrowserWindow {
     height: 920,
     minWidth: 900,
     minHeight: 600,
-    backgroundColor: '#14161c',
-    title: 'Pixel Art',
+    backgroundColor: '#f4f4f1',
+    title: 'Pixel Studio',
     show: false,
     webPreferences: {
       preload: path.join(here, 'preload.cjs'),
@@ -31,6 +37,18 @@ function createWindow(): BrowserWindow {
   });
 
   created.once('ready-to-show', () => created.show());
+  // Safety net: if `ready-to-show` never fires (a flaky first paint can swallow
+  // it), still reveal the window once the document has loaded so a blank window
+  // is never mistaken for "the app did not open".
+  created.webContents.once('did-finish-load', () => {
+    if (!created.isVisible()) created.show();
+  });
+  created.webContents.on('did-fail-load', (_event, code, description, url) => {
+    console.error(`[pixel-art] renderer failed to load (${code} ${description}): ${url}`);
+  });
+  created.webContents.on('render-process-gone', (_event, details) => {
+    console.error(`[pixel-art] renderer process gone: ${details.reason}`);
+  });
   created.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: 'deny' };
@@ -45,35 +63,49 @@ function createWindow(): BrowserWindow {
   return created;
 }
 
-function buildMenu(): void {
+const MENU_TEXT = {
+  en: {
+    file: 'File', newSprite: 'New sprite', open: 'Open…', save: 'Save',
+    exportPng: 'Export PNG…', exportSheet: 'Export spritesheet…', edit: 'Edit',
+    undo: 'Undo', redo: 'Redo', view: 'View',
+  },
+  'zh-CN': {
+    file: '文件', newSprite: '新建角色', open: '打开…', save: '保存',
+    exportPng: '导出 PNG…', exportSheet: '导出精灵图…', edit: '编辑',
+    undo: '撤销', redo: '重做', view: '视图',
+  },
+} as const;
+
+function buildMenu(locale: AppLocale = 'en'): void {
+  const text = MENU_TEXT[locale];
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       {
-        label: 'File',
+        label: text.file,
         submenu: [
           {
-            label: 'New sprite',
+            label: text.newSprite,
             accelerator: 'CmdOrCtrl+N',
             click: () => window?.webContents.send('pixel:menu', 'new'),
           },
           {
-            label: 'Open…',
+            label: text.open,
             accelerator: 'CmdOrCtrl+O',
             click: () => window?.webContents.send('pixel:menu', 'open'),
           },
           { type: 'separator' },
           {
-            label: 'Save',
+            label: text.save,
             accelerator: 'CmdOrCtrl+S',
             click: () => window?.webContents.send('pixel:menu', 'save'),
           },
           {
-            label: 'Export PNG…',
+            label: text.exportPng,
             accelerator: 'CmdOrCtrl+E',
             click: () => window?.webContents.send('pixel:menu', 'export'),
           },
           {
-            label: 'Export spritesheet…',
+            label: text.exportSheet,
             accelerator: 'CmdOrCtrl+Shift+E',
             click: () => window?.webContents.send('pixel:menu', 'sheet'),
           },
@@ -82,22 +114,22 @@ function buildMenu(): void {
         ],
       },
       {
-        label: 'Edit',
+        label: text.edit,
         submenu: [
           {
-            label: 'Undo',
+            label: text.undo,
             accelerator: 'CmdOrCtrl+Z',
             click: () => window?.webContents.send('pixel:menu', 'undo'),
           },
           {
-            label: 'Redo',
+            label: text.redo,
             accelerator: 'CmdOrCtrl+Shift+Z',
             click: () => window?.webContents.send('pixel:menu', 'redo'),
           },
         ],
       },
       {
-        label: 'View',
+        label: text.view,
         submenu: [
           { role: 'reload' },
           { role: 'toggleDevTools' },
@@ -148,6 +180,9 @@ async function start(): Promise<void> {
   }
 
   registerIpc(() => mcpStatus);
+  ipcMain.on(CHANNELS.setLocale, (_event, locale: AppLocale) => {
+    if (locale === 'en' || locale === 'zh-CN') buildMenu(locale);
+  });
   buildMenu();
   window = createWindow();
 
@@ -171,6 +206,12 @@ async function start(): Promise<void> {
 }
 
 if (!app.requestSingleInstanceLock()) {
+  // A previous run is still alive (very common on Windows, where closing the
+  // terminal does not always deliver SIGINT to the dev launcher, so electron.exe
+  // lingers). The existing instance was focused by its `second-instance` handler.
+  console.error(
+    '[pixel-art] another instance is already running — focusing it instead of opening a second window.',
+  );
   app.quit();
 } else {
   app.on('second-instance', () => {

@@ -34,10 +34,65 @@ export function clamp8(n: number): number {
   return n < 0 ? 0 : n > 255 ? 255 : Math.round(n);
 }
 
-export function parseColor(input: ColorInput): Color {
-  if (typeof input === 'string') return parseHex(input);
+/**
+ * Anything that can resolve a palette index to a colour: a `Palette`, or just its
+ * colour list. Kept structural so `color.ts` does not have to import `palette.ts`
+ * (which imports this file).
+ */
+export type PaletteLike = { readonly colors: readonly Color[] } | readonly Color[];
+
+function colorsOf(palette: PaletteLike | null | undefined): readonly Color[] | undefined {
+  if (!palette) return undefined;
+  return Array.isArray(palette) ? (palette as readonly Color[]) : (palette as { colors: readonly Color[] }).colors;
+}
+
+/** `"pal:9"`, `"palette:9"`, `"pal 9"` and `"pal#9"` all name palette index 9. */
+const PALETTE_REF = /^(?:pal|palette)\s*[:#]?\s*(\d+)$/i;
+
+function parsePaletteRef(input: string): number | null {
+  const match = PALETTE_REF.exec(input.trim());
+  return match ? Number(match[1]) : null;
+}
+
+/**
+ * Liberal colour parsing, with optional palette-index shorthand.
+ *
+ * Without a palette this is the historical behaviour: strings are hex/names and
+ * numbers are `0xRRGGBB` / `0xRRGGBBAA`.
+ *
+ * Given a palette, two extra spellings resolve against it, because in pixel art the
+ * artist is almost always thinking in palette slots rather than channel values:
+ *
+ *  - `"pal:9"` / `"palette:9"` — always an index, in any context.
+ *  - an integer `9` — treated as an index *when it is in range*, otherwise it still
+ *    means `0x000009`. Out-of-range numbers can never be a valid slot, so this stays
+ *    backwards compatible with the documented numeric form.
+ */
+export function parseColor(input: ColorInput, palette?: PaletteLike | null): Color {
+  const colors = colorsOf(palette);
+
+  if (typeof input === 'string') {
+    const index = parsePaletteRef(input);
+    if (index !== null) {
+      if (!colors) {
+        throw new Error(`Invalid colour: ${JSON.stringify(input)} (no palette available to resolve an index)`);
+      }
+      const c = colors[index];
+      if (!c) {
+        throw new Error(
+          `Invalid colour: ${JSON.stringify(input)} (palette index ${index} out of range, size ${colors.length})`,
+        );
+      }
+      return { r: c.r, g: c.g, b: c.b, a: c.a };
+    }
+    return parseHex(input);
+  }
 
   if (typeof input === 'number') {
+    if (colors && Number.isInteger(input) && input >= 0 && input < colors.length) {
+      const c = colors[input];
+      return { r: c.r, g: c.g, b: c.b, a: c.a };
+    }
     const n = input >>> 0;
     if (n > 0xffffff) {
       return { r: (n >>> 24) & 255, g: (n >>> 16) & 255, b: (n >>> 8) & 255, a: n & 255 };

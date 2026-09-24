@@ -5,6 +5,7 @@ import type { Command } from './types.js';
 export * from '../bus.js';
 export * from './types.js';
 export * from './catalog.js';
+export * from './plugin.js';
 export * from './draw.js';
 export * from './structure.js';
 export * from './transform.js';

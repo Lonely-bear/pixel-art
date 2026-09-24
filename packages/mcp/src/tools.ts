@@ -15,24 +15,25 @@
  * concurrency, so a stale agent edit fails loudly instead of clobbering work).
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult, ContentBlock, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import {
-  allCommands,
   animationSequence,
   buildSpritesheet,
   compositeFrame,
-  defaultRegistry,
+  compositeWithOnion,
   describeCommands,
   encodeGIF,
   encodePNG,
+  extractRegion,
   frameRefSchema,
   isAseprite,
   layerRefSchema,
   parseColor,
   PixelBuffer,
   resolveFrame,
+  resolveLayer,
   scaleAtlas,
   scaleNearest,
   spriteFromAseprite,
@@ -43,6 +44,7 @@ import {
   type Sprite,
 } from '@pixel/core';
 import { toJSONSchema, z } from 'zod';
+import { ScriptRuntime } from '@pixel/script';
 import { BUILTIN_PALETTES, type DocumentStore, type PixelDocument } from './session.js';
 import { PIXEL_ART_SKILL } from './skill.js';
 
@@ -75,6 +77,40 @@ const READ_ONLY_TOOLS = new Set([
   'list_commands',
   'list_documents',
 ]);
+
+/**
+ * The hand-registered session tools, so `list_commands` can advertise them.
+ *
+ * `list_commands` only knows about the *command registry*; `undo`, `redo` and
+ * `get_history` are editor concerns with no core command behind them, and the
+ * perception/export tools are server concerns too. Without this list an agent that
+ * reads `list_commands` (as the skill tells it to) never discovers that undo exists.
+ */
+const SESSION_TOOLS: Array<{ name: string; description: string }> = [
+  { name: 'undo', description: 'Undo the last edit(s).' },
+  { name: 'redo', description: 'Redo undone edit(s).' },
+  { name: 'get_history', description: 'Recent commands with labels and summaries.' },
+  { name: 'get_preview', description: 'Render the sprite (or a rect) as a PNG to look at.' },
+  { name: 'get_pixels', description: 'Exact pixel colours in a small region.' },
+  { name: 'get_document', description: 'Layers, frames, tags, palette.' },
+  { name: 'get_palette', description: 'Palette as hex colours with indices.' },
+  { name: 'list_documents', description: 'List open documents.' },
+  { name: 'create_document', description: 'Create a blank sprite document.' },
+  { name: 'open_document', description: 'Load a `.pixel` document.' },
+  { name: 'save_document', description: 'Save to a `.pixel` file.' },
+  { name: 'import_image', description: 'Import a PNG or Aseprite file.' },
+  { name: 'select_document', description: 'Make a document active.' },
+  { name: 'close_document', description: 'Drop a document from the session.' },
+  { name: 'export_png', description: 'Write the sprite to a PNG.' },
+  { name: 'export_sheet', description: 'Spritesheet PNG + Aseprite JSON.' },
+  { name: 'export_tiled', description: 'Tilemaps as a Tiled `.tmj` map.' },
+  { name: 'export_gif', description: 'Write an animated GIF.' },
+  { name: 'run_script', description: 'Run a sandboxed script.' },
+  { name: 'load_plugin', description: 'Load a plugin defining commands.' },
+  { name: 'list_plugins', description: 'List loaded plugins.' },
+  { name: 'read_skill', description: 'The pixel-art craft guide.' },
+  { name: 'list_commands', description: 'This catalogue.' },
+];
 
 function text(value: string): ContentBlock {
   return { type: 'text', text: value };
@@ -159,6 +195,29 @@ function resolveBackground(value: string | null | undefined) {
   return value == null ? null : parseColor(value);
 }
 
+/** Render a frame to an image block plus its metadata, for any tool that returns a preview. */
+function previewPayload(
+  sprite: Sprite,
+  frameRef: number | string | undefined,
+  target = 256,
+): { blocks: ContentBlock[]; meta: Record<string, unknown> } {
+  const frame = resolveFrame(sprite, frameRef ?? 0);
+  const buffer = compositeFrame(sprite, frame.id);
+  const factor = previewFactor(buffer.width, buffer.height, target, 16);
+  const shown = factor > 1 ? scaleNearest(buffer, factor) : buffer;
+  return {
+    blocks: [imageContent(shown)],
+    meta: {
+      frame: sprite.frames.findIndex((f) => f.id === frame.id),
+      frameId: frame.id,
+      upscale: factor,
+      scale: factor,
+      imageWidth: shown.width,
+      imageHeight: shown.height,
+    },
+  };
+}
+
 /** Best-effort structured description of a sprite for `get_document`. */
 function describeSprite(sprite: Sprite): Record<string, unknown> {
   return {
@@ -180,10 +239,8 @@ function describeSprite(sprite: Sprite): Record<string, unknown> {
       index,
       id: f.id,
       durationMs: f.durationMs,
-      layers: [...f.cels.keys()].map((layerId) => {
-        const layer = sprite.layers.find((l) => l.id === layerId);
-        return layer ? layer.name : layerId;
-      }),
+      // Paint order, bottom first — not cel insertion order, which is arbitrary.
+      layers: sprite.layers.filter((l) => f.cels.has(l.id)).map((l) => l.name),
     })),
     tags: sprite.tags.map((t) => ({
       id: t.id,
@@ -194,6 +251,7 @@ function describeSprite(sprite: Sprite): Record<string, unknown> {
       repeat: t.repeat,
     })),
     palette: { name: sprite.palette.name, size: sprite.palette.colors.length },
+    paletteLocked: sprite.paletteLocked ?? false,
     celCount: sprite.frames.reduce((sum, f) => sum + f.cels.size, 0),
     hasTileset: Boolean(sprite.tileset),
     tilemaps: sprite.tilemaps?.map((t) => ({ id: t.id, name: t.name, width: t.width, height: t.height })) ?? [],
@@ -240,6 +298,15 @@ function compactCommand(command: ReturnType<typeof describeCommands>[number]): C
 function writeFile(path: string, bytes: Uint8Array): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, bytes);
+}
+
+/**
+ * Absolute form of a written path. The tools report the path the caller passed (often
+ * relative), but a caller usually needs to open or reference the file, and `resolve`
+ * against the server's working directory gives them something they can use directly.
+ */
+function absPath(path: string): string {
+  return resolve(path);
 }
 
 interface RawOp {
@@ -329,7 +396,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Create a document',
       description:
-        'Create a new blank sprite and make it active. Returns the document id and version. Prefer small canvases (16x16 to 64x64) and 2-4 named layers. Pass `palette` to constrain colours, which is the single biggest quality win for pixel art.',
+        'Create a new blank sprite and make it active (pass `select: false` to keep the current document active). Returns the document id and version. Prefer small canvases (16x16 to 64x64) and 2-4 named layers. Pass `palette` to constrain colours, which is the single biggest quality win for pixel art.',
       inputSchema: z.object({
         width: z.number().int().min(1).max(4096).describe('Canvas width in pixels.'),
         height: z.number().int().min(1).max(4096).describe('Canvas height in pixels.'),
@@ -351,6 +418,16 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           .nullable()
           .optional()
           .describe('Fill the bottom layer of every frame with this colour. Omit for a transparent background.'),
+        paletteLocked: z
+          .boolean()
+          .optional()
+          .describe(
+            'Snap every painted colour to the nearest palette swatch (alpha is preserved). Keeps stray colours off the ramp. Defaults to false.',
+          ),
+        select: z
+          .boolean()
+          .optional()
+          .describe('Make the new document active. Defaults to true; pass false to create a scratch document without stealing focus.'),
       }),
       annotations: { destructiveHint: false },
     },
@@ -365,6 +442,8 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           frameDurationMs: args.frameDurationMs as number | undefined,
           palette: args.palette as string | string[] | undefined,
           background: (args.background as string | null | undefined) ?? null,
+          paletteLocked: args.paletteLocked as boolean | undefined,
+          select: args.select as boolean | undefined,
         });
         return ok({ ok: true, document: store.summary(doc), ...describeSprite(doc.editor.sprite) });
       } catch (error) {
@@ -418,7 +497,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
       try {
         writeFile(path, store.save(doc));
         doc.path = path;
-        return ok({ ok: true, path, document: store.summary(doc) });
+        return ok({ ok: true, path, absolute: absPath(path), document: store.summary(doc) });
       } catch (error) {
         return fail(`Could not save ${path}: ${(error as Error).message}`);
       }
@@ -469,13 +548,23 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     'select_document',
     {
       title: 'Select the active document',
-      description: 'Make a document the active one, so later calls can omit `document`.',
-      inputSchema: z.object({ document: z.string().describe('Document id to activate.') }),
+      description: 'Make a document the active one, so later calls can omit `document`. Accepts a document id or its name.',
+      inputSchema: z.object({ document: z.string().describe('Document id or name to activate.') }),
       annotations: { readOnlyHint: true },
     },
     (args) => {
       try {
-        return ok({ ok: true, document: store.summary(store.select(args.document as string)) });
+        const ref = args.document as string;
+        let id = ref;
+        if (!store.list().some((doc) => doc.id === ref)) {
+          const byName = store.list().find((doc) => doc.name === ref);
+          if (!byName) {
+            const known = store.list().map((doc) => `${doc.id} (${doc.name})`).join(', ');
+            return fail(`Unknown document: ${ref}. Known documents: ${known}`);
+          }
+          id = byName.id;
+        }
+        return ok({ ok: true, document: store.summary(store.select(id)) });
       } catch (error) {
         return fail((error as Error).message);
       }
@@ -529,14 +618,41 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Look at the sprite',
       description:
-        'Render the composited sprite as a PNG image you can actually see, plus a text summary. This is your eyes: call it after blocking in the silhouette, after shading and after outlining. Returns all frames as a horizontal sheet when `frames` is "all".',
+        'Render the composited sprite as a PNG image you can actually see, plus a text summary. This is your eyes: call it after blocking in the silhouette, after shading and after outlining. Returns all frames as a horizontal sheet when `frames` is "all". Pass `layers` to isolate a single layer, `rect` to crop-zoom a detail, and `onion` to see the neighbouring frames as ghosts.',
       inputSchema: z.object({
         document: documentRef,
         frame: frameRefSchema.optional().describe('Frame id or 0-based index. Defaults to frame 0.'),
+        rect: z
+          .object({
+            x: z.number().int(),
+            y: z.number().int(),
+            w: z.number().int().min(1),
+            h: z.number().int().min(1),
+          })
+          .optional()
+          .describe(
+            'Crop to this region before upscaling, so a small detail (a face, a hand) fills the image. `{x, y, w, h}` in canvas pixels. Single-frame only.',
+          ),
         frames: z
           .enum(['one', 'all'])
           .optional()
           .describe('"one" (default) renders a single frame; "all" renders every frame as a horizontal strip.'),
+        layers: z
+          .array(layerRefSchema)
+          .optional()
+          .describe('Only composite these layers (ids, names or indices). Use it to inspect one layer in isolation, e.g. just the shading pass.'),
+        onion: z
+          .object({
+            before: z.number().int().min(0).max(8).optional().describe('How many earlier frames to ghost in.'),
+            after: z.number().int().min(0).max(8).optional().describe('How many later frames to ghost in.'),
+            opacity: z.number().min(0).max(1).optional().describe('Ghost opacity, 0-1. Defaults to 0.35.'),
+            loop: z.boolean().optional().describe('Wrap around, so frame 0 ghosts the last frame. Defaults to false.'),
+            beforeTint: z.string().optional().describe('Tint earlier ghosts (e.g. "#ff8080") to show motion direction.'),
+            afterTint: z.string().optional().describe('Tint later ghosts (e.g. "#8080ff").'),
+          })
+          .strict()
+          .optional()
+          .describe('Onion skin: draw the neighbouring frames behind this one as faded ghosts.'),
         scale: z
           .number()
           .int()
@@ -558,12 +674,22 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         const sprite = doc.editor.sprite;
         const background = resolveBackground(args.background as string | null | undefined);
         const frames = sprite.frames;
+        const layerRefs = args.layers as Array<string | number> | undefined;
+        const layerIds = layerRefs?.map((ref) => resolveLayer(sprite, ref).id);
+        const onion = args.onion as
+          | { before?: number; after?: number; opacity?: number; loop?: boolean; beforeTint?: string; afterTint?: string }
+          | undefined;
+
+        const renderFrame = (frameId: string): PixelBuffer => {
+          const opts = { background, layers: layerIds, before: onion?.before, after: onion?.after, opacity: onion?.opacity, loop: onion?.loop, beforeTint: onion?.beforeTint, afterTint: onion?.afterTint };
+          return onion ? compositeWithOnion(sprite, frameId, opts) : compositeFrame(sprite, frameId, { background, layers: layerIds });
+        };
 
         let buffer: PixelBuffer;
         let meta: Record<string, unknown>;
 
         if (args.frames === 'all' && frames.length > 1) {
-          const rendered = frames.map((frame) => compositeFrame(sprite, frame.id, { background }));
+          const rendered = frames.map((frame) => renderFrame(frame.id));
           const gap = 1;
           const strip = new PixelBuffer(
             frames.length * sprite.width + (frames.length - 1) * gap,
@@ -580,7 +706,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           };
         } else {
           const frame = resolveFrame(sprite, (args.frame as number | string | undefined) ?? 0);
-          buffer = compositeFrame(sprite, frame.id, { background });
+          buffer = renderFrame(frame.id);
           meta = {
             mode: 'single-frame',
             frame: sprite.frames.findIndex((f) => f.id === frame.id),
@@ -588,6 +714,12 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
             durationMs: frame.durationMs,
           };
         }
+
+        const crop = args.rect as { x: number; y: number; w: number; h: number } | undefined;
+        if (crop && args.frames === 'all' && frames.length > 1) {
+          return fail('`rect` crops a single frame; drop `frames: "all"` or read one frame at a time.');
+        }
+        if (crop) buffer = extractRegion(buffer, crop);
 
         const factor =
           (args.scale as number | undefined) ??
@@ -601,7 +733,11 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
             width: sprite.width,
             height: sprite.height,
             ...meta,
+            ...(crop ? { rect: crop } : {}),
+            ...(layerIds ? { layers: layerIds } : {}),
+            ...(onion ? { onion } : {}),
             upscale: factor,
+            scale: factor,
             imageWidth: shown.width,
             imageHeight: shown.height,
           },
@@ -758,12 +894,13 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
       inputSchema: z.object({
         document: documentRef,
         steps: z.number().int().min(1).max(100).optional().describe('How many edits to undo. Defaults to 1.'),
+        count: z.number().int().min(1).max(100).optional().describe('Alias for `steps`.'),
       }),
       annotations: { destructiveHint: false },
     },
     (args) => {
       const doc = store.require(args.document as string | undefined);
-      const steps = (args.steps as number | undefined) ?? 1;
+      const steps = (args.steps as number | undefined) ?? (args.count as number | undefined) ?? 1;
       let done = 0;
       for (let i = 0; i < steps && doc.editor.canUndo(); i++) {
         doc.editor.undo();
@@ -783,12 +920,13 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
       inputSchema: z.object({
         document: documentRef,
         steps: z.number().int().min(1).max(100).optional().describe('How many edits to redo. Defaults to 1.'),
+        count: z.number().int().min(1).max(100).optional().describe('Alias for `steps`.'),
       }),
       annotations: { destructiveHint: false },
     },
     (args) => {
       const doc = store.require(args.document as string | undefined);
-      const steps = (args.steps as number | undefined) ?? 1;
+      const steps = (args.steps as number | undefined) ?? (args.count as number | undefined) ?? 1;
       let done = 0;
       for (let i = 0; i < steps && doc.editor.canRedo(); i++) {
         doc.editor.redo();
@@ -807,7 +945,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Apply a batch of commands',
       description:
-        'Run several commands in one round trip. Far cheaper than one call per edit when you are generating a sprite or all the frames of an animation. Each op is `{command, params}` - or put the params inline: `{command: "draw_rect", layer: "base", rect: {...}, color: "#f00", fill: true}`. Set `defaultLayer`/`defaultFrame` once instead of repeating them in every op. Use `list_commands` to see every available command and its parameters. Returns a per-op result, so a failure tells you exactly which op and why.',
+        'Run several commands in one round trip. Far cheaper than one call per edit when you are generating a sprite or all the frames of an animation. Each op is `{command, params}` - or put the params inline: `{command: "draw_rect", layer: "base", rect: {...}, color: "#f00", fill: true}`. Set `defaultLayer`/`defaultFrame` once instead of repeating them in every op. Use `list_commands` to see every available command and its parameters. Returns a per-op result, so a failure tells you exactly which op and why. Pass `preview: true` to get the rendered result back as an image in the same response.',
       inputSchema: z.object({
         document: documentRef,
         expectedVersion: versionRef,
@@ -831,6 +969,13 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           .boolean()
           .optional()
           .describe('Return only the counts and the failures, without per-op summaries. Use it for long batches where you only care that nothing broke.'),
+        preview: z
+          .boolean()
+          .optional()
+          .describe('Include a rendered PNG of the result in this response, so you can see the edit without spending a second call. Defaults to false.'),
+        previewFrame: frameRefSchema
+          .optional()
+          .describe('Frame to render when `preview` is true. Defaults to frame 0.'),
         ops: z
           .array(z.record(z.string(), z.unknown()))
           .min(1)
@@ -883,7 +1028,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           continue;
         }
 
-        const command = defaultRegistry.get(op.command);
+        const command = store.registry.get(op.command);
         if (command) {
           // An explicit default beats the implicit one, which beats nothing.
           const required = requiredArgsOf(command);
@@ -931,18 +1076,33 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         });
       }
 
-      return ok({
-        ok: failed === 0,
-        applied,
-        failed,
-        skipped,
-        version: doc.editor.version,
-        document: store.summary(doc),
-        // The failure list is small and always worth having; the per-op results
-        // are the bulky part, so `quiet` drops those instead.
-        ...(failed > 0 ? { failures } : {}),
-        ...(quiet ? {} : { results }),
-      });
+      const blocks: ContentBlock[] = [];
+      let previewMeta: Record<string, unknown> | undefined;
+      if (args.preview === true) {
+        const payload = previewPayload(
+          doc.editor.sprite,
+          args.previewFrame as number | string | undefined,
+        );
+        blocks.push(...payload.blocks);
+        previewMeta = payload.meta;
+      }
+
+      return ok(
+        {
+          ok: failed === 0,
+          applied,
+          failed,
+          skipped,
+          version: doc.editor.version,
+          document: store.summary(doc),
+          // The failure list is small and always worth having; the per-op results
+          // are the bulky part, so `quiet` drops those instead.
+          ...(failed > 0 ? { failures } : {}),
+          ...(quiet ? {} : { results }),
+          ...(previewMeta ? { preview: previewMeta } : {}),
+        },
+        blocks,
+      );
     },
   );
 
@@ -1000,6 +1160,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         return ok({
           ok: true,
           files: written,
+          absolute: written.map(absPath),
           width: sprite.width * scale,
           height: sprite.height * scale,
           scale,
@@ -1059,6 +1220,8 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           ok: true,
           image: out,
           json: jsonPath,
+          imageAbsolute: absPath(out),
+          jsonAbsolute: absPath(jsonPath),
           width: sheet.width,
           height: sheet.height,
           columns: atlas.columns,
@@ -1106,6 +1269,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         return ok({
           ok: true,
           path: out,
+          absolute: absPath(out),
           image,
           firstgid,
           width: map.width,
@@ -1167,6 +1331,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         return ok({
           ok: true,
           path: out,
+          absolute: absPath(out),
           width: sprite.width * scale,
           height: sprite.height * scale,
           frames: sequence.frames.length,
@@ -1190,7 +1355,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'List all commands',
       description:
-        'The catalogue of drawing, structure, palette and transform commands, including commands that are not individually exposed as tools. Everything listed here can be run through `apply_ops`. By default each command is one line: its name, description and parameter types. Pass `verbose: true` for the full JSON Schemas.',
+        'The catalogue of drawing, structure, palette and transform commands, including commands that are not individually exposed as tools. Everything in `commands` can be run through `apply_ops`. By default each command is one line: its name, description and parameter types; pass `verbose: true` for the full JSON Schemas. `sessionTools` lists the hand-registered tools (undo/redo/history, perception, export) that are called directly instead of through `apply_ops`.',
       inputSchema: z.object({
         filter: z.string().optional().describe('Only return commands whose name or description contains this text.'),
         verbose: z
@@ -1202,21 +1367,26 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     },
     (args) => {
       const filter = (args.filter as string | undefined)?.toLowerCase();
-      let catalog = describeCommands(allCommands);
+      let catalog = describeCommands(store.registry.list());
+      let sessionTools = SESSION_TOOLS;
       if (filter) {
         catalog = catalog.filter(
           (c) => c.name.toLowerCase().includes(filter) || c.description.toLowerCase().includes(filter),
         );
+        sessionTools = sessionTools.filter(
+          (t) => t.name.toLowerCase().includes(filter) || t.description.toLowerCase().includes(filter),
+        );
       }
       const hint =
-        'Run any of these through apply_ops, e.g. {"ops": [{"command": "dither_fill", "params": {...}}]}. Pass verbose: true for the full JSON Schemas.';
+        'Run anything in `commands` through apply_ops, e.g. {"ops": [{"command": "dither_fill", "params": {...}}]}. `sessionTools` are called directly as tools (e.g. `undo`, `get_preview`), not via apply_ops. Pass verbose: true for the full JSON Schemas.';
       if (args.verbose === true) {
-        return ok({ ok: true, count: catalog.length, commands: catalog, hint });
+        return ok({ ok: true, count: catalog.length, commands: catalog, sessionTools, hint });
       }
       return ok({
         ok: true,
         count: catalog.length,
         commands: catalog.map(compactCommand),
+        sessionTools,
         hint,
       });
     },
@@ -1224,9 +1394,154 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
 
   /* -------------------------------------------- generated command tools */
 
-  for (const command of allCommands) {
+  for (const command of store.registry.list()) {
     registerCommandTool(server, store, command);
   }
+
+  /* ------------------------------------------------------------- scripting */
+
+  // One runtime per server session, so plugins loaded by `load_plugin` stay
+  // resident and the commands they define are callable from later scripts. A
+  // script never touches the host: every value crosses a JSON bridge.
+  const scriptRuntime = new ScriptRuntime();
+  const loadedPlugins = new Map<string, string[]>();
+
+  addTool(
+    server,
+    'run_script',
+    {
+      title: 'Run a sandboxed script',
+      description:
+        'Run JavaScript against the current document in a hardened sandbox. `exec(command, params)` / `tryExec(...)` drive the same command bus as the tools; `document()`, `layers()`, `frames()`, `tags()`, `palette()`, `getPixel(x, y)` and `sample(x, y)` read state; `log(...)` collects output; returning a value yields JSON. The whole script collapses into one undo step. There is no filesystem, network, `require` or `process` access, and it is killed after the timeout.',
+      inputSchema: z.object({
+        document: documentRef,
+        source: z
+          .string()
+          .describe('JavaScript source. Return a JSON-serialisable value to get it back in `result`.'),
+        timeoutMs: z
+          .number()
+          .int()
+          .positive()
+          .max(60000)
+          .optional()
+          .describe('Execution budget in milliseconds. Defaults to 2000.'),
+        preview: z.boolean().optional().describe('Also return a PNG of the document after the script runs.'),
+      }),
+    },
+    (args) => {
+      let doc: PixelDocument;
+      try {
+        doc = store.require(args.document as string | undefined);
+      } catch (error) {
+        return fail((error as Error).message);
+      }
+
+      const timeoutMs = args.timeoutMs as number | undefined;
+      const runtime = timeoutMs ? new ScriptRuntime({ timeoutMs }) : scriptRuntime;
+      const before = doc.editor.version;
+      const outcome = runtime.run(args.source as string, doc.editor);
+      if (doc.editor.version !== before) store.touch(doc);
+
+      if (!outcome.ok) {
+        return fail(outcome.error ?? 'The script failed.', {
+          logs: outcome.logs,
+          version: doc.editor.version,
+          document: store.summary(doc),
+        });
+      }
+
+      const blocks: ContentBlock[] = [];
+      let preview: Record<string, unknown> | undefined;
+      if (args.preview === true) {
+        const rendered = previewPayload(doc.editor.sprite, undefined);
+        blocks.push(...rendered.blocks);
+        preview = rendered.meta;
+      }
+
+      return ok(
+        {
+          ok: true,
+          result: outcome.result,
+          logs: outcome.logs,
+          version: doc.editor.version,
+          document: store.summary(doc),
+          ...(preview ? { preview } : {}),
+        },
+        blocks,
+      );
+    },
+  );
+
+  addTool(
+    server,
+    'load_plugin',
+    {
+      title: 'Load a plugin',
+      description:
+        'Load a plugin script that calls `defineCommand({ name, description, params, run })`. Every command it defines becomes a real MCP tool, is callable from scripts via `exec`, and appears in `list_commands`. Read the source from `path` or pass it inline as `source`.',
+      inputSchema: z.object({
+        source: z.string().optional().describe('Plugin source. Provide this or `path`.'),
+        path: z.string().optional().describe('Path to a plugin .js file to read.'),
+        name: z.string().optional().describe('Plugin name, shown by `list_plugins`. Defaults to the file name.'),
+      }),
+    },
+    (args) => {
+      const filePath = args.path as string | undefined;
+      let source = args.source as string | undefined;
+      const name = (args.name as string | undefined) ?? (filePath ? basename(filePath) : 'plugin');
+
+      if (!source && filePath) {
+        try {
+          source = readFileSync(filePath, 'utf8');
+        } catch (error) {
+          return fail(`Could not read plugin file: ${briefError(error)}`);
+        }
+      }
+      if (!source) return fail('load_plugin needs either `source` or `path`.');
+
+      const outcome = scriptRuntime.loadPlugin(source, { name, registry: store.registry });
+      if (!outcome.ok) {
+        return fail(outcome.error ?? 'The plugin failed to load.', { logs: outcome.logs });
+      }
+
+      for (const commandName of outcome.commands) {
+        const command = store.registry.get(commandName);
+        if (command) registerCommandTool(server, store, command);
+      }
+      loadedPlugins.set(name, outcome.commands);
+      if (outcome.commands.length > 0) {
+        try {
+          server.sendToolListChanged();
+        } catch {
+          // A client that does not support list-changed notifications is not fatal.
+        }
+      }
+
+      return ok({
+        ok: true,
+        name,
+        commands: outcome.commands,
+        logs: outcome.logs,
+        toolCount: store.registry.list().length,
+      });
+    },
+  );
+
+  addTool(
+    server,
+    'list_plugins',
+    {
+      title: 'List loaded plugins',
+      description: 'List the plugins loaded in this session and the commands each one registered.',
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true },
+    },
+    () =>
+      ok({
+        ok: true,
+        plugins: [...loadedPlugins.entries()].map(([name, commands]) => ({ name, commands })),
+      }),
+  );
 
   /* --------------------------------------------------------------- skills */
 

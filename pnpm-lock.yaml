@@ -57,6 +57,9 @@ importers:
       '@pixel/core':
         specifier: workspace:*
         version: link:../core
+      '@pixel/script':
+        specifier: workspace:*
+        version: link:../script
 
   packages/core:
     dependencies:
@@ -81,9 +84,18 @@ importers:
       '@pixel/core':
         specifier: workspace:*
         version: link:../core
+      '@pixel/script':
+        specifier: workspace:*
+        version: link:../script
       zod:
         specifier: ^4.6.5
         version: 4.6.5
+
+  packages/script:
+    dependencies:
+      '@pixel/core':
+        specifier: workspace:*
+        version: link:../core
 
 packages:
 

@@ -3,6 +3,8 @@ import { PixelBuffer, type Point } from '@pixel/core';
 import { useEditor, sampleColor } from '../editor-context.js';
 import { ERASE_PREVIEW, drawShapePreview, opaquePoints, stampLine, stampPoint } from '../paint.js';
 import { rgbaToHex, rgbaToCss } from '../color-utils.js';
+import { useI18n } from '../i18n.js';
+import { Icon } from './Icon.js';
 
 interface Stroke {
   tool: string;
@@ -17,6 +19,7 @@ const MAX_ZOOM = 40;
 
 export function PixelCanvas(): React.ReactNode {
   const editor = useEditor();
+  const { t } = useI18n();
   const {
     detail,
     bitmap,
@@ -177,7 +180,7 @@ export function PixelCanvas(): React.ReactNode {
 
     // Pixel grid, once pixels are big enough to aim at.
     if (zoom >= 8) {
-      context.strokeStyle = 'rgba(255,255,255,0.07)';
+      context.strokeStyle = 'rgba(47, 52, 77, 0.13)';
       context.lineWidth = 1;
       context.beginPath();
       for (let x = 0; x <= width; x += 1) {
@@ -193,7 +196,7 @@ export function PixelCanvas(): React.ReactNode {
       context.stroke();
 
       // A stronger line every 8 pixels, which is the usual sprite grid.
-      context.strokeStyle = 'rgba(255,255,255,0.14)';
+      context.strokeStyle = 'rgba(47, 52, 77, 0.22)';
       context.beginPath();
       for (let x = 0; x <= width; x += 8) {
         const sx = Math.round(panX + x * zoom) + 0.5;
@@ -209,7 +212,7 @@ export function PixelCanvas(): React.ReactNode {
     }
 
     // Canvas border.
-    context.strokeStyle = 'rgba(255,255,255,0.25)';
+    context.strokeStyle = 'rgba(47, 52, 77, 0.34)';
     context.lineWidth = 1;
     context.strokeRect(panX - 0.5, panY - 0.5, imageWidth + 1, imageHeight + 1);
 
@@ -225,7 +228,7 @@ export function PixelCanvas(): React.ReactNode {
         brushSize * zoom,
         brushSize * zoom,
       );
-      context.strokeStyle = 'rgba(255,255,255,0.9)';
+      context.strokeStyle = 'rgba(47, 52, 77, 0.92)';
       context.strokeRect(
         panX + (cursor.x - offset) * zoom + 0.5,
         panY + (cursor.y - offset) * zoom + 0.5,
@@ -484,11 +487,24 @@ export function PixelCanvas(): React.ReactNode {
         onContextMenu={(event) => event.preventDefault()}
       />
       <div className="canvas-actions">
-        <button type="button" onClick={() => fit(width, height)} title="Fit to window">
-          Fit
+        <button
+          type="button"
+          className="canvas-action-button"
+          onClick={() => fit(width, height)}
+          title={t('canvas.fitHint')}
+          aria-label={t('canvas.fitHint')}
+        >
+          <Icon name="fit" size={15} />
+          <span>{t('canvas.fit')}</span>
         </button>
-        <button type="button" onClick={() => setZoom(1)} title="Reset zoom to 100%">
-          1:1
+        <button
+          type="button"
+          className="canvas-action-button actual-size"
+          onClick={() => setZoom(1)}
+          title={t('canvas.actualHint')}
+          aria-label={t('canvas.actualHint')}
+        >
+          {t('canvas.actual')}
         </button>
         <span className="zoom-label">{zoom}x</span>
       </div>
@@ -502,15 +518,15 @@ function checkerPattern(context: CanvasRenderingContext2D): CanvasPattern | stri
     tile.width = 16;
     tile.height = 16;
     const tileContext = tile.getContext('2d');
-    if (!tileContext) return '#20242d';
-    tileContext.fillStyle = '#1a1d24';
+    if (!tileContext) return '#f7f7f4';
+    tileContext.fillStyle = '#f7f7f4';
     tileContext.fillRect(0, 0, 16, 16);
-    tileContext.fillStyle = '#22262f';
+    tileContext.fillStyle = '#e8e9e5';
     tileContext.fillRect(0, 0, 8, 8);
     tileContext.fillRect(8, 8, 8, 8);
     checkerCache = tile;
   }
-  return context.createPattern(checkerCache, 'repeat') ?? '#1a1d24';
+  return context.createPattern(checkerCache, 'repeat') ?? '#f7f7f4';
 }
 
 let checkerCache: HTMLCanvasElement | null = null;

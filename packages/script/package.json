@@ -1,9 +1,9 @@
 {
-  "name": "@pixel/mcp",
+  "name": "@pixel/script",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "MCP server exposing the pixel-art engine to AI agents.",
+  "description": "Sandboxed JavaScript scripting and plugins for the pixel-art engine (Node only).",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -12,18 +12,12 @@
       "import": "./dist/index.js"
     }
   },
-  "bin": {
-    "pixel-mcp": "./dist/cli.js"
-  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
-    "@pixel/core": "workspace:*",
-    "@pixel/script": "workspace:*",
-    "zod": "^4.6.5"
+    "@pixel/core": "workspace:*"
   }
 }

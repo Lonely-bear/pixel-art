@@ -1,12 +1,14 @@
 import { z } from 'zod';
 import { PixelBuffer } from '../buffer.js';
+import { parseColor } from '../color.js';
 import type { Sprite } from '../document.js';
-import { resolveFrame, resolveLayer } from '../document.js';
+import { findLayerIndex, resolveFrame, resolveLayer } from '../document.js';
 import type { Draft } from '../draft.js';
 import { DITHER_PATTERNS } from '../dither.js';
+import { nearestColor } from '../palette.js';
 import { maskFromBuffer, type ShapeSpec } from '../raster.js';
 import { frameMask } from '../render.js';
-import type { FrameId, LayerId } from '../types.js';
+import type { Color, ColorInput, FrameId, LayerId } from '../types.js';
 
 /**
  * Command definitions.
@@ -116,14 +118,24 @@ export const blendOptionsShape = {
 export type LayerRef = z.infer<typeof layerRefSchema>;
 export type FrameRef = z.infer<typeof frameRefSchema>;
 
-export const clipSchema = z
-  .enum(['none', 'cel', 'composite'])
-  .optional()
+export const clipRefSchema = z
+  .union([
+    z.enum(['none', 'cel', 'composite']),
+    z.object({ layer: layerRefSchema }).strict(),
+    z.object({ layers: z.array(layerRefSchema).min(1) }).strict(),
+  ])
   .describe(
     'Restrict painting to existing pixels. `cel` = only where this layer already has ' +
-      'pixels; `composite` = only where the rest of the frame does. Use `composite` to ' +
-      'keep a shadow, highlight or dither band inside the sprite silhouette.',
+      'pixels; `composite` = only where the rest of the frame does; `{layer}` = only where ' +
+      'that named layer has pixels; `{layers:[...]}` = where any of those layers do. Use ' +
+      '`composite` to keep a shadow, highlight or dither band inside the sprite silhouette, ' +
+      'and `{layer}` to confine shading to something you already blocked in (hair, cape, ' +
+      'robe) instead of the whole body.',
   );
+
+export const clipSchema = clipRefSchema.optional();
+
+export type ClipRef = z.infer<typeof clipRefSchema>;
 
 export const shapeSchema = z
   .union([
@@ -171,6 +183,26 @@ export function frameIdOf(sprite: Sprite, ref: FrameRef): FrameId {
 }
 
 /**
+ * Resolve a colour parameter against the sprite's palette.
+ *
+ * This is where palette-index shorthand becomes concrete: an integer in range, or a
+ * `"pal:9"` string, resolves to that palette slot. Everything else falls through to
+ * the ordinary hex/name/RGB parsing. Commands call this *before* handing a colour to
+ * the rasteriser, because the rasteriser has no sprite and therefore no palette.
+ */
+export function resolveColor(sprite: Sprite, input: ColorInput): Color;
+export function resolveColor(sprite: Sprite, input: ColorInput | null): Color | null;
+export function resolveColor(sprite: Sprite, input: ColorInput | null): Color | null {
+  if (input === null) return null;
+  const color = parseColor(input, sprite.palette);
+  if (!sprite.paletteLocked) return color;
+  // Palette lock snaps RGB to the nearest swatch but keeps the requested alpha, so
+  // semi-transparent paint (a translucent cape, a soft glow) still works.
+  const snapped = nearestColor(sprite.palette, color);
+  return { r: snapped.r, g: snapped.g, b: snapped.b, a: color.a };
+}
+
+/**
  * Build the mask for a `clip` option, or `undefined` when nothing should be clipped.
  *
  * `composite` deliberately *excludes the layer being painted into*. The usual workflow is
@@ -181,7 +213,7 @@ export function frameIdOf(sprite: Sprite, ref: FrameRef): FrameId {
  */
 export function clipMask(
   ctx: CommandContext,
-  clip: 'none' | 'cel' | 'composite' | undefined,
+  clip: ClipRef | undefined,
   layerRef: LayerRef,
   frameRef: FrameRef,
 ): Uint8Array | undefined {
@@ -193,7 +225,49 @@ export function clipMask(
     // An empty cel has no pixels to clip against, so nothing may be painted.
     return cel ? maskFromBuffer(cel) : new Uint8Array(ctx.sprite.width * ctx.sprite.height);
   }
+  if (typeof clip === 'object') {
+    // Union of the named layers' own pixels on this frame.
+    const refs = 'layers' in clip ? clip.layers : [clip.layer];
+    const mask = new Uint8Array(ctx.sprite.width * ctx.sprite.height);
+    for (const ref of refs) {
+      const cel = ctx.draft.cel(layerIdOf(ctx.sprite, ref), frameId, false);
+      if (!cel) continue;
+      const source = maskFromBuffer(cel);
+      for (let i = 0; i < mask.length; i++) if (source[i]) mask[i] = 1;
+    }
+    return mask;
+  }
   return frameMask(ctx.sprite, frameId, { excludeLayerId: layerId });
+}
+
+/**
+ * A warning to attach to a draw summary when the clip target sits *above* the layer
+ * being painted into.
+ *
+ * This is the single most common way to lose work with `clip`: a named-layer clip is
+ * usually a silhouette you want to stay inside, and the natural reading of "shade the
+ * hair, clipped to the hair" is to paint on a shared `shade` layer. If that layer is
+ * below `hair` in the stack, every pixel it paints is immediately covered by the hair
+ * itself — the command reports `painted: 200` and the canvas looks unchanged. Painting
+ * the same pixels on the clip layer (or a layer above it) is what the caller meant, so
+ * say so instead of leaving them to debug an invisible edit.
+ */
+export function clipWarning(
+  ctx: CommandContext,
+  clip: ClipRef | undefined,
+  layerRef: LayerRef,
+): CommandSummary {
+  if (!clip || typeof clip !== 'object') return {};
+  const paintIndex = findLayerIndex(ctx.sprite, layerIdOf(ctx.sprite, layerRef));
+  const refs = 'layers' in clip ? clip.layers : [clip.layer];
+  const occluded = refs.every(
+    (ref) => findLayerIndex(ctx.sprite, layerIdOf(ctx.sprite, ref)) > paintIndex,
+  );
+  if (!occluded) return {};
+  return {
+    warning:
+      'The clip layer(s) render above the layer being painted, so these pixels are hidden behind them. Paint on the clip layer itself, or on a layer above it.',
+  };
 }
 
 /**

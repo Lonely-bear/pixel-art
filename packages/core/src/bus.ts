@@ -57,6 +57,37 @@ export function createRegistry(commands: readonly Command[]): CommandRegistry {
   };
 }
 
+/**
+ * A registry that can grow at runtime, which is what plugins need.
+ *
+ * Every editor in a session shares one of these, so loading a plugin makes its
+ * commands visible to the CLI catalogue, the MCP tool list and any in-flight
+ * document at once — without rebuilding editors or reloading documents.
+ */
+export interface MutableCommandRegistry extends CommandRegistry {
+  /** Add a command. Throws on a duplicate name, so a plugin cannot shadow a built-in. */
+  register(command: Command): void;
+  /** Remove a command by name. Returns whether it was there. */
+  unregister(name: string): boolean;
+}
+
+export function createMutableRegistry(commands: readonly Command[] = []): MutableCommandRegistry {
+  const map = new Map<string, Command>();
+  const add = (command: Command): void => {
+    if (map.has(command.name)) throw new Error(`Duplicate command name: ${command.name}`);
+    map.set(command.name, command);
+  };
+  for (const command of commands) add(command);
+  return {
+    get: (name) => map.get(name),
+    has: (name) => map.has(name),
+    names: () => [...map.keys()],
+    list: () => [...map.values()],
+    register: add,
+    unregister: (name) => map.delete(name),
+  };
+}
+
 export const DEFAULT_HISTORY_LIMIT = 200;
 
 export function createEditorState(sprite: Sprite): EditorState {
@@ -102,6 +133,29 @@ export interface ApplyOptions {
 }
 
 /**
+ * Turn a schema-validation failure into a short, readable line.
+ *
+ * A zod error's `message` is a JSON dump of every branch of every union it tried,
+ * which is unreadable to an agent (and gets truncated to uselessness downstream).
+ * The `issues` array, on the other hand, names the offending path and reason, so we
+ * render a handful of those as `path: message` instead.
+ */
+export function describeParseError(error: unknown): string {
+  const issues = (
+    error as { issues?: Array<{ path?: Array<string | number>; message?: string; code?: string }> }
+  )?.issues;
+  if (Array.isArray(issues) && issues.length > 0) {
+    const parts = issues.slice(0, 4).map((issue) => {
+      const path = issue.path && issue.path.length > 0 ? issue.path.join('.') : '(root)';
+      return `${path}: ${issue.message ?? issue.code ?? 'invalid'}`;
+    });
+    const extra = issues.length > 4 ? ` (+${issues.length - 4} more)` : '';
+    return parts.join('; ') + extra;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
  * Apply a command and hand back both the new state and the command's summary.
  *
  * Read-only commands return the state unchanged: asking a question must not push an
@@ -134,7 +188,7 @@ export function applyCommandWithSummary(
     parsed = command.params.parse(params ?? {});
   } catch (error) {
     throw new CommandError(
-      `Invalid parameters for ${name}: ${error instanceof Error ? error.message : String(error)}`,
+      `Invalid parameters for ${name}: ${describeParseError(error)}`,
       'invalid_params',
       error,
     );
@@ -187,6 +241,47 @@ export function applyCommand(
   opts: ApplyOptions = {},
 ): EditorState {
   return applyCommandWithSummary(state, registry, name, params, opts).state;
+}
+
+/**
+ * Apply a command onto an *existing* draft, without touching undo or versioning.
+ *
+ * This is how a plugin command expands into built-in commands: the plugin runs inside
+ * the same `Draft` as the command that invoked it, so one undo entry covers the whole
+ * expansion. It is not a public editing entry point — the editor is.
+ */
+export function applyCommandToDraft(
+  draft: Draft,
+  registry: CommandRegistry,
+  name: string,
+  params: unknown,
+): CommandSummary {
+  const command = registry.get(name);
+  if (!command) {
+    throw new CommandError(`Unknown command: ${name}`, 'unknown_command', {
+      available: registry.names(),
+    });
+  }
+  let parsed: unknown;
+  try {
+    parsed = command.params.parse(params ?? {});
+  } catch (error) {
+    throw new CommandError(
+      `Invalid parameters for ${name}: ${describeParseError(error)}`,
+      'invalid_params',
+      error,
+    );
+  }
+  try {
+    return command.apply({ draft, sprite: draft.sprite }, parsed) ?? {};
+  } catch (error) {
+    if (error instanceof CommandError) throw error;
+    throw new CommandError(
+      `Command ${name} failed: ${error instanceof Error ? error.message : String(error)}`,
+      'command_failed',
+      error,
+    );
+  }
 }
 
 export function canUndo(state: EditorState): boolean {
@@ -278,6 +373,55 @@ export class Editor {
         error instanceof CommandError ? error.code : 'command_failed';
       return { ok: false, error: error instanceof Error ? error.message : String(error), code };
     }
+  }
+
+  /**
+   * Run a batch of work as a single undo step.
+   *
+   * A script may issue dozens of commands; the user should undo the whole script with one
+   * Ctrl+Z, not step back through every draw. Every command the callback runs through
+   * `execute` is collapsed into one entry, and the redo stack is dropped — exactly as if
+   * the whole batch were one command. If the callback throws, the document is rolled back
+   * to where it started, so a half-finished script never leaves a partial edit behind.
+   */
+  transaction<T>(label: string, fn: () => T): T {
+    const before = this.current;
+    const depth = before.undoStack.length;
+
+    let result: T;
+    try {
+      result = fn();
+    } catch (error) {
+      this.current = before;
+      throw error;
+    }
+
+    const after = this.current;
+    // Nothing mutated: leave the history alone, so a read-only script does not create an
+    // empty undo step or discard the redo stack.
+    if (after.sprite === before.sprite && after.undoStack.length === depth) return result;
+
+    const entry: UndoEntry = {
+      label,
+      command: 'transaction',
+      params: {},
+      summary: { steps: Math.max(0, after.undoStack.length - depth) },
+      before: before.sprite,
+      after: after.sprite,
+      version: before.version,
+    };
+
+    const limit = this.options.historyLimit ?? DEFAULT_HISTORY_LIMIT;
+    const undoStack = [...before.undoStack, entry];
+    if (undoStack.length > limit) undoStack.splice(0, undoStack.length - limit);
+
+    this.current = {
+      sprite: after.sprite,
+      version: after.version,
+      undoStack,
+      redoStack: [],
+    };
+    return result;
   }
 
   undo(): this {

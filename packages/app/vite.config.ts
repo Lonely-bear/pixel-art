@@ -14,6 +14,10 @@ export default defineConfig({
     sourcemap: true,
   },
   server: {
+    // Pin to IPv4 loopback: on Node 17+ `localhost` resolves to `::1` first,
+    // which would leave the dev launcher's 127.0.0.1 readiness probe (and
+    // Electron's load) pointing at a socket nothing is listening on.
+    host: '127.0.0.1',
     port: 5273,
     strictPort: true,
   },

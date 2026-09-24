@@ -7,6 +7,8 @@
  * The main process is the only writer; the renderer only ever reads.
  */
 
+export type AppLocale = 'en' | 'zh-CN';
+
 export type ToolId =
   | 'pencil'
   | 'eraser'
@@ -32,11 +34,11 @@ export interface DocumentSummary {
   width: number;
   height: number;
   /** Layer count. */
-  layers: number;
+  layerCount: number;
   /** Frame count. */
-  frames: number;
+  frameCount: number;
   /** Tag count. */
-  tags: number;
+  tagCount: number;
   version: number;
   dirty: boolean;
   active: boolean;
@@ -151,6 +153,7 @@ export const CHANNELS = {
   animationSequence: 'pixel:animation-sequence',
   importImage: 'pixel:import-image',
   mcpStatus: 'pixel:mcp-status',
+  setLocale: 'pixel:set-locale',
   status: 'pixel:status',
   changed: 'pixel:changed',
 } as const;
@@ -252,6 +255,7 @@ export interface PixelApi {
   animationSequence(id: string | undefined, tag?: string | number): Promise<AnimationSequenceInfo>;
   importImage(): Promise<DocumentDetail | null>;
   mcpStatus(): Promise<McpStatus>;
+  setLocale(locale: AppLocale): Promise<void>;
   onChanged(handler: (payload: ChangedPayload) => void): () => void;
   onMenu(handler: (action: string) => void): () => void;
 }

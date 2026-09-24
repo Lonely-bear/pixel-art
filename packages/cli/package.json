@@ -14,6 +14,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@pixel/core": "workspace:*"
+    "@pixel/core": "workspace:*",
+    "@pixel/script": "workspace:*"
   }
 }

@@ -44,6 +44,10 @@ passes, and look at the result between passes.
   near-black and near-white; reserve the extremes for outlines if anything.
 - Keep the number of materials small: skin, cloth, metal, and one accent is enough
   for a character.
+- Lock the palette down. Pass \`paletteLocked: true\` to \`create_document\` and every
+  colour a command writes is snapped to the nearest swatch, so a slightly-off hex
+  becomes the nearest ramp step instead of inventing a new colour. Alpha is preserved,
+  so a translucent cape still works.
 
 ## 4. Outlines
 
@@ -56,6 +60,9 @@ passes, and look at the result between passes.
   hits. There is no single command for that - draw it deliberately, or run
   \`outline\` and then erase the lit segments with \`clear_region\` or a draw with
   \`color: null\`.
+- Faint or semi-transparent pixels count as solid by default, so a soft glow gets
+  traced as a hard outline. Pass \`alphaThreshold\` (0-255) to ignore pixels below that
+  alpha - e.g. \`alphaThreshold: 200\` to skip a 0.2-opacity halo.
 - Outline colour should be a dark, desaturated version of the neighbouring fill,
   not black.
 
@@ -63,7 +70,10 @@ passes, and look at the result between passes.
 
 - \`dither_fill\` with \`pattern: "bayer4"\` or \`"checker"\` is the classic way to make
   a third shade out of two colours, or to blend a gradient on a small canvas.
-  Keep dithered areas small - a 1px checker over a large area turns to noise.
+  \`level\` is the coverage: \`0.5\` is the even checker, \`0.25\` a sparse hint of the new
+  shade, \`0.75\` mostly the new shade. \`bayer4\`/\`bayer8\` read as an ordered gradient;
+  \`dots\`, \`sparse\` and \`dense\` read as irregular texture. Keep dithered areas small -
+  a 1px checker over a large area turns to noise.
 - \`dither_fill\` with \`pattern: "sparse"\` reads as texture (dirt, cloth, grain).
 - \`draw_line\` with a translucent colour and \`blend\` is an alternative for
   soft-edged shading, but hard-edged ramps are usually better pixel art.
@@ -75,6 +85,24 @@ passes, and look at the result between passes.
   between shading a blob and shading a rectangle that happens to contain a blob.
 - \`clip: "cel"\` clips against the layer you are drawing into, for when you want to
   repaint or erase existing pixels without touching empty space.
+- \`clip\` also takes a layer reference. \`clip: {layer: "hair"}\` confines paint to the
+  pixels on that named layer, and \`clip: {layers: ["hair", "cape"]}\` to their union.
+  Use it to shade one part - hair, robe, cape - without touching the rest of the body,
+  rather than clipping to the whole silhouette and then erasing the spill.
+- Watch the layer order: clipping to a layer that renders *above* the one you are
+  painting means the paint is hidden behind it. Shading the hair while painting on a
+  shared \`shade\` layer *below* \`hair\` produces invisible pixels - paint on the hair
+  layer itself (or above it). The tool returns a \`warning\` when it detects this.
+- \`replace: true\` on \`draw_rect\`, \`draw_ellipse\`, \`draw_polygon\` and \`dither_fill\`
+  erases the pixels the shape covers before painting them. Use it when redrawing over
+  an earlier pass: without it, a second dithered band over the first stacks the stipple
+  and reads twice as dark. It only clears the pixels the **new** shape covers, so
+  shrinking a shape leaves the old footprint behind - \`clear_region\` the layer when you
+  redesign a large area.
+- \`draw_line\` takes a \`width\` (1-64) for thick strokes - staffs, limbs, hair strands.
+  The band is perpendicular and roughly centred, but it overshoots each endpoint by up
+  to half the width and even widths bias +0.5px, so a tapered limb is better as a
+  \`draw_polygon\`.
 - A dithered transition band can follow a curve. \`dither_fill\` takes a \`shape\` -
   \`{ellipse: rect}\` or \`{polygon: [points]}\` - as well as a \`rect\`, so the band between
   two shades can trace the boundary instead of being a box. Omit both to stipple the
@@ -120,10 +148,29 @@ passes, and look at the result between passes.
 - \`get_preview\` renders the composited frame (or all frames) as a PNG you can
   actually see. Use it constantly - after the silhouette, after shading, after
   outlining. Never chain twenty edits blind.
+- By default \`get_preview\` shows the sprite at up to ~256px on its longest side, so a
+  large canvas (256x256 or more) comes back at 1:1 and fine detail is hard to judge.
+  Pass \`scale: 4\` (up to 32) to zoom in, and \`frame\`/\`layers\` to isolate what you are
+  working on. Pass \`rect: {x, y, w, h}\` to crop-zoom a detail - a face, a hand, a staff
+  head - at full scale instead of exporting a file.
 - \`get_pixels\` returns a small region as text when you need exact coordinates.
 - \`measure_region\` tells you where the opaque pixels actually are, which is how
   you centre a sprite without guessing.
-- If a pass makes things worse, \`undo\` it. Undo is cheap; guessing is not.
+- \`get_document\` nests the counts under \`document\` (\`document.layerCount\` /
+  \`document.frameCount\` / \`document.tagCount\`, all numbers); the actual \`layers\` /
+  \`frames\` arrays are at the **top level**, in bottom-first paint order. Only layers
+  with cels on a frame appear in \`frames[].layers\`.
+- If a pass makes things worse, \`undo\` it. Undo is cheap; guessing is not. \`undo\` /
+  \`redo\` take \`steps\` (alias \`count\`) to move several edits at once. A single
+  \`apply_ops\` batch is **not** one undo step - every op in it is its own history entry.
+  (A \`run_script\` script, by contrast, folds into one step.) \`get_history\` lists
+  recent commands with their summaries.
+- Working on a scratch document? \`create_document\` accepts \`select: false\` so it does
+  not steal focus from the document you are actually drawing. \`select_document\` takes a
+  document id **or** its name.
+- \`export_png\` returns \`absolute\` as an **array** (one entry per written file), while
+  \`save_document\` returns it as a **string**. \`get_preview\` echoes the zoom factor as
+  both \`scale\` and \`upscale\`.
 
 ## 9. Coordinates and conventions
 
@@ -224,3 +271,128 @@ export const SKILL_SUMMARY =
   'Pixel art workflow: block the silhouette in one flat colour on a base layer, ' +
   'look at get_preview, then shade with a hue-shifted ramp, then outline selectively. ' +
   'Read pixel://skill for the full guide before drawing anything non-trivial.';
+
+/** URI of the scripting/plugin guide resource. */
+export const SCRIPT_GUIDE_URI = 'pixel://script-guide';
+
+/**
+ * The scripting guide served as `pixel://script-guide`.
+ *
+ * The tool list tells an agent *that* `run_script` and `load_plugin` exist; this
+ * tells it how to use them well, and exactly what the sandbox does and does not
+ * allow, so it does not waste a call discovering the boundary by failure.
+ */
+export const SCRIPT_GUIDE = `# Scripting and plugins
+
+\`run_script\` executes JavaScript against the current document inside a hardened
+\`node:vm\` sandbox. It is the escape hatch for anything the fixed command set does
+not cover: procedural patterns, maths-heavy placement, reading many pixels at once,
+or looping an edit over every frame.
+
+## What the sandbox gives you
+
+- \`exec(command, params)\` runs a normal editor command and throws on failure.
+  \`tryExec(command, params)\` returns \`{ ok, summary }\` or \`{ ok:false, error, code }\`
+  instead of throwing. Use \`exec\` when a failure should abort the script.
+- \`commands()\` lists every available command as \`{ name, description, readOnly }\`.
+  \`command(name)\` returns one command's full JSON Schema, or \`null\`.
+- Read state: \`document()\`, \`layers()\`, \`frames()\`, \`tags()\`, \`palette()\`,
+  \`getPixel(x, y, layer?, frame?)\` and \`sample(x, y, frame?)\` (the composited colour).
+- \`log(...)\` records output; everything logged is returned in the tool result's \`logs\`.
+- The script's return value is JSON-serialised into \`result\`. Return a plain object
+  or array; functions and class instances are not preserved.
+
+## What it does not allow
+
+- No \`require\`, \`process\`, \`module\`, filesystem or network access.
+- No \`eval\` or \`new Function\` - dynamic code generation is disabled at the context
+  level, so the usual sandbox-escape tricks do not even start.
+- A wall-clock timeout (default 2000 ms, override with \`timeoutMs\`). An infinite
+  loop is killed and reported as \`Script timed out after Nms\`.
+
+## Undo
+
+A whole script is **one undo step**. Every \`exec\` inside it folds into a single
+history entry, so a script that makes fifty edits is undone with one \`undo\`. A
+script that only reads leaves the history untouched.
+
+## Example
+
+\`\`\`js
+// Stamp a checkerboard of the palette's first colour across the base layer.
+const base = layers()[0].id;
+const { colors } = palette();
+const size = 16;
+for (let y = 0; y < size; y += 2) {
+  for (let x = 0; x < size; x += 2) {
+    exec('draw_pixels', {
+      layer: base,
+      frame: 0,
+      pixels: [{ x, y, color: 'pal:0' }],
+    });
+  }
+}
+log('stamped', colors.length, 'colours available');
+return { done: true };
+\`\`\`
+
+Colours accept the palette shorthand everywhere: the number \`3\` or the string
+\`"pal:3"\` resolve against the document palette, so scripts can stay in palette terms.
+
+## Example: read, then edit
+
+\`getPixel\` and \`sample\` return \`{r, g, b, a}\` (or \`null\`), so a script can inspect the
+artwork and act on what it finds. This mirrors the bottom layer in place:
+
+\`\`\`js
+const base = layers()[0].id;
+const doc = document();
+const pixels = [];
+for (let y = 0; y < doc.height; y++) {
+  for (let x = 0; x < doc.width; x++) {
+    const c = getPixel(x, y, base);
+    if (c && c.a > 0) pixels.push({ x: doc.width - 1 - x, y, color: c });
+  }
+}
+exec('draw_pixels', { layer: base, frame: 0, pixels });
+return { mirrored: pixels.length };
+\`\`\`
+
+Batch the writes into one \`draw_pixels\`/shape call where you can; a command per pixel
+is slow and creates a lot of work for the editor, even though it is still one undo step.
+
+## Plugins
+
+\`load_plugin\` takes a script that calls \`defineCommand\`:
+
+\`\`\`js
+defineCommand({
+  name: 'frame_border',
+  description: 'Draw a one-pixel border around every frame.',
+  params: {
+    color: { type: 'color', required: true, description: 'Border colour.' },
+    inset: { type: 'int', min: 0, default: 0 },
+  },
+  run(api, { color, inset }) {
+    const doc = api.document();
+    for (let i = 0; i < doc.frames.length; i++) {
+      api.exec('draw_rect', {
+        layer: doc.layers[0].id,
+        frame: i,
+        rect: { x: inset, y: inset, w: doc.width - inset * 2, h: doc.height - inset * 2 },
+        color,
+        fill: false,
+      });
+    }
+    return { frames: doc.frames.length };
+  },
+});
+\`\`\`
+
+Each \`defineCommand\` becomes a real command: it appears in the MCP tool list (and
+\`list_commands\` / \`pixel://commands\`), is callable from other scripts via \`exec\`,
+and runs against the caller's draft, so it folds into the same single undo step.
+Parameter specs use \`type\`: \`number\`, \`int\`, \`boolean\`, \`string\`, \`color\`, \`layer\`,
+\`frame\`, \`rect\`, \`point\` or \`json\`, with optional \`required\`, \`default\`, \`description\`,
+\`min\`, \`max\` and \`values\` (an enum for strings). \`list_plugins\` shows what is loaded.
+`;

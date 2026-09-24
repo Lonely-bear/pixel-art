@@ -45,6 +45,12 @@ const api = {
     invoke('pixel:animation-sequence', id, tag),
   importImage: () => invoke('pixel:import-image'),
   mcpStatus: () => invoke('pixel:mcp-status'),
+  setLocale: (locale: 'en' | 'zh-CN') => {
+    // Both the native application menu and the file-dialog locale subscribe to
+    // this broadcast. It is intentionally a fire-and-forget renderer call.
+    ipcRenderer.send('pixel:set-locale', locale);
+    return Promise.resolve();
+  },
 
   /** Subscribe to document changes, including edits made by an agent. */
   onChanged: (handler: (payload: unknown) => void) => {
