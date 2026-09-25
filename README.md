@@ -193,10 +193,10 @@ Client configuration (Claude Desktop, or any `mcpServers` JSON):
 
 ### What it exposes
 
-- **75 tools.** Every core command (50) is generated straight from its zod schema, plus
+- **79 tools.** Every core command (53) is generated straight from its zod schema, plus
   hand-written session and perception tools: `create_document`, `open_document`,
   `save_document`, `finalize_document`, `import_image` (PNG or Aseprite), `select_document`, `close_document`,
-  `list_documents`, `get_document`, `get_preview`, `get_pixels`, `get_palette`, `get_history`,
+  `list_documents`, `get_document`, `get_preview`, `get_pixels`, `quality_report`, `get_palette`, `get_history`,
   `undo`, `redo`, `apply_ops`, `export_png`, `export_sheet`, `export_tiled`, `export_gif`,
   `list_commands`, `read_skill`, and the scripting tools `run_script`, `load_plugin`,
   `list_plugins`. Loading a plugin registers its commands as real tools on the fly.
@@ -214,7 +214,7 @@ Client configuration (Claude Desktop, or any `mcpServers` JSON):
   (plus `?onionBefore`, `?onionAfter`, `?onionOpacity`, `?loop`, `?beforeTint`, `?afterTint`).
 - **4 prompts.** `draw_sprite`, `animate_sprite`, `improve_sprite`, `pixel_art_basics`.
 
-### Six details that matter for agents
+### Eight details that matter for agents
 
 1. **`get_preview` returns an actual PNG image**, not a pixel array. A 32x32 sprite is ~10k
    tokens as JSON and ~200 tokens as an image, and the model can actually look at it. It also
@@ -245,11 +245,24 @@ Client configuration (Claude Desktop, or any `mcpServers` JSON):
    (`{rect}`, `{ellipse}` or `{polygon}`) so a transition band can follow a curve instead of
    being a box, and every paint command (`draw_rect`, `draw_ellipse`, `draw_polygon`,
    `draw_line`, `fill`, `draw_pixels`) also accepts `pattern` and `level`. A dithered shape
-   lands on exactly the pixels a solid one would, and it composes with `clip`.
+   lands on exactly the pixels a solid one would, and it composes with `clip`. On large
+   canvases prefer `cluster2`/`cluster4`: the same coverage lands as 2×2/4×4 blocks instead
+   of digital 1px stipple.
 6. **`finalize_document` closes the loop in one call.** It saves the editable `.pixel` source
    and writes up to eight PNG exports in one request. A static asset normally needs one
    scale-1 original plus one 6–8x preview, replacing separate save/export round trips while
    returning every absolute path, output size, version and final document summary.
+7. **`quality_report` turns "it feels harsh" into a checklist.** It reports isolated-pixel
+   ratio, colour-outlier ratio, mean edge contrast, clipped-highlight ratio and palette
+   usage, plus a rough 0–100 softness score and warnings. The matching fixes are
+   `despeckle` (remove lone speckles and local outliers) and `antialias` (selectively soften
+   silhouette corners and internal colour steps), both palette-lock aware.
+8. **`add_palette_ramp` builds hue-shifted material ramps.** Give it a dark and a light
+   anchor plus a step count, and it generates the intermediate colours in HSL, pulling the
+   dark end toward blue/violet and the light end toward amber by `hueShift` degrees
+   (default 20). `shadowHue`/`highlightHue` set absolute endpoint hues, `saturationBoost`
+   adds mid-ramp richness, and `mode: "replace"` can swap the whole palette for a single
+   coherent ramp.
 
 ### Commands built for animation
 

@@ -120,6 +120,7 @@ const READ_ONLY_TOOLS = new Set([
   'get_history',
   'get_preview',
   'get_pixels',
+  'quality_report',
   'list_commands',
   'list_documents',
 ]);
@@ -138,6 +139,7 @@ const SESSION_TOOLS: Array<{ name: string; description: string }> = [
   { name: 'get_history', description: 'Recent commands with labels and summaries.' },
   { name: 'get_preview', description: 'Render the sprite (or a rect) as a PNG to look at.' },
   { name: 'get_pixels', description: 'Exact pixel colours in a small region.' },
+  { name: 'quality_report', description: 'Objective softness/noise report and fix warnings.' },
   { name: 'get_document', description: 'Layers, frames, tags, palette.' },
   { name: 'get_palette', description: 'Palette as hex colours with indices.' },
   { name: 'list_documents', description: 'List open documents.' },
@@ -397,6 +399,212 @@ function describeSprite(sprite: Sprite): Record<string, unknown> {
     celCount: sprite.frames.reduce((sum, f) => sum + f.cels.size, 0),
     hasTileset: Boolean(sprite.tileset),
     tilemaps: sprite.tilemaps?.map((t) => ({ id: t.id, name: t.name, width: t.width, height: t.height })) ?? [],
+  };
+}
+
+interface QualityAnalysisOptions {
+  rect?: { x: number; y: number; w: number; h: number };
+  noiseThreshold?: number;
+  alphaThreshold?: number;
+}
+
+/**
+ * Objective heuristic report for the perceptual problems agents cannot see in a
+ * thumbnail: isolated dither speckles, high-frequency outliers, clipped highlights
+ * and an over-saturated edge field. It is intentionally a report, not a mutation;
+ * `despeckle` and `antialias` are the matching fix commands.
+ */
+function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, options: QualityAnalysisOptions = {}): Record<string, unknown> {
+  const frame = resolveFrame(sprite, frameRef ?? 0);
+  const full = compositeFrame(sprite, frame.id);
+  const buffer = options.rect ? extractRegion(full, options.rect) : full;
+  const { width, height, data } = buffer;
+  const total = width * height;
+  const noiseThreshold = Math.max(0, Math.min(255, options.noiseThreshold ?? 40));
+  const alphaThreshold = Math.max(1, Math.min(255, Math.floor(options.alphaThreshold ?? 1)));
+  const paletteColors = sprite.palette.colors;
+  const paletteSet = new Set(paletteColors.map((c) => ((c.r & 255) << 24) | ((c.g & 255) << 16) | ((c.b & 255) << 8) | (c.a & 255)));
+  const unique = new Set<number>();
+  let opaque = 0;
+  let semi = 0;
+  let transparent = 0;
+  let palettePixels = 0;
+  let luminanceSum = 0;
+  let luminanceSq = 0;
+  let luminanceCount = 0;
+  let edgeSum = 0;
+  let edgeCount = 0;
+  let isolated = 0;
+  let outliers = 0;
+  let overexposed = 0;
+  const offsets: Array<[number, number]> = [
+    [0, -1], [1, -1], [1, 0], [1, 1],
+    [0, 1], [-1, 1], [-1, 0], [-1, -1],
+  ];
+  const at = (x: number, y: number): { r: number; g: number; b: number; a: number } | null => {
+    if (x < 0 || y < 0 || x >= width || y >= height) return null;
+    const i = (y * width + x) * 4;
+    return { r: data[i], g: data[i + 1], b: data[i + 2], a: data[i + 3] };
+  };
+  const packed = (c: { r: number; g: number; b: number; a: number }): number =>
+    ((c.r & 255) << 24) | ((c.g & 255) << 16) | ((c.b & 255) << 8) | (c.a & 255);
+  const distance = (a: { r: number; g: number; b: number }, b: { r: number; g: number; b: number }): number =>
+    Math.max(Math.abs(a.r - b.r), Math.abs(a.g - b.g), Math.abs(a.b - b.b));
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const c = at(x, y)!;
+      const key = packed(c);
+      const solid = c.a >= alphaThreshold;
+      if (!solid) {
+        if (c.a === 0) transparent++;
+        else semi++;
+        continue;
+      }
+      opaque++;
+      unique.add(key);
+      if (paletteSet.has(key)) palettePixels++;
+      const luminance = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+      luminanceSum += luminance;
+      luminanceSq += luminance * luminance;
+      luminanceCount++;
+      if (luminance > 235) overexposed++;
+
+      let neighbours = 0;
+      let matching = 0;
+      let nr = 0;
+      let ng = 0;
+      let nb = 0;
+      for (const [ox, oy] of offsets) {
+        const n = at(x + ox, y + oy);
+        if (!n || n.a < alphaThreshold) continue;
+        neighbours++;
+        nr += n.r;
+        ng += n.g;
+        nb += n.b;
+        if (distance(c, n) <= 8) matching++;
+      }
+      for (const [ox, oy] of [[1, 0], [0, 1]] as Array<[number, number]>) {
+        const n = at(x + ox, y + oy);
+        if (!n || n.a < alphaThreshold) continue;
+        edgeSum += Math.abs(luminance - (0.2126 * n.r + 0.7152 * n.g + 0.0722 * n.b));
+        edgeCount++;
+      }
+      if (neighbours === 0) {
+        isolated++;
+      } else if (matching <= 1) {
+        const avg = { r: nr / neighbours, g: ng / neighbours, b: nb / neighbours };
+        if (distance(c, avg) > noiseThreshold) outliers++;
+      }
+    }
+  }
+
+  const meanLuminance = luminanceCount > 0 ? luminanceSum / luminanceCount : 0;
+  const luminanceStd = luminanceCount > 0 ? Math.sqrt(Math.max(0, luminanceSq / luminanceCount - meanLuminance * meanLuminance)) : 0;
+  const meanEdge = edgeCount > 0 ? edgeSum / edgeCount : 0;
+  const isolatedRatio = opaque > 0 ? isolated / opaque : 0;
+  const outlierRatio = opaque > 0 ? outliers / opaque : 0;
+  const overexposedRatio = opaque > 0 ? overexposed / opaque : 0;
+  const paletteUsed = paletteColors.filter((c) => {
+    const key = packed(c);
+    return unique.has(key);
+  }).length;
+  const outsidePaletteRatio = opaque > 0 ? Math.max(0, 1 - palettePixels / opaque) : 0;
+  const softnessScore = Math.max(
+    0,
+    Math.min(
+      100,
+      100 -
+        Math.min(30, isolatedRatio * 1200) -
+        Math.min(25, outlierRatio * 700) -
+        Math.min(25, Math.max(0, meanEdge - 10) * 2.2) -
+        Math.min(20, overexposedRatio * 500),
+    ),
+  );
+
+  const warnings: Array<{ code: string; severity: 'info' | 'warning'; message: string }> = [];
+  if (isolatedRatio > 0.005) {
+    warnings.push({
+      code: 'isolated_pixels',
+      severity: 'warning',
+      message: `${isolated} isolated solid pixels (${(isolatedRatio * 100).toFixed(2)}%). Run \`despeckle\` under a clip or rect to remove single-pixel noise.`,
+    });
+  }
+  if (outlierRatio > 0.01) {
+    warnings.push({
+      code: 'high_frequency_noise',
+      severity: 'warning',
+      message: `${(outlierRatio * 100).toFixed(2)}% of solid pixels are colour outliers against their neighbourhood. Prefer cluster dither (\`cluster2\`/\`cluster4\`) or \`despeckle\`.`,
+    });
+  }
+  if (meanEdge > 16) {
+    warnings.push({
+      code: 'high_edge_contrast',
+      severity: 'warning',
+      message: `Mean adjacent luminance delta is ${meanEdge.toFixed(1)}; the edge field is harsh. Run \`antialias\` on the silhouette or internal colour steps.`,
+    });
+  }
+  if (overexposedRatio > 0.02) {
+    warnings.push({
+      code: 'clipped_highlights',
+      severity: 'warning',
+      message: `${(overexposedRatio * 100).toFixed(2)}% of solid pixels are near-white. Reduce glow/bloom coverage; a soft pixel piece keeps a value ceiling, not a white-out.`,
+    });
+  }
+  if (paletteColors.length > 0 && paletteUsed < paletteColors.length) {
+    const unused = paletteColors.length - paletteUsed;
+    if (unused > Math.max(2, paletteColors.length * 0.1)) {
+      warnings.push({
+        code: 'unused_palette_slots',
+        severity: 'info',
+        message: `${unused} of ${paletteColors.length} palette colours are unused. Tighten the palette or use the idle slots deliberately.`,
+      });
+    }
+  }
+  if (sprite.paletteLocked && outsidePaletteRatio > 0.1) {
+    warnings.push({
+      code: 'outside_palette_pixels',
+      severity: 'warning',
+      message: `${(outsidePaletteRatio * 100).toFixed(1)}% of solid pixels are not exact palette swatches, usually from translucent blends. Use opaque cluster dither if palette purity matters.`,
+    });
+  }
+
+  return {
+    frame: sprite.frames.findIndex((f) => f.id === frame.id),
+    frameId: frame.id,
+    width,
+    height,
+    rect: options.rect ?? null,
+    pixels: total,
+    opaque,
+    semiTransparent: semi,
+    transparent,
+    opaqueRatio: total > 0 ? opaque / total : 0,
+    uniqueColors: unique.size,
+    palette: {
+      size: paletteColors.length,
+      used: paletteUsed,
+      unused: paletteColors.length - paletteUsed,
+      locked: sprite.paletteLocked ?? false,
+      outsideRatio: outsidePaletteRatio,
+    },
+    luminance: {
+      mean: meanLuminance,
+      std: luminanceStd,
+    },
+    edges: {
+      meanAdjacentDelta: meanEdge,
+    },
+    noise: {
+      isolated,
+      isolatedRatio,
+      outliers,
+      outlierRatio,
+      threshold: noiseThreshold,
+    },
+    overexposedRatio,
+    softnessScore,
+    warnings,
   };
 }
 
@@ -986,6 +1194,51 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
             index,
             hex: c.a === 255 ? `#${hex(c.r)}${hex(c.g)}${hex(c.b)}` : `#${hex(c.r)}${hex(c.g)}${hex(c.b)}${hex(c.a)}`,
           })),
+        });
+      } catch (error) {
+        return fail((error as Error).message);
+      }
+    },
+  );
+
+  addTool(
+    server,
+    'quality_report',
+    {
+      title: 'Measure softness and noise quality',
+      description:
+        'Read-only heuristic report over an objective raster: isolated-pixel ratio, colour-outlier ratio, mean edge contrast, near-white highlight ratio, palette usage and a rough 0-100 softness score, plus actionable warnings. Use it before finalising a detailed canvas, then fix the flagged layers with `despeckle` and `antialias`. Pass `rect` to inspect only the region you just drew.',
+      inputSchema: z.object({
+        document: documentRef,
+        frame: frameRefSchema.optional().describe('Frame id or 0-based index. Defaults to frame 0.'),
+        rect: previewRectSchema.optional(),
+        noiseThreshold: z
+          .number()
+          .min(0)
+          .max(255)
+          .optional()
+          .describe('Colour distance above which a pixel counts as an outlier. Defaults to 40.'),
+        alphaThreshold: z
+          .number()
+          .int()
+          .min(1)
+          .max(255)
+          .optional()
+          .describe('Alpha at or above this counts as solid. Defaults to 1.'),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    (args) => {
+      try {
+        const doc = store.require(args.document as string | undefined);
+        return ok({
+          ok: true,
+          document: store.summary(doc),
+          ...analyzeQuality(doc.editor.sprite, args.frame as number | string | undefined, {
+            rect: args.rect as { x: number; y: number; w: number; h: number } | undefined,
+            noiseThreshold: args.noiseThreshold as number | undefined,
+            alphaThreshold: args.alphaThreshold as number | undefined,
+          }),
         });
       } catch (error) {
         return fail((error as Error).message);

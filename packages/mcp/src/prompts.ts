@@ -41,9 +41,9 @@ Follow this order. Use 2-3 visual gates, and get each PNG from the same mutation
 
 1. \`create_document\` with width ${w}, height ${h}, layers ["base", "shade", "outline"], palette "${pal}". Its response already includes the layer/frame structure.
 2. Block the whole silhouette in ONE flat mid-tone colour on the "base" layer with a batched \`run_script\` or \`apply_ops\`, and inspect its inline preview. If the shape is not recognisable as a solid silhouette, fix it before going further.
-3. Add shadow on the "shade" layer, light coming from the top-left. Use 2-3 colours from the palette that step in hue as well as value. Break shade boundaries with single-pixel steps instead of long straight lines.
+3. Add shadow on the "shade" layer, light coming from the top-left. Build 3-5 step material ramps with \`add_palette_ramp\` and use colours that step in hue as well as value. Break shade boundaries with single-pixel steps instead of long straight lines.
 4. Outline on the "outline" layer with \`outline\` using \`mode: "outside"\`, in a dark, desaturated colour - not black. Then selectively erase the outline where the light hits, using \`clear_region\` or a draw with \`color: null\`.
-5. Inspect the final inline preview, fix only what still reads badly, then use one \`finalize_document\` call for the source and PNG exports.
+5. Inspect the final inline preview, run \`quality_report\` to check for isolated speckles, clipped highlights and harsh edge contrast, fix flagged areas with \`despeckle\`/\`antialias\` or simpler shapes, then use one \`finalize_document\` call for the source and PNG exports.
 
 Keep the sprite centred: use \`measure_region\` to find the opaque bounds and \`copy_region\` or \`resize_canvas\` to recentre.
 

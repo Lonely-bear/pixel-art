@@ -24,6 +24,7 @@ export * from './blend.js';
 export * from './buffer.js';
 export * from './dither.js';
 export * from './palette.js';
+export * from './ramp.js';
 export * from './document.js';
 export * from './draft.js';
 export * from './raster.js';

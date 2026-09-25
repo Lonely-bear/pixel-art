@@ -40,6 +40,10 @@ passes, and look at the result between passes.
 - Use a **ramp**: for each material pick 3-4 colours that step in hue as well as in
   value. Shadow steps should shift toward blue/purple, highlights toward
   yellow/orange. A pure brightness ramp looks dull and plastic.
+- Let the tool build it: \`add_palette_ramp {from, to, steps, hueShift}\` interpolates
+  the ramp in HSL, pulling the dark end cool and the light end warm by default. Use
+  \`shadowHue\`/\`highlightHue\` for absolute control, \`saturationBoost\` for richer mids,
+  and \`mode: "replace"\` to make one material's ramp the whole palette.
 - Never use pure black (\`#000000\`) as a shadow or pure white as a highlight. Use
   near-black and near-white; reserve the extremes for outlines if anything.
 - Keep the number of materials small: skin, cloth, metal, and one accent is enough
@@ -65,6 +69,10 @@ passes, and look at the result between passes.
   alpha - e.g. \`alphaThreshold: 200\` to skip a 0.2-opacity halo.
 - Outline colour should be a dark, desaturated version of the neighbouring fill,
   not black.
+- For a curved or diagonal silhouette, run \`antialias\` with \`mode: "silhouette"\` and a
+  small \`amount\` (0.3-0.5). It is selective: straight edges stay crisp and only the
+  staircase corners gain a blended pixel. Use \`rect\` to keep it local, and let
+  \`paletteLocked\` snap the new mid-tones back to the ramp.
 
 ## 5. Shading and texture
 
@@ -74,7 +82,13 @@ passes, and look at the result between passes.
   shade, \`0.75\` mostly the new shade. \`bayer4\`/\`bayer8\` read as an ordered gradient;
   \`dots\`, \`sparse\` and \`dense\` read as irregular texture. Keep dithered areas small -
   a 1px checker over a large area turns to noise.
+- On a large canvas, prefer \`pattern: "cluster2"\` or \`"cluster4"\`: the same coverage
+  lands as 2x2/4x4 blocks, which reads as a softer tonal step instead of digital
+  stipple. Use the 1px patterns for small transition bands, not whole skies.
 - \`dither_fill\` with \`pattern: "sparse"\` reads as texture (dirt, cloth, grain).
+- If a pass leaves isolated single pixels, run \`despeckle\` with \`mode: "both"\` under a
+  \`rect\`. It removes lone speckles and pulls colour outliers toward their local
+  neighbourhood before you finalise.
 - \`draw_line\` with a translucent colour and \`blend\` is an alternative for
   soft-edged shading, but hard-edged ramps are usually better pixel art.
 - Banding is the classic error: two adjacent shades whose boundary is a straight
@@ -180,6 +194,10 @@ passes, and look at the result between passes.
 - \`export_png\` returns \`absolute\` as an **array** (one entry per written file), while
   \`save_document\` returns it as a **string**. \`get_preview\` echoes the zoom factor as
   both \`scale\` and \`upscale\`.
+- Before finishing, run \`quality_report\`. It returns isolated-pixel ratio, colour
+  outlier ratio, edge contrast, highlight clipping, palette usage and a rough
+  softness score. Treat its warnings as a checklist: \`despeckle\` for speckle,
+  \`antialias\` for harsh edges, less glow for clipped highlights.
 - At the end, \`finalize_document\` saves the \`.pixel\` source and writes one or more
   PNG exports in a single call. A usual static asset is a scale-1 original plus a
   scale-6/8 preview. Keep \`save_document\` plus repeated \`export_png\` calls only when
@@ -282,9 +300,10 @@ into a game engine.
 /** Short, always-included preamble for prompts that do not need the full guide. */
 export const SKILL_SUMMARY =
   'Pixel art workflow: block the silhouette in one flat colour on a base layer, ' +
-  'return a 4x inline preview from the same run_script/apply_ops call, then shade with a ' +
-  'hue-shifted ramp and outline selectively. Use two or three visual gates, and finish ' +
-  'with one finalize_document call. Read pixel://skill before drawing anything non-trivial.';
+  'return a 4x inline preview from the same run_script/apply_ops call, then shade with ' +
+  'add_palette_ramp hue-shifted ramps and outline selectively. Prefer cluster2/cluster4 over full-field 1px ' +
+  'dither, run quality_report before finalising, and finish with one finalize_document call. ' +
+  'Read pixel://skill before drawing anything non-trivial.';
 
 /** URI of the scripting/plugin guide resource. */
 export const SCRIPT_GUIDE_URI = 'pixel://script-guide';

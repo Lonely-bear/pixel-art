@@ -71,6 +71,10 @@ describe('tool surface', () => {
     expect(names).toContain('quantize_to_palette');
     expect(names).toContain('apply_ops');
     expect(names).toContain('get_preview');
+    expect(names).toContain('quality_report');
+    expect(names).toContain('antialias');
+    expect(names).toContain('despeckle');
+    expect(names).toContain('add_palette_ramp');
     expect(names).toContain('finalize_document');
     expect(names).toContain('export_sheet');
     expect(names).toContain('read_skill');
@@ -102,8 +106,8 @@ describe('tool surface', () => {
 
     // This used to be ~188 kB of JSON Schema, which an agent had to script around.
     // It now also carries the hand-registered session tools (undo/redo/history,
-    // perception, export), which is why the budget is a little larger.
-    expect(JSON.stringify(body).length).toBeLessThan(24_000);
+    // perception, export, quality) and a richer palette-ramp command.
+    expect(JSON.stringify(body).length).toBeLessThan(26_000);
 
     const verbose = (await client.callTool({
       name: 'list_commands',
@@ -628,6 +632,7 @@ describe('follow-up ergonomics', () => {
     expect(names).toContain('undo');
     expect(names).toContain('redo');
     expect(names).toContain('get_history');
+    expect(names).toContain('quality_report');
     expect(names).toContain('finalize_document');
   });
 });
@@ -683,6 +688,78 @@ describe('perception', () => {
     })) as ToolResult;
     expect(result.isError).toBe(true);
     expect(payload(result).error).toMatch(/exceeds/);
+  });
+});
+
+describe('quality and softness tools', () => {
+  it('reports isolated noise and returns actionable warnings', async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 8, height: 8, name: 'Quality', layers: ['base'] },
+    });
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { layer: 'base', rect: { x: 0, y: 0, w: 8, h: 8 }, color: '#102040', fill: true },
+    });
+    await client.callTool({
+      name: 'draw_pixels',
+      arguments: { layer: 'base', pixels: [{ x: 4, y: 4, color: '#ffffff' }] },
+    });
+
+    const result = (await client.callTool({ name: 'quality_report', arguments: {} })) as ToolResult;
+    const body = payload(result);
+    expect(body.ok).toBe(true);
+    expect((body.noise as { outliers: number }).outliers).toBeGreaterThan(0);
+    expect(typeof body.softnessScore).toBe('number');
+    const warnings = body.warnings as Array<{ code: string }>;
+    expect(warnings.map((warning) => warning.code)).toContain('high_frequency_noise');
+  });
+
+  it('exposes antialias and despeckle as generated command tools', async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 8, height: 8, name: 'Soft', layers: ['base'] },
+    });
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { rect: { x: 2, y: 2, w: 4, h: 1 }, color: '#000000', fill: true },
+    });
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { rect: { x: 2, y: 3, w: 1, h: 4 }, color: '#000000', fill: true },
+    });
+
+    const aa = (await client.callTool({
+      name: 'antialias',
+      arguments: { mode: 'silhouette', amount: 0.5 },
+    })) as ToolResult;
+    expect(payload(aa).ok).toBe(true);
+    expect((payload(aa).summary as { added: number }).added).toBeGreaterThan(0);
+
+    const clean = (await client.callTool({
+      name: 'despeckle',
+      arguments: { mode: 'both' },
+    })) as ToolResult;
+    expect(payload(clean).ok).toBe(true);
+  });
+
+  it('generates and appends a hue-shifted palette ramp', async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 4, height: 4, name: 'Ramp tool', palette: ['#101018', '#f0f0e0'] },
+    });
+
+    const result = (await client.callTool({
+      name: 'add_palette_ramp',
+      arguments: { from: '#241226', to: '#f2d2a0', steps: 5, hueShift: 30 },
+    })) as ToolResult;
+    const summary = payload(result).summary as { added: number; size: number; colors: string[] };
+    expect(summary.added).toBe(5);
+    expect(summary.colors).toHaveLength(5);
+    expect(summary.size).toBe(7);
+
+    const palette = (await client.callTool({ name: 'get_palette', arguments: {} })) as ToolResult;
+    expect(payload(palette).size).toBe(7);
   });
 });
 

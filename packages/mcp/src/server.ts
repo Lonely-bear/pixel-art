@@ -33,11 +33,15 @@ Workflow that works:
    \`run_script\` or \`apply_ops\` with \`preview: true\` and
    \`previewOptions: {scale: 4}\`; inspect that returned PNG before the next pass.
    Use \`get_preview\` when you need a view without making an edit.
-3. Shade with a hue-shifted ramp, then outline selectively. Two or three visual
-   gates are usually enough; batch coherent changes instead of narrating every pixel.
+3. Build material ramps with \`add_palette_ramp\` (dark anchor, light anchor, steps,
+   \`hueShift\`) and shade with them, then outline selectively. On large canvases use
+   \`cluster2\`/\`cluster4\` dither instead of a full-field 1px Bayer; keep 1px patterns
+   for narrow transition bands. Two or three visual gates are usually enough.
 4. Use \`apply_ops\` instead of one call per edit. It accepts any command from
    \`list_commands\`, inline params included, and can return its preview inline too.
-5. Finish with one \`finalize_document\` call that saves the editable \`.pixel\` source
+5. Before finishing, run \`quality_report\` and fix its warnings: \`despeckle\` for
+   isolated pixels, \`antialias\` for harsh edges, less glow for clipped highlights.
+6. Finish with one \`finalize_document\` call that saves the editable \`.pixel\` source
    and writes the exact PNG exports you need. Use \`export_sheet\` for engines or
    \`export_gif\` for animation instead when those formats are required.
 

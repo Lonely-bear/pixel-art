@@ -17,7 +17,9 @@ export type DitherPattern =
   | 'dense'
   | 'horizontal'
   | 'vertical'
-  | 'diagonal';
+  | 'diagonal'
+  | 'cluster2'
+  | 'cluster4';
 
 export const DITHER_PATTERNS: readonly DitherPattern[] = [
   'checker',
@@ -30,7 +32,24 @@ export const DITHER_PATTERNS: readonly DitherPattern[] = [
   'horizontal',
   'vertical',
   'diagonal',
+  'cluster2',
+  'cluster4',
 ];
+
+/**
+ * Ordered threshold on a coarser grid, so a paint decision covers an NxN block
+ * instead of one pixel.
+ *
+ * Large canvases make 1px Bayer read as digital noise: at 512x512 a 50% bayer8
+ * field is 65,536 isolated alternations. Cluster dithering trades some of that
+ * gradient resolution for 2x2 or 4x4 blocks, which composited at 100% read as a
+ * softer tonal step rather than a stipple.
+ */
+function clusterThreshold(size: 2 | 4, x: number, y: number): number {
+  const bx = Math.floor(x / size) & 3;
+  const by = Math.floor(y / size) & 3;
+  return BAYER4[by * 4 + bx] / 16;
+}
 
 /** Classic 4x4 Bayer threshold matrix, values 0-15, row-major. */
 const BAYER4: readonly number[] = [
@@ -84,6 +103,10 @@ export function ditherThreshold(pattern: DitherPattern, x: number, y: number): n
       return (x & 1) === 0 ? 0 : 1;
     case 'diagonal':
       return (x + y) % 4 < 2 ? 0 : 1;
+    case 'cluster2':
+      return clusterThreshold(2, x, y);
+    case 'cluster4':
+      return clusterThreshold(4, x, y);
     default:
       return 0;
   }
