@@ -304,11 +304,14 @@ render. Break them and no amount of extra shading recovers the result.
   flatten a composition — a smooth gradient has many gentler steps and is not flagged)
   and \`structure.rhythm\` (silhouette peak regularity; check \`measurable\` first, since
   a frame with no silhouette has nothing to measure).
-- If a high-frequency region is deliberate texture — sparkle, grain, foliage — pass it
-  as \`textureRects\`. Outliers inside are counted as \`noise.texturedOutliers\` and stop
-  raising the noise warning. Do **not** lower \`noiseThreshold\` to silence it: that
-  hides real defects everywhere, whereas \`textureRects\` is scoped to the region you
-  meant.
+- If a high-frequency region is deliberate texture — sparkle, grain, foliage, water
+  glitter — pass it as \`textureRects\`. Outliers inside are counted as
+  \`noise.texturedOutliers\` and stop raising the noise warning, **and** their bright
+  pixels are excluded from the light-source check, because scattered highlights are not
+  a light source. Do **not** lower \`noiseThreshold\` to silence it: that hides real
+  defects everywhere, whereas \`textureRects\` is scoped to the region you meant. A
+  sunset lake is the case that forces this — its glitter is a texture, and without the
+  declaration its sun can never read as a source.
 - At the end, \`finalize_document\` saves the \`.pixel\` source and writes one or more
   PNG exports in a single call. A usual static asset is a scale-1 original plus a
   scale-6/8 preview. Keep \`save_document\` plus repeated \`export_png\` calls only when

@@ -521,6 +521,7 @@ function analyzePresence(
   width: number,
   height: number,
   alphaThreshold: number,
+  isTextured?: (x: number, y: number) => boolean,
 ): {
   valueRange: number;
   darkShare: number;
@@ -570,20 +571,18 @@ function analyzePresence(
 
   // Light source detection. A scene that is genuinely lit has a *concentrated* bright
   // region; a scene that is merely bright has many mid-to-light pixels spread evenly.
-  // Both the total bright share and the size of the largest single bright cluster are
-  // needed: a large flat sky is high on the first and low on the second.
+  // Declared texture is excluded: sparkle, glitter and specular grain are by
+  // definition scattered highlights, so counting them would make every sunset lake
+  // look unlit no matter how solid its sun is.
   let brightPixels = 0;
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const c = at(x, y);
-      if (c && c.a >= alphaThreshold && luminanceOf(c) > 192) brightPixels++;
-    }
-  }
   const brightMask = new Uint8Array(width * height);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const c = at(x, y);
-      if (c && c.a >= alphaThreshold && luminanceOf(c) > 192) brightMask[y * width + x] = 1;
+      if (!c || c.a < alphaThreshold || luminanceOf(c) <= 192) continue;
+      if (isTextured?.(x, y)) continue;
+      brightPixels++;
+      brightMask[y * width + x] = 1;
     }
   }
   // Largest 4-connected bright cluster, by flood fill over the mask.
@@ -929,7 +928,7 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
   const paletteUsage = analyzePaletteUsage(paletteColors, unique, 6);
   const bands = countHorizontalBands(at, width, height, alphaThreshold, 20, 32);
   const rhythm = analyzeSkylineRhythm(at, width, height, alphaThreshold);
-  const presence = analyzePresence(at, width, height, alphaThreshold);
+  const presence = analyzePresence(at, width, height, alphaThreshold, isTextured);
   const planeMeans = presence.planes.map((p) => p.mean).filter((m) => m >= 0);
   // Depth only exists if adjacent planes differ. Equal means mean the scene has
   // stacked into one tonal slab, which no defect metric notices.
@@ -1027,7 +1026,8 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
     warnings.push({
       code: 'no_light_source',
       severity: 'warning',
-      message: `Bright pixels cover ${(brightestShare * 100).toFixed(2)}% of the canvas but the largest single bright cluster is only ${(concentration * 100).toFixed(0)}% of them, so the light is spread evenly and the piece reads as ambient rather than lit. A scene needs a concentrated source - a sun, a lamp, a specular edge.`,
+      message:
+        `Bright pixels cover ${(brightestShare * 100).toFixed(2)}% of the canvas but the largest single bright cluster is only ${(concentration * 100).toFixed(0)}% of them, so the light is spread evenly and the piece reads as ambient rather than lit. A scene needs a concentrated source - a sun, a lamp, a specular edge. If the scattered highlights are deliberate sparkle or water glitter, declare them as \`textureRects\` so they stop counting against the light source.`,
     });
   }
   if (presence.valueRange < 90) {
@@ -1924,10 +1924,11 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           .max(32)
           .optional()
           .describe(
-            'Regions deliberately filled with texture - `scatter` output, grain, foliage, sparkle. ' +
-              'Colour outliers inside them are counted as `noise.texturedOutliers` and do not raise ' +
-              'the high-frequency warning, because high-frequency detail is the point there. Pass the ' +
-              'rects you textured rather than lowering `noiseThreshold`, which would hide real defects ' +
+            'Regions deliberately filled with texture - `scatter` output, grain, foliage, sparkle, ' +
+              'water glitter. Colour outliers inside them are counted as `noise.texturedOutliers` and ' +
+              'do not raise the high-frequency warning, and their bright pixels are excluded from the ' +
+              'light-source check, because scattered highlights are not a light source. Pass the rects ' +
+              'you textured rather than lowering `noiseThreshold`, which would hide real defects ' +
               'everywhere instead.',
           ),
         grid: z

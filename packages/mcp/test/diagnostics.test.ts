@@ -402,11 +402,45 @@ describe('presence checks: catching a piece that has been sanded flat', () => {
     expect(ambientPresence.valueRange).toBeGreaterThan(90);
     expect(ambientPresence.lightConcentration).toBeLessThan(0.3);
     expect(ambientPresence.hasLightSource).toBe(false);
-    expect(warningCodes((await client.callTool({
+    // No textureRects here: declaring the stipple would exclude those pixels from
+    // the light check entirely, which is the behaviour the next test covers.
+    expect(warningCodes((await client.callTool({ name: 'quality_report', arguments: {} })) as ToolResult))
+      .toContain('no_light_source');
+  });
+
+  it('excludes declared texture from the light-source check', async () => {
+    // A sunset lake: scattered highlights on the water, one solid sun above it. The
+    // glitter is a texture, so it must not stop the sun from reading as a source.
+    await makeDoc(64, 64);
+    await client.callTool({
+      name: 'banded_gradient',
+      arguments: { rect: { x: 0, y: 0, w: 64, h: 40 }, from: '#2a2040', to: '#a06848', direction: 'vertical', steps: 12 },
+    });
+    await client.callTool({
+      name: 'draw_ellipse',
+      arguments: { rect: { x: 28, y: 10, w: 8, h: 8 }, color: '#ffe4a8', fill: true },
+    });
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { rect: { x: 0, y: 40, w: 64, h: 24 }, color: '#30264a', fill: true },
+    });
+    await client.callTool({
+      name: 'scatter',
+      arguments: { rect: { x: 0, y: 40, w: 64, h: 24 }, count: 260, color: '#ffc27a', radius: 1, cluster: 0 },
+    });
+
+    const water = { x: 0, y: 40, w: 64, h: 24 };
+    const undeclared = payload((await client.callTool({ name: 'quality_report', arguments: {} })) as ToolResult);
+    // The glitter is scattered enough to swamp the sun's concentration.
+    expect((undeclared.presence as { hasLightSource: boolean }).hasLightSource).toBe(false);
+
+    const declared = payload((await client.callTool({
       name: 'quality_report',
-      // The speckle is deliberate; declare it or the noise warning buries the signal.
-      arguments: { textureRects: [{ x: 0, y: 0, w: 64, h: 64 }] },
-    })) as ToolResult)).toContain('no_light_source');
+      arguments: { textureRects: [water] },
+    })) as ToolResult);
+    const after = declared.presence as { hasLightSource: boolean; lightConcentration: number };
+    expect(after.hasLightSource).toBe(true);
+    expect(after.lightConcentration).toBeGreaterThan(0.3);
   });
 
   it('flags a value collapse that keeps internal variety', async () => {
