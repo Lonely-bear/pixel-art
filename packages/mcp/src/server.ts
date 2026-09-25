@@ -73,7 +73,7 @@ Workflow that works:
 4. Use \`apply_ops\` instead of one call per edit. It accepts any command from
    \`list_commands\`, inline params included, and can return its preview inline too.
    For generated fields prefer \`put_pixels\` (base64 RGBA) or the seeded
-   \`banded_gradient\`/\`noise_fill\`/\`scatter\` primitives over per-pixel JSON.
+   \`banded_gradient\`/\`noise_fill\`/\`ridge_line\`/\`scatter\` primitives over per-pixel JSON.
 5. Before finishing, run \`quality_report\` and fix its warnings: \`despeckle\` for
    isolated pixels, \`antialias\` for harsh edges, less glow for clipped highlights.
 6. Finish with one \`finalize_document\` call that saves the editable \`.pixel\` source

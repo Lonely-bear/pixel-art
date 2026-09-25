@@ -8,7 +8,7 @@
  * on the far side of the waterline and leaves the source alone.
  */
 import { describe, expect, it } from 'vitest';
-import { createEditor, createSprite, type Editor } from '../src/index.js';
+import { createEditor, createSprite, generateRidgeLine, type Editor } from '../src/index.js';
 
 function makeEditor(width = 16, height = 16, layers = ['base']): Editor {
   return createEditor(createSprite({ width, height, layers }));
@@ -219,6 +219,91 @@ describe('draw_polyline', () => {
   });
 });
 
+describe('ridge_line', () => {
+  it('generates a deterministic two-scale ridged profile and returns reusable points', () => {
+    const params = {
+      layer: 0,
+      frame: 0,
+      from: { x: 0, y: 32 },
+      to: { x: 96, y: 32 },
+      amplitude: 14,
+      scale: 24,
+      octaves: 4,
+      lacunarity: 2,
+      gain: 0.5,
+      seed: 19,
+    } as const;
+    const first = makeEditor(128, 64);
+    const result = first.execute('ridge_line', { ...params, color: '#ff0000' }) as {
+      points: Array<{ x: number; y: number }>;
+      pointCount: number;
+      segments: number;
+      mode: string;
+      painted: number;
+    };
+    const second = makeEditor(128, 64);
+    const repeat = second.execute('ridge_line', { ...params, color: '#ff0000' }) as { points: Array<{ x: number; y: number }> };
+
+    expect(result.mode).toBe('ridged-fbm');
+    expect(result.pointCount).toBeGreaterThan(90);
+    expect(result.segments).toBe(result.pointCount - 1);
+    expect(result.painted).toBeGreaterThan(0);
+    expect(result.points).toEqual(repeat.points);
+    expect(new Set(result.points.map((point) => point.y)).size).toBeGreaterThan(5);
+    expect(result.points.every((point) => Number.isInteger(point.x) && Number.isInteger(point.y))).toBe(true);
+    expect(first.history()).toHaveLength(1);
+    first.undo();
+    expect(first.sprite.frames[0].cels.get(first.sprite.layers[0].id)).toBeUndefined();
+  });
+
+  it('supports a rect range and can generate points without painting', () => {
+    const editor = makeEditor(64, 48);
+    const result = editor.execute('ridge_line', {
+      layer: 0,
+      frame: 0,
+      rect: { x: 4, y: 10, w: 48, h: 20 },
+      amplitude: 8,
+      scale: 16,
+      octaves: 2,
+      seed: 3,
+    }) as { points: Array<{ x: number; y: number }>; drawn: boolean; painted: number };
+    expect(result.drawn).toBe(false);
+    expect(result.painted).toBe(0);
+    expect(result.points[0].x).toBe(4);
+    expect(result.points.at(-1)?.x).toBe(52);
+    expect(editor.sprite.frames[0].cels.get(editor.sprite.layers[0].id)).toBeUndefined();
+  });
+
+  it('changes with the seed and exposes the same noise controls to callers', () => {
+    const base = {
+      from: { x: 0, y: 40 },
+      to: { x: 128, y: 40 },
+      amplitude: 20,
+      scale: 32,
+      octaves: 4,
+      lacunarity: 2,
+      gain: 0.5,
+    } as const;
+    const a = generateRidgeLine({ ...base, seed: 1 });
+    const b = generateRidgeLine({ ...base, seed: 2 });
+    expect(a).not.toEqual(b);
+    expect(a).toEqual(generateRidgeLine({ ...base, seed: 1 }));
+  });
+
+  it('requires the two-scale minimum', () => {
+    const editor = makeEditor();
+    expect(() => editor.execute('ridge_line', {
+      layer: 0,
+      frame: 0,
+      x: 0,
+      y: 8,
+      width: 16,
+      octaves: 1,
+      color: '#fff',
+    })).toThrow(/octaves/);
+  });
+});
+
 describe('mirror', () => {
   it('defaults to the canvas centre and matches flip', () => {
     const editor = makeEditor(8, 8);
@@ -269,5 +354,38 @@ describe('mirror', () => {
     editor.execute('clear_all', {});
     const result = editor.execute('mirror', { layer: 0, frame: 0, axis: 'horizontal' }) as { cels: number };
     expect(result.cels).toBe(0);
+  });
+
+  it('adds non-linear compression and depth-scaled seeded wobble to a reflection', () => {
+    const editor = makeEditor(64, 64, ['scene', 'reflection']);
+    editor.execute('draw_rect', {
+      layer: 'scene', frame: 0, rect: { x: 8, y: 8, w: 3, h: 4 }, color: '#ff0000', fill: true,
+    });
+    const result = editor.execute('mirror', {
+      layer: 'scene', frame: 0, axis: 'vertical', about: 32, copyTo: 'reflection',
+      compress: 0.8, wobble: 7, seed: 23,
+    }) as { opticsApplied: boolean; sourceUntouched: boolean; compress: number; wobble: number };
+
+    expect(result.opticsApplied).toBe(true);
+    expect(result.sourceUntouched).toBe(true);
+    expect(result.compress).toBe(0.8);
+    expect(result.wobble).toBe(7);
+    // The exact mirror would put the source rows at 56..59; compression moves them
+    // closer to the waterline, and the seeded wobble changes at least one x position.
+    const reflection = celOf(editor, 'reflection');
+    const painted: Array<[number, number]> = [];
+    for (let y = 0; y < 64; y++) {
+      for (let x = 0; x < 64; x++) if (reflection.getColor(x, y).a > 0) painted.push([x, y]);
+    }
+    expect(painted.length).toBe(12);
+    expect(painted.some(([x, y]) => y < 56 && x !== 8 && x !== 9 && x !== 10)).toBe(true);
+  });
+
+  it('rejects copying a reflection onto its own source layer', () => {
+    const editor = makeEditor(16, 16, ['scene']);
+    editor.execute('draw_rect', { layer: 'scene', frame: 0, rect: { x: 2, y: 2, w: 2, h: 2 }, color: '#fff', fill: true });
+    expect(() => editor.execute('mirror', {
+      layer: 'scene', frame: 0, axis: 'vertical', copyTo: 'scene',
+    })).toThrow(/different from the source/);
   });
 });

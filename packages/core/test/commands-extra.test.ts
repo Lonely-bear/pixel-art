@@ -77,10 +77,12 @@ describe('replace', () => {
       color: '#0000ff',
       fill: true,
       replace: true,
-    }) as { painted: number; replaced: number };
+    }) as { painted: number; replaced: number; warning?: string };
 
-    // The erase pass covers exactly the pixels the ellipse paints.
+    // The erase pass covers exactly the pixels the ellipse paints, and the
+    // destructive behaviour is visible without inspecting the cel.
     expect(result.replaced).toBe(result.painted);
+    expect(result.warning).toMatch(/replace: true/);
     expect(result.replaced).toBeGreaterThan(0);
 
     const buf = celOf(editor);
@@ -102,9 +104,12 @@ describe('replace', () => {
       pattern: 'checker',
       level: 0.5,
       replace: true,
-    }) as { painted: number; replaced: number };
+    }) as { painted: number; replaced: number; warning?: string; level: number; requestedLevel: number };
 
     expect(result.replaced).toBe(64);
+    expect(result.warning).toMatch(/transparent/);
+    expect(result.requestedLevel).toBe(0.5);
+    expect(result.level).toBe(0.5);
     const buf = celOf(editor);
     // Half the 8x8 box is painted, the other half is now transparent (not red).
     let opaque = 0;
@@ -145,6 +150,18 @@ describe('palette lock', () => {
     const c = celOf(editor).getColor(1, 1);
     expect(c.a).toBe(128);
     expect(c).toMatchObject({ r: 0, g: 0, b: 0 });
+  });
+
+  it('applies palette lock to the initial background as well as later paint', () => {
+    const sprite = createSprite({
+      width: 4,
+      height: 4,
+      palette: bw(),
+      paletteLocked: true,
+      background: '#ff0000',
+    });
+    const color = sprite.frames[0].cels.get(sprite.layers[0].id)?.getColor(0, 0);
+    expect(color).toMatchObject({ r: 0, g: 0, b: 0, a: 255 });
   });
 
   it('round-trips the flag through a .pixel file', () => {

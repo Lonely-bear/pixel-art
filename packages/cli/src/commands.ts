@@ -13,6 +13,7 @@ import {
   encodeGIF,
   encodePNG,
   frameLayersWithCels,
+  fillCommandDefaults,
   resolveFrame,
   scaleAtlas,
   isAseprite,
@@ -415,7 +416,9 @@ const applyCommand: CommandSpec = {
     let failed = 0;
 
     for (const op of ops) {
-      const result = editor.tryExecute(op.command, op.params);
+      const command = editor.registry.get(op.command);
+      const params = command ? fillCommandDefaults(editor.sprite, command, op.params) : op.params;
+      const result = editor.tryExecute(op.command, params);
       if (result.ok) {
         results.push({ command: op.command, ok: true, summary: result.summary });
       } else {
@@ -495,7 +498,9 @@ const pipelineCommand: CommandSpec = {
     const editor = createEditor(sprite, await registryWithPlugins(ctx));
     const results: unknown[] = [];
     for (const op of ops) {
-      const result = editor.tryExecute(op.command, op.params);
+      const command = editor.registry.get(op.command);
+      const params = command ? fillCommandDefaults(editor.sprite, command, op.params) : op.params;
+      const result = editor.tryExecute(op.command, params);
       results.push(
         result.ok
           ? { command: op.command, ok: true, summary: result.summary }

@@ -1,6 +1,7 @@
 import { PixelBuffer } from './buffer.js';
 import { makeId } from './ids.js';
-import { createDefaultPalette, type Palette } from './palette.js';
+import { parseColor } from './color.js';
+import { createDefaultPalette, nearestColor, type Palette } from './palette.js';
 import type {
   BlendMode,
   ColorInput,
@@ -112,6 +113,17 @@ export function createSprite(opts: CreateSpriteOptions): Sprite {
   const durationMs = Math.max(1, Math.floor(opts.frameDurationMs ?? 100));
 
   const layerNames = opts.layers?.length ? opts.layers : [defaultLayerName(0)];
+  const palette = opts.palette ?? createDefaultPalette();
+  const paletteLocked = opts.paletteLocked ?? false;
+  const background = opts.background == null
+    ? null
+    : parseColor(opts.background, palette);
+  const lockedBackground = background && paletteLocked
+    ? (() => {
+        const nearest = nearestColor(palette, background);
+        return { ...nearest, a: background.a };
+      })()
+    : background;
   const layers: Layer[] = layerNames.map((name, i) => ({
     id: makeId('lay'),
     name: name || defaultLayerName(i),
@@ -124,9 +136,9 @@ export function createSprite(opts: CreateSpriteOptions): Sprite {
   const frames: Frame[] = [];
   for (let i = 0; i < frameCount; i++) {
     const cels = new Map<LayerId, PixelBuffer>();
-    if (opts.background != null) {
+    if (lockedBackground != null) {
       const buf = new PixelBuffer(width, height);
-      buf.fill(opts.background);
+      buf.fill(lockedBackground);
       cels.set(layers[0].id, buf);
     }
     frames.push({ id: makeId('frm'), durationMs, cels });
@@ -140,8 +152,8 @@ export function createSprite(opts: CreateSpriteOptions): Sprite {
     layers,
     frames,
     tags: [],
-    palette: opts.palette ?? createDefaultPalette(),
-    paletteLocked: opts.paletteLocked ?? false,
+    palette,
+    paletteLocked,
   };
 }
 

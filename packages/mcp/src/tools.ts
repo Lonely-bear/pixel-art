@@ -28,6 +28,8 @@ import {
   encodeGIF,
   encodePNG,
   extractRegion,
+  fillCommandDefaults,
+  requiredCommandArgs,
   frameRefSchema,
   isAseprite,
   layerRefSchema,
@@ -35,6 +37,8 @@ import {
   PixelBuffer,
   resolveFrame,
   resolveLayer,
+  resolveDitherLevel as resolveCoreDitherLevel,
+  ditherLevelResolution as coreDitherLevelResolution,
   scaleAtlas,
   scaleNearest,
   spriteFromAseprite,
@@ -44,10 +48,11 @@ import {
   type Command,
   type Sprite,
 } from '@pixel/core';
-import { toJSONSchema, z } from 'zod';
+import { z } from 'zod';
 import { ScriptRuntime } from '@pixel/script';
 import { BUILTIN_PALETTES, type DocumentStore, type PixelDocument } from './session.js';
 import { PIXEL_ART_SKILL } from './skill.js';
+import { analyzeLandscape } from './quality-landscape.js';
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -142,7 +147,7 @@ const SESSION_TOOLS: Array<{ name: string; description: string }> = [
   { name: 'get_preview', description: 'Render the sprite (or a rect) as a PNG to look at.' },
   { name: 'get_pixels', description: 'Exact pixel colours in a small region.' },
   { name: 'histogram', description: 'Per-colour pixel counts and unused palette slots for a region.' },
-  { name: 'quality_report', description: 'Objective softness/noise report, composition diagnostics and fix warnings.' },
+  { name: 'quality_report', description: 'Objective defect/presence report with internal landscape structure and fix warnings.' },
   { name: 'get_document', description: 'Layers, frames, tags, palette.' },
   { name: 'get_palette', description: 'Palette as hex colours with indices.' },
   { name: 'list_documents', description: 'List open documents.' },
@@ -175,13 +180,11 @@ function text(value: string): ContentBlock {
 const requiredArgsCache = new Map<string, Set<string>>();
 
 function requiredArgsOf(command: Command): Set<string> {
-  let cached = requiredArgsCache.get(command.name);
-  if (!cached) {
-    const base = command.params as unknown as z.ZodObject<z.ZodRawShape>;
-    cached = new Set<string>((toJSONSchema(base) as { required?: string[] }).required ?? []);
-    requiredArgsCache.set(command.name, cached);
-  }
-  return cached;
+  const existing = requiredArgsCache.get(command.name);
+  if (existing) return existing;
+  const required = requiredCommandArgs(command);
+  requiredArgsCache.set(command.name, required);
+  return required;
 }
 
 /**
@@ -190,13 +193,7 @@ function requiredArgsOf(command: Command): Set<string> {
  * commands that treat `layer`/`frame` as an optional filter keep their meaning.
  */
 function fillDefaults(sprite: Sprite, command: Command, params: Record<string, unknown>): void {
-  const required = requiredArgsOf(command);
-  if (required.has('layer') && params.layer === undefined && sprite.layers[0]) {
-    params.layer = sprite.layers[0].id;
-  }
-  if (required.has('frame') && params.frame === undefined && sprite.frames.length > 0) {
-    params.frame = 0;
-  }
+  Object.assign(params, fillCommandDefaults(sprite, command, params));
 }
 
 /**
@@ -732,16 +729,11 @@ function analyzeSkylineRhythm(
  * caller read the rasteriser to discover it.
  */
 function ditherLevelResolution(pattern: string): number {
-  if (pattern === 'bayer8') return 64;
-  if (pattern === 'bayer4' || pattern === 'cluster2' || pattern === 'cluster4') return 16;
-  return 2;
+  return coreDitherLevelResolution(pattern as Parameters<typeof coreDitherLevelResolution>[0]);
 }
 
 function resolveDitherLevel(pattern: string, level: number): number {
-  const steps = ditherLevelResolution(pattern);
-  const clamped = Math.max(0, Math.min(1, level));
-  if (steps <= 2) return clamped >= 1 ? 1 : 0;
-  return Math.floor(clamped * steps) / steps;
+  return resolveCoreDitherLevel(pattern as Parameters<typeof resolveCoreDitherLevel>[0], level);
 }
 
 /** Area a dither op will cover, or 0 when it targets the whole cel. */
@@ -929,6 +921,7 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
   const paletteUsage = analyzePaletteUsage(paletteColors, unique, 6);
   const bands = countHorizontalBands(at, width, height, alphaThreshold, 20, 32);
   const rhythm = analyzeSkylineRhythm(at, width, height, alphaThreshold);
+  const landscape = analyzeLandscape(buffer, alphaThreshold);
   const presence = analyzePresence(at, width, height, alphaThreshold, isTextured);
   const planeMeans = presence.planes.map((p) => p.mean).filter((m) => m >= 0);
   // Depth only exists if adjacent planes differ. Equal means mean the scene has
@@ -1008,6 +1001,40 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
       code: 'horizontal_banding',
       severity: 'warning',
       message: `${bands.strongBands} strong full-width tonal edges (${bands.horizontalBands} edges in total). Past about three strong ones the composition reads as stacked stripes rather than depth. Break them with a vertical or diagonal element - a light path, a foreground silhouette, a waterfall.`,
+    });
+  }
+  // Full-bleed landscape diagnostics are separate from defectScore. They report the
+  // internal horizon/ridge/waterline candidates and whether a coherent vertical or
+  // diagonal guide actually crosses the lower frame; the old alpha skyline rhythm
+  // cannot see any of this when the sky is opaque from y=0.
+  const landscapeRepeated =
+    (landscape.rhythm.lowerBandUniform &&
+      landscape.horizontalBoundaries.some((candidate) => candidate.strength >= 10)) ||
+    Boolean(
+      landscape.waterline &&
+      landscape.waterline.strength >= 10 &&
+      landscape.waterline.coverage >= 0.65 &&
+      landscape.waterline.regularity > 0.84,
+    );
+  if (landscape.measurable && landscape.scene === 'landscape' && !landscape.guideLines.present && landscapeRepeated) {
+    warnings.push({
+      code: 'landscape_repeated_bands',
+      severity: 'warning',
+      message: `Landscape structure is measurable: ${landscape.horizontalBoundaries.length} internal horizontal boundary candidate(s), including waterline ${landscape.waterline ? `near y=${landscape.waterline.y}` : 'not confidently located'}. Their lower-band rhythm is regular, but no vertical/diagonal guiding line was detected. Vary the terrain/water edges or add one coherent path, foreground silhouette, or waterfall.`,
+    });
+  }
+  if (
+    landscape.measurable &&
+    landscape.scene === 'landscape' &&
+    !landscape.guideLines.present &&
+    !landscapeRepeated &&
+    landscape.horizontalBoundaries.length >= 3 &&
+    landscape.horizontalBoundaries.some((candidate) => candidate.strength >= 10)
+  ) {
+    warnings.push({
+      code: 'landscape_missing_guide',
+      severity: 'info',
+      message: 'Several internal landscape boundaries are measurable, but no confident vertical or diagonal guide was found. Check the whole composition at 100% before accepting the horizontal structure.',
     });
   }
   // Presence checks. These fire on a piece that is *missing* something, which is the
@@ -1171,7 +1198,13 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
       horizontalBands: bands.horizontalBands,
       strongBands: bands.strongBands,
       rhythm,
+      landscape,
+      horizon: landscape.horizon,
+      ridge: landscape.ridge,
+      waterline: landscape.waterline,
+      guideLines: landscape.guideLines,
     },
+    landscape,
     presence: {
       valueRange: presence.valueRange,
       darkShare: presence.darkShare,
@@ -1893,9 +1926,9 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     server,
     'quality_report',
     {
-      title: 'Measure softness and noise quality',
+      title: 'Measure defect, presence and landscape quality',
       description:
-        'Read-only report over an objective raster, in two halves. DEFECT half: isolated-pixel ratio, colour-outlier ratio, mean edge contrast, near-white highlight ratio, palette usage, and `defectScore` on 0-100 where HIGHER MEANS CLEANER - 99 means almost nothing measurable is wrong, which is necessary but not sufficient. PRESENCE half: `presence.valueRange` (healthy above 150, collapsed below 90), `darkShare` (over 75% reads as underexposed), `flatShare` (over 45% is a dead region), `planeSeparation` (below 6 means two depth planes have merged into one value) and `lightConcentration` (near 1 is a real source, below 0.3 is ambient). Driving defectScore to 100 flattens the piece, because intentional texture scores identically to noise - declare it with `textureRects` and re-read the presence half afterwards. Also reports `palette.unusedIndices`, `palette.crowded`, `structure.strongBands` and `structure.rhythm`.',
+        'Read-only report over an objective raster, in two halves. DEFECT half: isolated-pixel ratio, colour-outlier ratio, mean edge contrast, near-white highlight ratio, palette usage, and `defectScore` on 0-100 where HIGHER MEANS CLEANER - 99 means almost nothing measurable is wrong, which is necessary but not sufficient. PRESENCE half: `presence.valueRange` (healthy above 150, collapsed below 90), `darkShare` (over 75% reads as underexposed), `flatShare` (over 45% is a dead region), `planeSeparation` (below 6 means two depth planes have merged into one value) and `lightConcentration` (near 1 is a real source, below 0.3 is ambient). Driving defectScore to 100 flattens the piece, because intentional texture scores identically to noise - declare it with `textureRects` and re-read the presence half afterwards. Also reports `palette.unusedIndices`, `palette.crowded`, `structure.strongBands`, `structure.rhythm`, and `structure.landscape` (internal horizon/ridge/waterline candidates, regularity and vertical/diagonal guide evidence) for full-bleed scenes.',
       inputSchema: z.object({
         document: documentRef,
         frame: frameRefSchema.optional().describe('Frame id or 0-based index. Defaults to frame 0.'),
@@ -2643,6 +2676,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
 
       if (!outcome.ok) {
         return fail(outcome.error ?? 'The script failed.', {
+          code: outcome.code,
           logs: outcome.logs,
           version: doc.editor.version,
           document: store.summary(doc),

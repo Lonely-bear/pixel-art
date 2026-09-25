@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { buildHueRamp } from '../ramp.js';
 import { clipRect } from '../geometry.js';
-import { drawPixels, fillShape, putPixels, type PixelSpec } from '../raster.js';
+import { drawLine, drawPixels, drawRect, fillShape, putPixels, type PixelSpec } from '../raster.js';
 import type { Sprite } from '../document.js';
 import type { Color, ColorInput, Point, Rect } from '../types.js';
 import {
@@ -95,6 +95,84 @@ function fbm(x: number, y: number, seed: number, octaves: number, lacunarity: nu
   return total > 0 ? value / total : 0;
 }
 
+/**
+ * Ridged fractal noise.
+ *
+ * Ordinary fBm makes soft hills.  Terrain silhouettes need the inverse: each octave
+ * contributes a sharp high point and a softer valley, so several scales can be added
+ * without turning the result into a row of identical triangles.  The function is kept
+ * deterministic and seed-aware for the same reason as `valueNoise`: an agent can
+ * reproduce a ridge exactly when iterating on a scene.
+ */
+function ridgedFbm(
+  x: number,
+  y: number,
+  seed: number,
+  octaves: number,
+  lacunarity: number,
+  gain: number,
+): number {
+  let value = 0;
+  let amplitude = 0.5;
+  let total = 0;
+  let frequency = 1;
+  for (let octave = 0; octave < octaves; octave++) {
+    const sample = valueNoise(x * frequency, y * frequency, seed + octave * 2053);
+    const ridge = 1 - Math.abs(sample * 2 - 1);
+    value += ridge * ridge * amplitude;
+    total += amplitude;
+    amplitude *= gain;
+    frequency *= lacunarity;
+  }
+  return total > 0 ? value / total : 0;
+}
+
+export interface RidgeLineOptions {
+  /** Left endpoint of the generated path. */
+  from: Point;
+  /** Right endpoint of the generated path. */
+  to: Point;
+  /** Maximum vertical displacement from the baseline, in pixels. */
+  amplitude: number;
+  /** Size of the largest noise feature, in pixels. */
+  scale: number;
+  /** At least two octaves are required for a mass/detail silhouette. */
+  octaves: number;
+  lacunarity: number;
+  gain: number;
+  seed: number;
+  /** Emit one point every N pixels; the connecting stroke still spans the gap. */
+  step?: number;
+}
+
+/** Generate a reproducible horizontal ridge polyline from ridged fBm. */
+export function generateRidgeLine(options: RidgeLineOptions): Point[] {
+  const { from, to } = options;
+  const span = Math.max(1, Math.abs(to.x - from.x));
+  const samples = Math.max(1, Math.ceil(span / Math.max(1, Math.floor(options.step ?? 1))));
+  const points: Point[] = [];
+  for (let index = 0; index <= samples; index++) {
+    const t = index / samples;
+    const x = Math.round(from.x + (to.x - from.x) * t);
+    const baseline = from.y + (to.y - from.y) * t;
+    // The second coordinate is fixed per line: the useful variation is along the
+    // ridge, while a little stable phase keeps different seeds from sharing a shape.
+    const noise = ridgedFbm(
+      x / Math.max(1, options.scale),
+      0.371 + (options.seed % 1009) / 1009,
+      options.seed,
+      Math.max(2, options.octaves),
+      options.lacunarity,
+      options.gain,
+    );
+    const centered = (noise - 0.5) * 2;
+    points.push({ x, y: Math.round(baseline - centered * options.amplitude) });
+  }
+  // A degenerate or heavily quantised range can produce duplicate adjacent vertices.
+  // Keep the returned path useful to callers while leaving the exact final point intact.
+  return points.filter((point, index) => index === 0 || point.x !== points[index - 1].x);
+}
+
 function mixColor(a: Color, b: Color, t: number): Color {
   return {
     r: clampByte(a.r + (b.r - a.r) * t),
@@ -113,17 +191,20 @@ function colorAt(ramp: readonly Color[], value: number, banded: boolean): Color 
 }
 
 function directionValue(x: number, y: number, rect: Rect, direction: 'vertical' | 'horizontal' | 'diagonal' | 'radial'): number {
-  const w = Math.max(1, rect.w - 1);
-  const h = Math.max(1, rect.h - 1);
-  if (direction === 'horizontal') return x / w;
-  if (direction === 'diagonal') return (x + y) / (w + h);
-  if (direction === 'radial') {
-    const cx = (rect.w - 1) / 2;
-    const cy = (rect.h - 1) / 2;
-    const max = Math.max(1, Math.hypot(cx, cy));
-    return Math.hypot(x - cx, y - cy) / max;
+  const w = rect.w - 1;
+  const h = rect.h - 1;
+  if (direction === 'horizontal') return w <= 0 ? 0 : x / w;
+  if (direction === 'diagonal') {
+    const span = w + h;
+    return span <= 0 ? 0 : (x + y) / span;
   }
-  return y / h;
+  if (direction === 'radial') {
+    const cx = w / 2;
+    const cy = h / 2;
+    const max = Math.hypot(cx, cy);
+    return max <= 0 ? 0 : Math.hypot(x - cx, y - cy) / max;
+  }
+  return h <= 0 ? 0 : y / h;
 }
 
 function gradientRgba(
@@ -268,7 +349,7 @@ function rampFrom(
 export const bandedGradientCommand = defineCommand({
   name: 'banded_gradient',
   description:
-    'Fill a rect with a deterministic gradient. `banded: true` (default) maps values onto discrete ramp steps; `banded: false` interpolates smoothly. Supports vertical, horizontal, diagonal and radial directions, deterministic per-pixel jitter, and hue-shifted colour ramps. The whole field is emitted as one batch command, not one tool call per pixel.',
+    'Fill a rect with a deterministic gradient. `banded: true` (default) maps values onto discrete ramp steps; `banded: false` interpolates smoothly. Supports vertical, horizontal, diagonal and radial directions, deterministic per-pixel jitter, and hue-shifted colour ramps. On a palette-locked document jitter is deliberately disabled and reported, because snapping per-pixel threshold crossings creates a regular CRT-like texture; use `noise_fill` or cluster dither when variation is needed. The whole field is emitted as one batch command, not one tool call per pixel.',
   params: z.object({
     layer: layerRefSchema,
     frame: frameRefSchema,
@@ -291,17 +372,34 @@ export const bandedGradientCommand = defineCommand({
     const visible = clipRect(p.rect, buf.width, buf.height);
     validateGeneratedRect(p.rect, 'banded_gradient', visible.w * visible.h);
     const ramp = rampFrom(ctx, p.from, p.to, p.steps ?? 8, p.hueShift ?? 20, p.shadowHue, p.highlightHue);
+    // Palette locking is a hard quantisation boundary.  Applying fine jitter before
+    // that boundary turns a random field into repeated threshold crossings, which is
+    // exactly the CRT-like horizontal texture this parameter is meant to avoid. Keep
+    // the requested value visible in the summary, but do not write a texture that the
+    // lock would immediately turn into a regular lattice.
+    const requestedJitter = p.jitter ?? 0;
+    const jitter = ctx.sprite.paletteLocked ? 0 : requestedJitter;
+    const clipSummary = clipWarning(ctx, p.clip, p.layer);
+    const jitterWarning = jitter !== requestedJitter
+      ? 'banded_gradient jitter was disabled for this palette-locked document; palette snapping would turn per-pixel jitter into a regular threshold texture. Use an unjittered ramp, noise_fill, or cluster dither for intentional variation.'
+      : undefined;
     const summary = {
       layer: layerIdOf(ctx.sprite, p.layer),
       frame: frameIdOf(ctx.sprite, p.frame),
       pixels: p.rect.w * p.rect.h,
       direction: p.direction ?? 'vertical',
       banded: p.banded ?? true,
-      ...clipWarning(ctx, p.clip, p.layer),
+      jitterRequested: requestedJitter,
+      jitterApplied: jitter,
+      paletteLocked: ctx.sprite.paletteLocked === true,
+      ...clipSummary,
+      ...(jitterWarning
+        ? { warning: [clipSummary.warning, jitterWarning].filter(Boolean).join('; ') }
+        : {}),
     };
     if (visible.w === 0 || visible.h === 0) return { ...summary, painted: 0 };
 
-    const rgba = gradientRgba(p.rect, visible, ramp, p.direction ?? 'vertical', p.banded ?? true, p.jitter ?? 0, p.seed ?? 1);
+    const rgba = gradientRgba(p.rect, visible, ramp, p.direction ?? 'vertical', p.banded ?? true, jitter, p.seed ?? 1);
     const result = putPixels(buf, visible, rgba, {
       blend: p.blend,
       opacity: p.opacity,
@@ -374,6 +472,134 @@ export const noiseFillCommand = defineCommand({
       mapColor: (color) => resolveColor(ctx.sprite, color),
     });
     return { ...summary, painted: result.painted };
+  },
+});
+
+export const ridgeLineCommand = defineCommand({
+  name: 'ridge_line',
+  description:
+    'Generate and draw a reproducible natural ridge polyline with ridged fBm. Two or more octaves combine a broad mass with smaller rock detail, so the result is not a regular sawtooth. Give `from`/`to` (or `start`/`end`), or `rect`/`x`+`y`+`width` (the default is a full-canvas line). A `color` draws the path and the returned `points` can be passed to `shade_band`; omit it to generate points only. `compress`/`wobble` are not involved here - this command creates the source contour, not a reflection.',
+  params: z.object({
+    layer: layerRefSchema,
+    frame: frameRefSchema,
+    from: pointSchema.optional().describe('Left endpoint. Pair with `to`.'),
+    to: pointSchema.optional().describe('Right endpoint. Pair with `from`.'),
+    start: pointSchema.optional().describe('Alias for `from`.'),
+    end: pointSchema.optional().describe('Alias for `to`.'),
+    rect: positiveRectSchema.optional().describe('Optional horizontal range and vertical guide area. The line spans the rect width at its centre y (or `y` when supplied).'),
+    x: z.number().int().optional().describe('Left x when using `y` + `width`; defaults to 0.'),
+    y: z.number().int().optional().describe('Baseline y when using `x` + `width`; defaults to canvas centre.'),
+    startX: z.number().int().optional().describe('Alias for `x`.'),
+    endX: z.number().int().optional().describe('Exclusive right x; pairs with `startX`.'),
+    baseline: z.number().int().optional().describe('Alias for `y`.'),
+    width: z.number().int().min(1).max(4096).optional().describe('Horizontal span in pixels. Defaults to the remaining canvas width.'),
+    length: z.number().int().min(1).max(4096).optional().describe('Alias for `width`.'),
+    amplitude: z.number().min(0).max(4096).optional().describe('Maximum vertical displacement in pixels. Defaults to 16.'),
+    scale: z.number().int().min(1).max(4096).optional().describe('Largest noise feature size in pixels. Defaults to 64.'),
+    octaves: z.number().int().min(2).max(8).optional().describe('Ridged fBm octaves. At least 2; defaults to 4.'),
+    lacunarity: z.number().min(1.2).max(4).optional().describe('Frequency multiplier per octave. Defaults to 2.'),
+    gain: z.number().min(0.1).max(0.9).optional().describe('Amplitude multiplier per octave. Defaults to 0.5.'),
+    seed: z.number().int().optional().describe('Deterministic ridge seed. Defaults to 1.'),
+    step: z.number().int().min(1).max(64).optional().describe('Emit one point every N horizontal pixels. Defaults to 1.'),
+    color: nullableColorSchema.optional().describe('Paint the generated path. Omit for points only; null erases the path when drawing.'),
+    draw: z.boolean().optional().describe('Draw when a colour is present. Defaults to true when `color` is supplied.'),
+    strokeWidth: z.number().int().min(1).max(64).optional().describe('Stroke thickness in pixels. Defaults to 1.'),
+    lineWidth: z.number().int().min(1).max(64).optional().describe('Alias for `strokeWidth`.'),
+    clip: clipSchema,
+    ...ditherOptionsShape,
+    ...blendOptionsShape,
+  }),
+  apply(ctx, p) {
+    let from: Point;
+    let to: Point;
+    const endpointFrom = p.from ?? p.start;
+    const endpointTo = p.to ?? p.end;
+    if (endpointFrom !== undefined || endpointTo !== undefined) {
+      if (!endpointFrom || !endpointTo) throw new Error('ridge_line needs both `from` and `to`');
+      if (p.rect || p.x !== undefined || p.y !== undefined || p.width !== undefined || p.length !== undefined) {
+        throw new Error('ridge_line accepts either `from`/`to` or a rect/x-range, not both');
+      }
+      from = endpointFrom;
+      to = endpointTo;
+      if (from.x === to.x) throw new Error('ridge_line endpoints must have different x coordinates');
+    } else {
+      if (p.width !== undefined && p.length !== undefined) {
+        throw new Error('ridge_line accepts only one of `width` or `length`');
+      }
+      if (p.rect && (p.x !== undefined || p.y !== undefined || p.width !== undefined || p.length !== undefined || p.startX !== undefined || p.endX !== undefined)) {
+        throw new Error('ridge_line `rect` cannot be combined with x/y/width/length range fields');
+      }
+      const x = p.startX ?? p.x ?? p.rect?.x ?? 0;
+      const baseline = p.baseline ?? p.y ?? (p.rect ? p.rect.y + Math.floor(p.rect.h / 2) : Math.floor(ctx.sprite.height / 2));
+      const end = p.endX ?? (p.rect ? p.rect.x + p.rect.w : x + (p.width ?? p.length ?? Math.max(1, ctx.sprite.width - x)));
+      const span = end - x;
+      if (span <= 0) throw new Error('ridge_line range must end to the right of its start');
+      from = { x, y: baseline };
+      to = { x: end, y: baseline };
+    }
+
+    const shouldDraw = p.draw ?? p.color !== undefined;
+    if (shouldDraw && p.color === undefined) {
+      throw new Error('ridge_line needs a `color` when `draw` is true; omit draw to generate points only');
+    }
+    const points = generateRidgeLine({
+      from,
+      to,
+      amplitude: p.amplitude ?? 16,
+      scale: p.scale ?? 64,
+      octaves: p.octaves ?? 4,
+      lacunarity: p.lacunarity ?? 2,
+      gain: p.gain ?? 0.5,
+      seed: p.seed ?? 1,
+      step: p.step,
+    });
+
+    let painted = 0;
+    if (shouldDraw) {
+      const buf = celOf(ctx, p.layer, p.frame);
+      const color = resolveColor(ctx.sprite, p.color ?? null);
+      const width = p.strokeWidth ?? p.lineWidth ?? 1;
+      const half = Math.floor((width - 1) / 2);
+      const opts = {
+        width,
+        blend: p.blend,
+        opacity: p.opacity,
+        pattern: p.pattern as never,
+        level: p.level,
+        mask: clipMask(ctx, p.clip, p.layer, p.frame),
+      };
+      // Match draw_polyline's vertex brush so a wide generated contour has no notches.
+      for (const point of points) {
+        painted += drawRect(
+          buf,
+          { x: point.x - half, y: point.y - half, w: width, h: width },
+          color,
+          { ...opts, fill: true },
+        );
+      }
+      for (let index = 1; index < points.length; index++) {
+        painted += drawLine(buf, points[index - 1].x, points[index - 1].y, points[index].x, points[index].y, color, opts);
+      }
+    }
+
+    return {
+      layer: layerIdOf(ctx.sprite, p.layer),
+      frame: frameIdOf(ctx.sprite, p.frame),
+      points,
+      pointCount: points.length,
+      segments: Math.max(0, points.length - 1),
+      mode: 'ridged-fbm',
+      painted,
+      drawn: shouldDraw,
+      amplitude: p.amplitude ?? 16,
+      scale: p.scale ?? 64,
+      octaves: p.octaves ?? 4,
+      lacunarity: p.lacunarity ?? 2,
+      gain: p.gain ?? 0.5,
+      seed: p.seed ?? 1,
+      strokeWidth: p.strokeWidth ?? p.lineWidth ?? 1,
+      ...(shouldDraw ? clipWarning(ctx, p.clip, p.layer) : {}),
+    };
   },
 });
 
@@ -496,4 +722,10 @@ export const shadeBandCommand = defineCommand({
   },
 });
 
-export const generativeCommands = [bandedGradientCommand, noiseFillCommand, scatterCommand, shadeBandCommand];
+export const generativeCommands = [
+  bandedGradientCommand,
+  noiseFillCommand,
+  ridgeLineCommand,
+  scatterCommand,
+  shadeBandCommand,
+];

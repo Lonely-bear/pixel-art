@@ -165,6 +165,29 @@ describe('generative primitives', () => {
     }
   });
 
+  it('suppresses threshold jitter when palette locking would make a regular texture', () => {
+    const editor = createEditor(createSprite({
+      width: 32,
+      height: 16,
+      layers: ['base'],
+      palette: createPalette('locked-jitter', ['#000000', '#ffffff']),
+      paletteLocked: true,
+    }));
+    const result = editor.execute('banded_gradient', {
+      layer: 0,
+      frame: 0,
+      rect: { x: 0, y: 0, w: 32, h: 16 },
+      from: '#000000',
+      to: '#ffffff',
+      steps: 8,
+      jitter: 0.8,
+      seed: 3,
+    }) as { jitterRequested: number; jitterApplied: number; warning?: string };
+    expect(result.jitterRequested).toBe(0.8);
+    expect(result.jitterApplied).toBe(0);
+    expect(result.warning).toMatch(/palette-locked|CRT/);
+  });
+
   it('clips generation to the visible canvas before allocating a field', () => {
     const editor = makeEditor(4, 4);
     const result = editor.execute('banded_gradient', {

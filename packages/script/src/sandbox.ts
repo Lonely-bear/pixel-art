@@ -6,6 +6,7 @@ import {
   CommandError,
   createPluginCommand,
   describeCommand,
+  fillCommandDefaults,
   resolveFrame,
   resolveLayer,
   type Command,
@@ -60,6 +61,8 @@ export interface ScriptRunResult {
   logs: string[];
   /** Present only when `ok` is false. */
   error?: string;
+  /** Machine-readable command/script error code when one is available. */
+  code?: string;
 }
 
 export interface ScriptPluginResult {
@@ -146,6 +149,11 @@ const BOOTSTRAP = `(function () {
       : { frame: optionsOrFrame };
     return call("sample", { x: x, y: y, frame: options.frame, layer: options.layer });
   };
+  // Explicitly named alias: sample can be given a layer override, while this
+  // spelling always means the composited frame and is harder to misread in a script.
+  globalThis.sampleComposite = function (x, y, frame) {
+    return call("sample", { x: x, y: y, frame: frame });
+  };
 
   globalThis.defineCommand = function (def) {
     if (!def || typeof def !== "object" || typeof def.name !== "string" || typeof def.run !== "function") {
@@ -169,6 +177,7 @@ const BOOTSTRAP = `(function () {
     palette: globalThis.palette,
     getPixel: globalThis.getPixel,
     sample: globalThis.sample,
+    sampleComposite: globalThis.sampleComposite,
   };
 
   delete globalThis.__bridge;
@@ -218,14 +227,7 @@ function draftExecutor(draft: Draft, registry: CommandRegistry): Executor {
  * frame 0 was omitted.
  */
 function fillScriptDefaults(command: Command, params: unknown, sprite: Sprite): unknown {
-  if (!params || typeof params !== 'object' || Array.isArray(params)) return params;
-  const filled = { ...(params as Record<string, unknown>) };
-  const required = (describeCommand(command).params.required ?? []) as string[];
-  if (required.includes('frame') && filled.frame === undefined) filled.frame = 0;
-  if (required.includes('layer') && filled.layer === undefined && sprite.layers[0]) {
-    filled.layer = sprite.layers[0].id;
-  }
-  return filled;
+  return fillCommandDefaults(sprite, command, params);
 }
 
 /**
@@ -254,6 +256,7 @@ export class ScriptRuntime {
 
   /** Run a script against a document. Every command it issues collapses into one undo step. */
   run(source: string, editor: Editor): ScriptRunResult {
+    runInContext('globalThis.__logs = [];', this.context, { filename: 'pixel:log-reset' });
     this.stack.push(editorExecutor(editor));
     try {
       // The transaction is what makes a 50-command script a single Ctrl+Z, and what rolls
@@ -264,7 +267,13 @@ export class ScriptRuntime {
         return { ok: true, result: this.read('globalThis.__result'), logs: this.logs() };
       });
     } catch (error) {
-      return { ok: false, result: null, logs: this.logs(), error: this.describeError(error) };
+      return {
+        ok: false,
+        result: null,
+        logs: this.logs(),
+        error: this.describeError(error),
+        code: (error as { code?: string } | null)?.code,
+      };
     } finally {
       this.stack.pop();
     }
@@ -280,16 +289,20 @@ export class ScriptRuntime {
   loadPlugin(source: string, options: LoadPluginOptions): ScriptPluginResult {
     const { name, registry } = options;
     if (options.editor) this.stack.push(editorExecutor(options.editor));
+    const definitionStart = (this.read('globalThis.__defs.length') as number | null) ?? 0;
+    runInContext('globalThis.__logs = [];', this.context, { filename: 'pixel:plugin-log-reset' });
     try {
-      runInContext('globalThis.__defs = [];', this.context, { filename: 'pixel:plugin-reset' });
+      // Keep definitions from earlier plugins in the context. A plugin command's
+      // closure captures its absolute slot; resetting this array made a later plugin
+      // silently replace the implementation of an earlier one.
       runInContext(source, this.context, {
         filename: `${name}.js`,
         timeout: this.timeoutMs,
       });
 
-      const count = runInContext('globalThis.__defs.length', this.context) as number;
+      const definitionEnd = (this.read('globalThis.__defs.length') as number | null) ?? definitionStart;
       const defs: PluginCommandDefinition[] = [];
-      for (let i = 0; i < count; i += 1) {
+      for (let i = definitionStart; i < definitionEnd; i += 1) {
         defs.push(this.readDef(i));
       }
 
@@ -302,7 +315,7 @@ export class ScriptRuntime {
 
       const commands: string[] = [];
       for (let i = 0; i < defs.length; i += 1) {
-        const index = i;
+        const index = definitionStart + i;
         const command = createPluginCommand(defs[i], (ctx, params) =>
           this.invokePlugin(index, ctx.draft, registry, params),
         );
@@ -312,6 +325,8 @@ export class ScriptRuntime {
 
       return { ok: true, name, commands, logs: this.logs() };
     } catch (error) {
+      // Do not leave a failed plugin's definitions for the next load to capture.
+      runInContext(`globalThis.__defs.length = ${definitionStart};`, this.context);
       return {
         ok: false,
         name,
@@ -355,11 +370,11 @@ export class ScriptRuntime {
     ) as PluginCommandDefinition;
   }
 
-  private read(expression: string): unknown {
+  private read(expression: string, timeoutMs = this.timeoutMs): unknown {
     const json = runInContext(
       `(JSON.stringify((${expression}) === undefined ? null : (${expression})) ?? "null")`,
       this.context,
-      { filename: 'pixel:read' },
+      { filename: 'pixel:read', timeout: timeoutMs },
     ) as string;
     return JSON.parse(json);
   }
@@ -466,6 +481,7 @@ export class ScriptRuntime {
         name: sprite.palette.name,
         colors: sprite.palette.colors.map((color) => colorToHex(color, true)),
       },
+      paletteLocked: sprite.paletteLocked === true,
       tileset: sprite.tileset
         ? {
             id: sprite.tileset.id,

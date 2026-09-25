@@ -78,11 +78,12 @@ describe('tool surface', () => {
     expect(names).toContain('put_pixels');
     expect(names).toContain('banded_gradient');
     expect(names).toContain('noise_fill');
+    expect(names).toContain('ridge_line');
     expect(names).toContain('scatter');
     expect(names).toContain('finalize_document');
     expect(names).toContain('export_sheet');
     expect(names).toContain('read_skill');
-    // 57 core commands plus the session/perception/export tools; plugins and
+    // 61 core commands plus the session/perception/export tools; plugins and
     // follow-up session tools may add more without changing this baseline.
     expect(names.length).toBeGreaterThanOrEqual(83);
   });
@@ -102,7 +103,7 @@ describe('tool surface', () => {
   it('lists commands compactly by default and in full on request', async () => {
     const compact = (await client.callTool({ name: 'list_commands', arguments: {} })) as ToolResult;
     const body = payload(compact);
-    // Baseline plus the landscape primitives: draw_polyline, mirror and shade_band.
+    // Baseline plus the landscape primitives: draw_polyline, ridge_line, mirror and shade_band.
     expect(body.count).toBe(
       (body.commands as unknown[]).length,
     );
@@ -149,10 +150,23 @@ describe('tool surface', () => {
     expect(shadeBand?.params.thickness).toBe('integer?');
 
     const mirror = commands.find((c) => c.name === 'mirror');
-    expect(mirror?.description).toMatch(/waterline|arbitrary line/i);
+    expect(mirror?.description).toMatch(/waterline|arbitrary line|compression|wobble/i);
     // `about` is the whole point: without it this is just `flip`.
     expect(mirror?.params.about).toBe('integer?');
+    expect(mirror?.params.compress).toBeDefined();
+    expect(mirror?.params.wobble).toBeDefined();
+    expect(mirror?.params.attenuate).toBeDefined();
+    expect(mirror?.params.seed).toBeDefined();
     expect(mirror?.params.copyTo).toBeDefined();
+
+    const ridge = commands.find((c) => c.name === 'ridge_line');
+    expect(ridge?.description).toMatch(/ridged fBm|natural ridge/i);
+    expect(ridge?.params.amplitude).toBeDefined();
+    expect(ridge?.params.scale).toBeDefined();
+    expect(ridge?.params.octaves).toBeDefined();
+    expect(ridge?.params.lacunarity).toBeDefined();
+    expect(ridge?.params.gain).toBeDefined();
+    expect(ridge?.params.seed).toBeDefined();
 
     const polyline = commands.find((c) => c.name === 'draw_polyline');
     expect(polyline?.params.points).toBe('object[]');
@@ -856,6 +870,15 @@ describe('quality and softness tools', () => {
     })) as ToolResult;
     expect((payload(scatter).summary as { points: number }).points).toBe(4);
 
+    const ridge = (await client.callTool({
+      name: 'ridge_line',
+      arguments: { x: 0, y: 4, width: 8, amplitude: 2, scale: 3, octaves: 2, seed: 4, color: '#ffffff' },
+    })) as ToolResult;
+    const ridgeSummary = payload(ridge).summary as { points: unknown[]; mode: string; painted: number };
+    expect(ridgeSummary.mode).toBe('ridged-fbm');
+    expect(ridgeSummary.points.length).toBeGreaterThan(2);
+    expect(ridgeSummary.painted).toBeGreaterThan(0);
+
     const invalid = (await client.callTool({
       name: 'put_pixels',
       arguments: { rect: { x: 0, y: 0, w: 1, h: 1 }, data: '!!!!' },
@@ -1379,6 +1402,25 @@ describe('scripting and plugins', () => {
     const buf = decodePNG(Buffer.from((preview.contents[0] as { blob: string }).blob, 'base64'));
     expect(buf.getColor(0, 0).a).toBe(0);
     expect(buf.getColor(1, 0).a).toBe(0);
+  });
+
+  it('uses the same layer/frame defaults as generated tools and exposes sampleComposite', async () => {
+    const id = await makeDoc();
+    const result = (await client.callTool({
+      name: 'run_script',
+      arguments: {
+        document: id,
+        source: `
+          exec('draw_rect', { rect: { x: 0, y: 0, w: 1, h: 1 }, color: '#ff0000', fill: true });
+          return { composite: sampleComposite(0, 0), layer: getPixel(0, 0) };
+        `,
+      },
+    })) as ToolResult;
+    expect(result.isError).toBeFalsy();
+    expect(payload(result).result).toEqual({
+      composite: { r: 255, g: 0, b: 0, a: 255 },
+      layer: { r: 255, g: 0, b: 0, a: 255 },
+    });
   });
 
   it('returns the edited document as a configured inline preview', async () => {

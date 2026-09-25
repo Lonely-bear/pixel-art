@@ -111,13 +111,14 @@ describe('ScriptRuntime.run', () => {
     const outcome = runtime.run(
       `exec('draw_rect', { rect: { x: 0, y: 0, w: 2, h: 2 }, color: '#ff0000', fill: true });
        exec('draw_rect', { layer: 1, rect: { x: 4, y: 4, w: 2, h: 2 }, color: '#00ff00', fill: true });
-       return { base: sample(1, 1, { layer: 'base' }), composite: sample(5, 5), defaulted: getPixel(0, 0) };`,
+       return { base: sample(1, 1, { layer: 'base' }), composite: sample(5, 5), explicitComposite: sampleComposite(5, 5), defaulted: getPixel(0, 0) };`,
       editor,
     );
     expect(outcome.ok).toBe(true);
     expect(outcome.result).toEqual({
       base: { r: 255, g: 0, b: 0, a: 255 },
       composite: { r: 0, g: 255, b: 0, a: 255 },
+      explicitComposite: { r: 0, g: 255, b: 0, a: 255 },
       defaulted: { r: 255, g: 0, b: 0, a: 255 },
     });
   });
@@ -254,6 +255,32 @@ describe('ScriptRuntime.loadPlugin', () => {
       },
     });
   `;
+
+  it('keeps earlier plugin definitions alive when another plugin is loaded', () => {
+    const registry = createMutableRegistry(allCommands);
+    const editor = createEditor(
+      createSprite({ width: 8, height: 8, layers: ['base'], palette: createPalette('test', ['#ff0000']) }),
+      registry,
+    );
+    const runtime = new ScriptRuntime();
+    const first = runtime.loadPlugin(`
+      defineCommand({ name: 'plugin_first', description: 'first', params: {}, run() { return { value: 'first' }; } });
+    `, { name: 'first', registry });
+    const second = runtime.loadPlugin(`
+      defineCommand({ name: 'plugin_second', description: 'second', params: {}, run() { return { value: 'second' }; } });
+    `, { name: 'second', registry });
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(editor.execute('plugin_first')).toEqual({ value: 'first' });
+    expect(editor.execute('plugin_second')).toEqual({ value: 'second' });
+  });
+
+  it('does not carry logs from one script run into the next', () => {
+    const editor = makeEditor();
+    const runtime = new ScriptRuntime();
+    expect(runtime.run("log('first'); return 1;", editor).logs).toEqual(['first']);
+    expect(runtime.run("log('second'); return 2;", editor).logs).toEqual(['second']);
+  });
 
   it('registers the commands a plugin defines', () => {
     const registry = createMutableRegistry(allCommands);

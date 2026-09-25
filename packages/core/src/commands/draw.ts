@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { blendInto } from '../blend.js';
+import { resolveDitherLevel, type DitherPattern } from '../dither.js';
 import { base64ByteLength, decodeBase64 } from '../binary.js';
 import { clipRect, fullRect } from '../geometry.js';
 import { frameMask, compositeFrame } from '../render.js';
@@ -73,6 +74,18 @@ function withReplace(
   if (replace) replaced = paint(null, { ...opts, pattern: undefined, level: undefined });
   const painted = paint(color, opts);
   return { painted, replaced };
+}
+
+/** Make destructive replace behaviour visible in every command summary. */
+function replaceWarning(command: string, replace: boolean | undefined, replaced: number): string | undefined {
+  if (!replace) return undefined;
+  return `${command} used replace: true and cleared ${replaced} pixel(s) before painting. The target layer is not composited with its lower layers during the clear, so unpainted pixels become transparent rather than revealing a preserved base.`;
+}
+
+function attachWarning(summary: Record<string, unknown>, warning: string | undefined): Record<string, unknown> {
+  if (!warning) return summary;
+  const existing = typeof summary.warning === 'string' ? summary.warning : undefined;
+  return { ...summary, warning: existing ? `${existing}; ${warning}` : warning };
 }
 
 export const drawPixelsCommand = defineCommand({
@@ -177,14 +190,16 @@ export const putPixelsCommand = defineCommand({
       clearTransparent: p.clearTransparent,
       mapColor: (color) => resolveColor(ctx.sprite, color),
     });
-    return {
+    return attachWarning({
       layer: layerIdOf(ctx.sprite, p.layer),
       frame: frameIdOf(ctx.sprite, p.frame),
       bytes: bytes.length,
       expectedBytes: expected,
       ...result,
       ...clipWarning(ctx, p.clip, p.layer),
-    };
+    }, p.clearTransparent
+      ? 'put_pixels used clearTransparent: true; zero-alpha source pixels erased the destination cel instead of being ignored.'
+      : undefined);
   },
 });
 
@@ -302,7 +317,8 @@ export const drawRectCommand = defineCommand({
         mask: clipMask(ctx, p.clip, p.layer, p.frame),
       },
     );
-    return { painted, replaced, ...clipWarning(ctx, p.clip, p.layer) };
+    const warning = replaceWarning('draw_rect', p.replace, replaced);
+    return attachWarning({ painted, replaced, ...clipWarning(ctx, p.clip, p.layer) }, warning);
   },
 });
 
@@ -335,7 +351,8 @@ export const drawEllipseCommand = defineCommand({
         mask: clipMask(ctx, p.clip, p.layer, p.frame),
       },
     );
-    return { painted, replaced, ...clipWarning(ctx, p.clip, p.layer) };
+    const warning = replaceWarning('draw_ellipse', p.replace, replaced);
+    return attachWarning({ painted, replaced, ...clipWarning(ctx, p.clip, p.layer) }, warning);
   },
 });
 
@@ -368,7 +385,8 @@ export const drawPolygonCommand = defineCommand({
         mask: clipMask(ctx, p.clip, p.layer, p.frame),
       },
     );
-    return { painted, replaced, ...clipWarning(ctx, p.clip, p.layer) };
+    const warning = replaceWarning('draw_polygon', p.replace, replaced);
+    return attachWarning({ painted, replaced, ...clipWarning(ctx, p.clip, p.layer) }, warning);
   },
 });
 
@@ -408,7 +426,7 @@ export const fillCommand = defineCommand({
 export const ditherFillCommand = defineCommand({
   name: 'dither_fill',
   description:
-    'Fill a region with a named dither pattern. This is the intended way to shade: pick a pattern such as `bayer4` or `checker` and a coverage level instead of emitting individual pixels. Pass `shape: {ellipse}` or `shape: {polygon}` when the band should follow a curve; a plain `rect` (or nothing, for the whole cel) fills a box. `replace: true` clears the pixels this region covers solid first, then stipples them. Patterns: checker, checker-inv, bayer4, bayer8, dots, sparse, dense, horizontal, vertical, diagonal.',
+    'Fill a region with a named dither pattern. This is the intended way to shade: pick a pattern such as `bayer4` or `checker` and a coverage level instead of emitting individual pixels. Pass `shape: {ellipse}` or `shape: {polygon}` when the band should follow a curve; a plain `rect` (or nothing, for the whole cel) fills a box. `level` is resolved to the pattern\'s actual coverage step and both requested/resolved values are returned. `replace: true` clears the pixels this region covers solid first, then stipples them; the summary warns that an independent layer\'s unpainted pixels become transparent. Patterns: checker, checker-inv, bayer4, bayer8, dots, sparse, dense, horizontal, vertical, diagonal.',
   params: z.object({
     layer: layerRefSchema,
     frame: frameRefSchema,
@@ -416,29 +434,43 @@ export const ditherFillCommand = defineCommand({
     shape: shapeSchema.optional(),
     color: nullableColorSchema,
     pattern: ditherPatternSchema.describe('Named dither pattern.'),
-    level: z.number().min(0).max(1).optional().describe('Coverage 0-1. Defaults to 0.5.'),
+    level: z.number().min(0).max(1).optional().describe('Requested coverage 0-1. Defaults to 0.5; the summary reports the pattern-resolved level.'),
     replace: z.boolean().optional().describe('Clear the pixels this region covers before stippling. Defaults to false.'),
     clip: clipSchema,
     ...blendOptionsShape,
   }),
   apply(ctx, p) {
+    if (p.rect && p.shape) {
+      throw new Error('dither_fill accepts either `rect` or `shape`, not both');
+    }
     const buf = celOf(ctx, p.layer, p.frame);
     const shape = p.shape
       ? toShapeSpec(p.shape)
       : ({ kind: 'rect', rect: p.rect ?? fullRect(buf.width, buf.height) } as const);
+    const requestedLevel = p.level ?? 0.5;
+    const level = resolveDitherLevel(p.pattern as DitherPattern, requestedLevel);
     const { painted, replaced } = withReplace(
       p.replace,
       (color, opts) => fillShape(buf, shape, color, opts),
       resolveColor(ctx.sprite, p.color),
       {
         pattern: p.pattern as never,
-        level: p.level,
+        level,
         blend: p.blend,
         opacity: p.opacity,
         mask: clipMask(ctx, p.clip, p.layer, p.frame),
       },
     );
-    return { painted, replaced, pattern: p.pattern, level: p.level ?? 0.5, kind: shape.kind, ...clipWarning(ctx, p.clip, p.layer) };
+    const warning = replaceWarning('dither_fill', p.replace, replaced);
+    return attachWarning({
+      painted,
+      replaced,
+      pattern: p.pattern,
+      requestedLevel,
+      level,
+      kind: shape.kind,
+      ...clipWarning(ctx, p.clip, p.layer),
+    }, warning);
   },
 });
 
@@ -635,7 +667,13 @@ export const clearRegionCommand = defineCommand({
   apply(ctx, p) {
     const buf = celOf(ctx, p.layer, p.frame);
     const mask = clipMask(ctx, p.clip, p.layer, p.frame);
-    if (!mask) return { cleared: clearRegion(buf, p.rect), ...clipWarning(ctx, p.clip, p.layer) };
+    if (!mask) {
+      const cleared = clearRegion(buf, p.rect);
+      return attachWarning({
+        cleared,
+        ...clipWarning(ctx, p.clip, p.layer),
+      }, `clear_region erased ${cleared} pixel(s) to full transparency; lower layers are not copied into this cel.`);
+    }
     // Erasing is a write like any other, so it respects the clip too.
     let cleared = 0;
     const rect = p.rect ? clipRect(p.rect, buf.width, buf.height) : fullRect(buf.width, buf.height);
@@ -651,7 +689,10 @@ export const clearRegionCommand = defineCommand({
         cleared++;
       }
     }
-    return { cleared, ...clipWarning(ctx, p.clip, p.layer) };
+    return attachWarning({
+      cleared,
+      ...clipWarning(ctx, p.clip, p.layer),
+    }, `clear_region erased ${cleared} pixel(s) to full transparency; lower layers are not copied into this cel.`);
   },
 });
 
@@ -704,7 +745,10 @@ export const copyRegionCommand = defineCommand({
       const srcBuf = celOf(ctx, p.from.layer, p.from.frame, false);
       if (srcBuf) clearRegion(srcBuf, p.from.rect);
     }
-    return { copied: patch.width * patch.height };
+    return {
+      copied: patch.width * patch.height,
+      ...(p.eraseSource ? { warning: 'copy_region used eraseSource: true; the source region was cleared after copying.' } : {}),
+    };
   },
 });
 

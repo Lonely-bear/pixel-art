@@ -141,7 +141,10 @@ render. Break them and no amount of extra shading recovers the result.
 - **Gradients.** Do not build one out of a stack of full-width dither rows. Use
   \`banded_gradient\` (one batch command, vertical/horizontal/diagonal/radial,
   \`banded: true\`) for the field, then hand-dither only the seams you want soft. A sky
-  is usually 6-10 solid bands plus one 4px seam each.
+  is usually 6-10 solid bands plus one 4px seam each. On a \`paletteLocked\` document,
+  per-pixel gradient jitter is deliberately disabled and reported: snapping those tiny
+  threshold crossings to palette swatches creates a regular CRT-like texture. Use
+  \`noise_fill\` or a deliberate \`cluster2\`/\`cluster4\` dither for variation instead.
 - **Light sources and glows.** Put the light source on a third. Build its falloff by
   shaping the gradient toward it - raise the band boundaries around it, or use
   \`banded_gradient\` with \`direction: "radial"\`. Do **not** paint a halo as a dithered
@@ -176,6 +179,11 @@ render. Break them and no amount of extra shading recovers the result.
   first - \`measure_region\` per layer, or the crest line of each silhouette - and place
   every tonal band inside it. A shadow band placed below the occluding crest is spent
   work, and the sprite reads flat no matter how many colours you used.
+- \`ridge_line\` generates a reproducible terrain contour with ridged fBm. Give it a
+  range (\`rect\`, \`x/y/width\`, or \`from/to\`) and tune \`amplitude\`, \`scale\`,
+  \`octaves\`, \`lacunarity\`, \`gain\` and \`seed\`. It always uses at least two octaves,
+  so the large mass and small rock detail are not a hand-written regular sawtooth. Pass
+  a \`color\` to draw it, or omit it and reuse the returned \`points\` with \`shade_band\`.
 - \`shade_band\` paints a tonal band that **follows a silhouette**. Give it the crest
   polyline with \`offset\` and \`thickness\` for the common case - a lit band under a
   ridge crest, a shadow band at its base - or \`top\`/\`bottom\` for a band between two
@@ -188,11 +196,12 @@ render. Break them and no amount of extra shading recovers the result.
   \`shape: {polygon: [...]}\` together with \`clip: {layer}\`, so a derived polygon works
   too. \`run_script\` is the place to compute those points.
 - \`replace: true\` on \`draw_rect\`, \`draw_ellipse\`, \`draw_polygon\` and \`dither_fill\`
-  erases the pixels the shape covers before painting them. Use it when redrawing over
-  an earlier pass: without it, a second dithered band over the first stacks the stipple
-  and reads twice as dark. It only clears the pixels the **new** shape covers, so
-  shrinking a shape leaves the old footprint behind - \`clear_region\` the layer when you
-  redesign a large area.
+  erases the pixels the shape covers before painting them. The command summary returns
+  a warning and \`replaced\`: on an independent shading layer, unpainted pixels become
+  transparent rather than revealing a preserved base. Use it when redrawing over an
+  earlier pass: without it, a second dithered band stacks the stipple and reads twice as
+  dark. It only clears the pixels the **new** shape covers, so shrinking a shape leaves
+  the old footprint behind - \`clear_region\` the layer when you redesign a large area.
 - \`draw_line\` takes a \`width\` (1-64) for thick strokes - staffs, limbs, hair strands.
   The band is perpendicular and roughly centred, but it overshoots each endpoint by up
   to half the width and even widths bias +0.5px, so a tapered limb is better as a
@@ -311,9 +320,13 @@ render. Break them and no amount of extra shading recovers the result.
 - It also reports \`palette.unusedIndices\` (the exact slot numbers, so you can drop
   them), \`palette.crowded\` (used pairs too close in distance to read as separate
   tones), \`structure.strongBands\` (full-width tonal edges big enough to flatten a
-  composition — a smooth gradient has many gentler steps and is not flagged) and
-  \`structure.rhythm\` (silhouette peak regularity; check \`measurable\` first, since a
-  frame with no silhouette — most full-bleed landscapes — has nothing to measure).
+  composition — a smooth gradient has many gentler steps and is not flagged),
+  \`structure.rhythm\` (silhouette peak regularity), and
+  \`structure.landscape\` for full-bleed scenes. The landscape half locates internal
+  horizon/ridge/waterline candidates, reports each boundary's straightness/regularity,
+  and measures whether a bright or coherent vertical/diagonal guiding line crosses the
+  lower frame. It is evidence, not a beauty score: read \`landscape.conclusion\` and
+  its warnings alongside the presence half.
 - If a high-frequency region is deliberate texture — sparkle, grain, foliage, water
   glitter — pass it as \`textureRects\`. Outliers inside are counted as
   \`noise.texturedOutliers\` and stop raising the noise warning, **and** their bright
@@ -404,10 +417,13 @@ The rules that separate a scene from a set of stacked stripes.
 
 **Water and reflections**
 
-- A reflection is geometry, not a texture: a point \`h\` above the waterline reflects
-  \`h\` below it. \`mirror {axis: "vertical", about: <waterline row>, copyTo: "reflection"}\`
-  does the whole thing in one call - it mirrors about an arbitrary line rather than the
-  canvas centre, and \`copyTo\` leaves the source untouched.
+- A reflection is geometry plus optics, not a copied texture. \`mirror {axis:
+  "vertical", about: <waterline row>, copyTo: "reflection"}\` is the exact geometric
+  baseline. For a lake, add \`compress\` (0-1 non-linear vertical compression) and
+  \`wobble\` (maximum seeded horizontal displacement) so detail bends and breaks with
+  depth; \`seed\` makes the result reproducible. Add \`attenuate\` when the far end
+  should lose brightness as well as geometry. The command reports \`opticsApplied\`
+  and leaves the source untouched.
 - **Layer order decides whether the reflection is visible at all.** Layers paint
   bottom-first, so whatever is opaque and on top wins. Two workable arrangements:
   - *water is transparent or only a wash*: put \`reflection\` **below** \`lake\` and let
@@ -531,7 +547,9 @@ last read. \`finalize_document\` saves the source and writes PNG exports in one 
   \`tryExec(command, params)\` returns \`{ ok, summary }\` or \`{ ok:false, error, code }\`
   instead of throwing. Use \`exec\` when a failure should abort the script. Required
   \`layer\`/\`frame\` arguments are filled with the bottom layer/frame 0 exactly like
-  the MCP command surface when the command permits it.
+  the MCP command surface when the command permits it; optional filter arguments are
+  left alone. The same normalization is shared by generated MCP tools, \`apply_ops\`
+  and the script bridge.
 - \`putPixels(rect, base64RGBA, options?)\` is the compact bulk path for generated fields:
   it writes a row-major RGBA8888 buffer in one command/undo step. The decoded payload
   must contain exactly \`rect.w * rect.h * 4\` bytes; set \`clearTransparent\` when
@@ -544,9 +562,11 @@ last read. \`finalize_document\` saves the source and writes PNG exports in one 
   \`command(name)\` returns one command's full JSON Schema, or \`null\`.
 - Read state: \`document()\`, \`layers()\`, \`frames()\`, \`tags()\`, \`palette()\`,
   \`getPixel(x, y, layer?, frame?)\` and \`sample(x, y, frame?)\` (the composited colour).
-  For a layer-specific sample, call \`sample(x, y, { layer, frame })\`; the default
-  composite sample can hit an opaque water/sky layer and hide a nearby silhouette.
-  \`getPixel\` is already layer-specific.
+  For a layer-specific sample, call \`sample(x, y, { layer, frame })\`; the explicit
+  \`sampleComposite(x, y, frame?)\` alias always means the composited frame and is harder
+  to misread in a long script. \`getPixel\` is already layer-specific. The MCP
+  \`get_pixels\` tool is also composited; use a layer command or \`getPixel\` when the
+  distinction matters.
 - **An unpainted pixel reads as \`null\`, not a zeroed colour.** Both readers return
   \`null\` for a fully transparent pixel, so \`if (getPixel(x, y))\` is a valid emptiness
   test. Do not test \`a === 0\`; that branch is unreachable by design.
@@ -563,10 +583,10 @@ last read. \`finalize_document\` saves the source and writes PNG exports in one 
   loop is killed and reported as \`Script timed out after Nms\`. A script that generates
   a whole 256x256 scene is a few hundred command calls, so raise \`timeoutMs\` rather than
   splitting the work across scripts.
-- \`scatter\` and dithered \`dither_fill\` register as intentional texture, and
-  \`quality_report\` does not raise \`high_frequency_noise\` over a region you filled with
-  them. Paint sparkle, grain and foliage with \`scatter\` rather than with per-pixel
-  literals, and the tool can tell deliberate texture from stray noise.
+- \`scatter\` and dithered \`dither_fill\` do not silently register a texture region in
+  the document. When calling \`quality_report\`, pass the actual sparkle/grain/foliage
+  rectangles as \`textureRects\`; only those regions are exempted from noise and
+  light-source checks.
 
 ## Undo
 

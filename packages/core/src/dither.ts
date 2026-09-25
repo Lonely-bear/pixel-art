@@ -36,6 +36,21 @@ export const DITHER_PATTERNS: readonly DitherPattern[] = [
   'cluster4',
 ];
 
+/** Number of distinct coverage levels a named pattern can represent. */
+export function ditherLevelResolution(pattern: DitherPattern): number {
+  if (pattern === 'bayer8') return 64;
+  if (pattern === 'bayer4' || pattern === 'cluster2' || pattern === 'cluster4') return 16;
+  return 2;
+}
+
+/** Resolve a requested coverage to the value the raster threshold actually uses. */
+export function resolveDitherLevel(pattern: DitherPattern, level: number): number {
+  const steps = ditherLevelResolution(pattern);
+  const clamped = Math.max(0, Math.min(1, level));
+  if (steps <= 2) return clamped >= 1 ? 1 : 0.5;
+  return Math.floor(clamped * steps) / steps;
+}
+
 /**
  * Ordered threshold on a coarser grid, so a paint decision covers an NxN block
  * instead of one pixel.

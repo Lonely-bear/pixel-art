@@ -77,20 +77,86 @@ export const flipCommand = defineCommand({
   },
 });
 
+/** Deterministic, smooth one-dimensional noise used for reflection displacement. */
+function reflectionNoise(value: number, seed: number): number {
+  const cell = Math.floor(value);
+  const fraction = value - cell;
+  const smooth = fraction * fraction * (3 - 2 * fraction);
+  const sample = (index: number): number => {
+    let n = Math.imul((index | 0) ^ seed, 0x9e3779b9);
+    n ^= n >>> 16;
+    n = Math.imul(n, 0x85ebca6b);
+    n ^= n >>> 13;
+    return (n >>> 0) / 0x100000000;
+  };
+  const a = sample(cell);
+  const b = sample(cell + 1);
+  return a + (b - a) * smooth;
+}
+
+function reflectionOffset(
+  x: number,
+  sourceY: number,
+  depth: number,
+  amount: number,
+  seed: number,
+): number {
+  if (amount <= 0 || depth <= 0) return 0;
+  // Most of the displacement is coherent along rows; a small, block-stable term keeps
+  // a reflection from looking like a single perfectly sheared copy.
+  const row = reflectionNoise(sourceY * 0.075 + seed * 0.013, seed ^ 0x51ed270b);
+  const block = reflectionNoise(Math.floor(x / 8) * 0.19 + sourceY * 0.011, seed ^ 0x1b873593);
+  const signed = (row * 0.72 + block * 0.28 - 0.5) * 2;
+  return Math.round(signed * amount * depth);
+}
+
 export const mirrorCommand = defineCommand({
   name: 'mirror',
   description:
-    'Mirror a cel about an arbitrary line instead of the canvas centre. `axis: "horizontal"` mirrors left/right about a vertical line, `"vertical"` mirrors top/bottom about a horizontal one. `about` is the line position in pixels and defaults to the canvas centre; pass the waterline row to build a lake reflection in one call. `copyTo` writes the mirrored copy into another layer and leaves the source untouched - which is what a reflection needs - and otherwise merges into it. Omit `copyTo` to mirror in place.',
+    'Mirror a cel about an arbitrary line instead of the canvas centre. `axis: "horizontal"` mirrors left/right about a vertical line, `"vertical"` mirrors top/bottom about a horizontal one. `about` is the line position in pixels and defaults to the canvas centre; pass the waterline row to build a lake reflection in one call. For a physical-looking reflection, vertical mirrors also accept `compress` (non-linear vertical compression, 0-1), seeded `wobble` (horizontal displacement in pixels that grows with depth), and optional depth `attenuate`. `copyTo` writes the mirrored copy into another layer and leaves the source untouched - which is what a reflection needs - and otherwise merges into it. Omit `copyTo` to mirror in place.',
   params: z.object({
     layer: layerRefSchema.optional().describe('Layer to mirror. Omit for every layer.'),
     frame: frameRefSchema.optional().describe('Frame to mirror. Omit for every frame.'),
     axis: z.enum(['horizontal', 'vertical']).describe('`horizontal` mirrors left/right, `vertical` mirrors top/bottom.'),
     about: z.number().int().optional().describe('Position of the mirror line in pixels. Defaults to the canvas centre on that axis.'),
+    compress: z
+      .number()
+      .min(0)
+      .max(1)
+      .optional()
+      .describe('Non-linear vertical compression strength for a vertical reflection. 0 is an exact mirror; 1 is the strongest compression. Ignored for horizontal mirroring.'),
+    wobble: z
+      .number()
+      .min(0)
+      .max(64)
+      .optional()
+      .describe('Maximum seeded horizontal displacement in pixels. It grows with distance from the mirror line, so the reflection is not a copied silhouette.'),
+    attenuate: z
+      .number()
+      .min(0)
+      .max(1)
+      .optional()
+      .describe('Optional depth fade for a vertical reflection, 0-1. Alpha is reduced toward the far end; defaults to 0 (no fade).'),
+    seed: z.number().int().optional().describe('Seed for reflection compression/wobble. Defaults to 1.'),
     copyTo: layerRefSchema.optional().describe('Write the mirrored copy into this layer and leave the source untouched. Omit to mirror in place.'),
   }),
   apply(ctx, p) {
     const targets = selectCels(ctx, p.layer, p.frame);
-    if (targets.length === 0) return { cels: 0, axis: p.axis };
+    // Resolve and validate the destination before the empty-target fast path. A typo
+    // must not look like a successful no-op, and copying a layer onto itself would
+    // merge the reflection back into the source instead of preserving it.
+    const destId = p.copyTo === undefined ? null : layerIdOf(ctx.sprite, p.copyTo);
+    if (destId !== null && targets.some((target) => target.layerId === destId)) {
+      throw new Error('mirror copyTo must be different from the source layer');
+    }
+    const compress = p.compress ?? 0;
+    const wobble = p.wobble ?? 0;
+    const attenuate = p.attenuate ?? 0;
+    const seed = p.seed ?? 1;
+    const optics = compress > 0 || wobble > 0 || attenuate > 0;
+    if (targets.length === 0) {
+      return { cels: 0, axis: p.axis, compress, wobble, attenuate, seed, opticsApplied: false };
+    }
     const { width, height } = ctx.sprite;
     const about = p.about ?? (p.axis === 'horizontal' ? (width - 1) / 2 : (height - 1) / 2);
 
@@ -100,18 +166,38 @@ export const mirrorCommand = defineCommand({
         for (let x = 0; x < buffer.width; x++) {
           const c = buffer.getColor(x, y);
           if (c.a === 0) continue;
-          const tx = p.axis === 'horizontal' ? Math.round(2 * about - x) : x;
-          const ty = p.axis === 'vertical' ? Math.round(2 * about - y) : y;
+          let tx = p.axis === 'horizontal' ? Math.round(2 * about - x) : x;
+          let ty = p.axis === 'vertical' ? Math.round(2 * about - y) : y;
+          let depth = 0;
+          if (p.axis === 'vertical' && optics) {
+            // `about` can sit off-centre, so use the distance available on the source
+            // side rather than a canvas-wide constant. The exponent keeps the line
+            // fixed and compresses distant detail non-linearly without wrapping.
+            const above = y <= about;
+            const span = Math.max(1, above ? about : buffer.height - 1 - about);
+            const distance = Math.abs(y - about);
+            depth = Math.min(1, distance / span);
+            const warpedDepth = compress > 0 ? Math.pow(depth, 1 + compress) : depth;
+            ty = Math.round(above ? about + warpedDepth * span : about - warpedDepth * span);
+            tx += reflectionOffset(x, y, depth, wobble, seed);
+          }
           // Artwork mirrored past the edge is dropped, not wrapped.
           if (tx < 0 || ty < 0 || tx >= buffer.width || ty >= buffer.height) continue;
-          out.setColor(tx, ty, c);
+          const outputColor = p.axis === 'vertical' && attenuate > 0
+            ? { ...c, a: Math.round(c.a * (1 - attenuate * depth)) }
+            : c;
+          out.setColor(tx, ty, outputColor);
         }
       }
       return out;
     };
 
-    if (p.copyTo !== undefined) {
-      const destId = layerIdOf(ctx.sprite, p.copyTo);
+    const opticsApplied = p.axis === 'vertical' && optics;
+    const opticalWarning =
+      optics && p.axis === 'horizontal'
+        ? '`compress`, `wobble`, and `attenuate` describe a water reflection and are ignored for a horizontal mirror.'
+        : undefined;
+    if (destId !== null) {
       for (const t of targets) {
         const mirrored = mirrorBuffer(t.buffer);
         const existing = t.frame.cels.get(destId);
@@ -127,11 +213,33 @@ export const mirrorCommand = defineCommand({
           }
         }
       }
-      return { cels: targets.length, axis: p.axis, about, copiedTo: destId, sourceUntouched: true };
+      return {
+        cels: targets.length,
+        axis: p.axis,
+        about,
+        compress,
+        wobble,
+        attenuate,
+        seed,
+        opticsApplied,
+        copiedTo: destId,
+        sourceUntouched: true,
+        ...(opticalWarning ? { warning: opticalWarning } : {}),
+      };
     }
 
     for (const t of targets) t.frame.cels.set(t.layerId, mirrorBuffer(t.buffer));
-    return { cels: targets.length, axis: p.axis, about };
+    return {
+      cels: targets.length,
+      axis: p.axis,
+      about,
+      compress,
+      wobble,
+      attenuate,
+      seed,
+      opticsApplied,
+      ...(opticalWarning ? { warning: opticalWarning } : {}),
+    };
   },
 });
 
@@ -233,7 +341,10 @@ export const clearAllCommand = defineCommand({
         cleared++;
       }
     }
-    return { cels: cleared };
+    return {
+      cels: cleared,
+      warning: `clear_all erased ${cleared} cel(s) to full transparency; layer and frame structure was preserved.`,
+    };
   },
 });
 
