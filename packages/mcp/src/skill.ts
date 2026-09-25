@@ -91,7 +91,11 @@ render. Break them and no amount of extra shading recovers the result.
 - Lock the palette down. Pass \`paletteLocked: true\` to \`create_document\` and every
   colour a command writes is snapped to the nearest swatch, so a slightly-off hex
   becomes the nearest ramp step instead of inventing a new colour. Alpha is preserved,
-  so a translucent cape still works.
+  so a translucent cape still works. Note the scope: this snaps what a command *writes
+  to a cel*. Compositing a translucent layer over another still blends two swatches, so
+  the final flattened image can hold colours that are not in the palette —
+  \`quality_report\` reports that as \`palette.outsideRatio\`. For a strictly on-palette
+  result, use opaque layers and \`quantize_to_palette\` at the end.
 
 ## 4. Outlines
 
@@ -295,15 +299,21 @@ render. Break them and no amount of extra shading recovers the result.
   and you need a file you can open yourself.
 - Before finishing, run \`quality_report\`, and read **both** halves of it. The defect
   half returns isolated-pixel ratio, colour outlier ratio, edge contrast, highlight
-  clipping, palette usage and a 0-100 \`defectScore\`. The presence half returns
-  \`presence.valueRange\`, \`darkShare\`, \`lightShare\`, \`flatShare\`, \`planeSeparation\` and
-  the per-plane means — these catch the piece having been flattened, which no defect
-  metric can see. It also reports \`palette.unusedIndices\` (the exact slot numbers, so
-  you can drop them), \`palette.crowded\` (used pairs too close in distance to read as
-  separate tones), \`structure.strongBands\` (full-width tonal edges big enough to
-  flatten a composition — a smooth gradient has many gentler steps and is not flagged)
-  and \`structure.rhythm\` (silhouette peak regularity; check \`measurable\` first, since
-  a frame with no silhouette has nothing to measure).
+  clipping, palette usage and a 0-100 \`defectScore\` — **higher is cleaner**, so 99 means
+  "almost nothing measurable is wrong", which is not the same as finished. The presence
+  half answers whether the piece still *has* light, depth and form, with these rough
+  readings: \`valueRange\` above 150 is healthy, below 90 means the shading has collapsed;
+  \`darkShare\` under about 40% is normal for a night scene, over 75% reads as
+  underexposed; \`flatShare\` under about 20% is fine, over 45% is a dead region;
+  \`planeSeparation\` above about 15 means the depth planes are actually told apart, below
+  6 means two of them have merged; \`lightConcentration\` near 1 means a real source.
+  Those are working thresholds, not laws — trust the warnings over the numbers.
+- It also reports \`palette.unusedIndices\` (the exact slot numbers, so you can drop
+  them), \`palette.crowded\` (used pairs too close in distance to read as separate
+  tones), \`structure.strongBands\` (full-width tonal edges big enough to flatten a
+  composition — a smooth gradient has many gentler steps and is not flagged) and
+  \`structure.rhythm\` (silhouette peak regularity; check \`measurable\` first, since a
+  frame with no silhouette — most full-bleed landscapes — has nothing to measure).
 - If a high-frequency region is deliberate texture — sparkle, grain, foliage, water
   glitter — pass it as \`textureRects\`. Outliers inside are counted as
   \`noise.texturedOutliers\` and stop raising the noise warning, **and** their bright
@@ -397,9 +407,14 @@ The rules that separate a scene from a set of stacked stripes.
 - A reflection is geometry, not a texture: a point \`h\` above the waterline reflects
   \`h\` below it. \`mirror {axis: "vertical", about: <waterline row>, copyTo: "reflection"}\`
   does the whole thing in one call - it mirrors about an arbitrary line rather than the
-  canvas centre, and \`copyTo\` leaves the source untouched. Give the reflection its own
-  layer *below* the water layer, and draw the water plane **far to near** so the nearer
-  ridge correctly occludes the one behind it.
+  canvas centre, and \`copyTo\` leaves the source untouched.
+- **Layer order decides whether the reflection is visible at all.** Layers paint
+  bottom-first, so whatever is opaque and on top wins. Two workable arrangements:
+  - *water is transparent or only a wash*: put \`reflection\` **below** \`lake\` and let
+    the water tint it.
+  - *water is an opaque slab* (the usual case): put \`reflection\` **above** \`lake\` and
+    paint only the reflection area, or it is hidden completely. Use
+    \`clip: {layer: "lake"}\` to keep it inside the water region.
 - \`flip\` mirrors about the canvas centre only; use \`mirror\` when the axis is not the
   centre. Artwork that would land off the canvas is dropped, not wrapped.
 - **Break the reflection with horizontal ripple segments, not with a dithered fade.**
