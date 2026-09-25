@@ -513,6 +513,7 @@ export class ScriptRuntime {
           ? {
               name: sprite.palette.name,
               colors: sprite.palette.colors.map((color) => colorToHex(color, true)),
+              roles: sprite.palette.roles ?? {},
             }
           : null;
       case 'getPixel': {
@@ -566,6 +567,16 @@ export class ScriptRuntime {
         colors: sprite.palette.colors.map((color) => colorToHex(color, true)),
       },
       paletteLocked: sprite.paletteLocked === true,
+      rig: sprite.rig
+        ? {
+            restFrameId: sprite.rig.restFrameId,
+            parts: sprite.rig.parts.map((part) => ({ ...part, layerIds: [...part.layerIds], pivot: { ...part.pivot } })),
+            poses: sprite.rig.poses.map((pose) => ({ ...pose })),
+            tweens: sprite.rig.tweens.map((tween) => ({ ...tween })),
+            anchorCount: sprite.rig.anchors.length,
+            hitboxCount: sprite.rig.hitboxes.length,
+          }
+        : null,
       tileset: sprite.tileset
         ? {
             id: sprite.tileset.id,

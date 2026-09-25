@@ -32,6 +32,26 @@ const tagRefSchema = z
   .union([z.string(), z.number().int()])
   .describe('Tag ID, tag name, or 0-based index.');
 
+/**
+ * Detach a layer from every rig part that owns it.
+ *
+ * A part with no layers left is legal: it simply stops contributing pixels, which is
+ * what deleting one of a part's material layers should mean. The alternative - leaving
+ * the dangling ID behind - would make the next save write a `.pixel` that refuses to
+ * open, so this must run in every command that deletes a layer.
+ */
+function detachLayerFromRig(sprite: Sprite, layerId: string): string[] {
+  const rig = sprite.rig;
+  if (!rig) return [];
+  const detached: string[] = [];
+  for (const part of rig.parts) {
+    if (!part.layerIds.includes(layerId)) continue;
+    part.layerIds = part.layerIds.filter((id) => id !== layerId);
+    detached.push(part.name);
+  }
+  return detached;
+}
+
 const frameRangeSchema = z
   .object({
     from: z.number().int().min(0).describe('First frame index, inclusive.'),
@@ -85,7 +105,13 @@ export const removeLayerCommand = defineCommand({
     const index = findLayerIndex(ctx.sprite, layer.id);
     ctx.sprite.layers.splice(index, 1);
     for (const frame of ctx.sprite.frames) frame.cels.delete(layer.id);
-    return { removed: layer.id, name: layer.name, index };
+    const detachedFromParts = detachLayerFromRig(ctx.sprite, layer.id);
+    return {
+      removed: layer.id,
+      name: layer.name,
+      index,
+      ...(detachedFromParts.length ? { detachedFromParts } : {}),
+    };
   },
 });
 
@@ -181,7 +207,12 @@ export const mergeLayerDownCommand = defineCommand({
       frame.cels.delete(upper.id);
     }
     ctx.sprite.layers.splice(index, 1);
-    return { merged: upper.id, into: lower.id };
+    const detachedFromParts = detachLayerFromRig(ctx.sprite, upper.id);
+    return {
+      merged: upper.id,
+      into: lower.id,
+      ...(detachedFromParts.length ? { detachedFromParts } : {}),
+    };
   },
 });
 
@@ -223,9 +254,22 @@ export const removeFrameCommand = defineCommand({
   apply(ctx, p) {
     if (ctx.sprite.frames.length <= 1) throw new Error('Cannot remove the last remaining frame');
     const frame = resolveFrame(ctx.sprite, p.frame);
+    // Poses are rendered from the rest frame, so deleting it would leave every saved pose
+    // unrenderable. Re-point the rig first rather than writing a file that cannot open.
+    let restFrameReassignedTo: string | undefined;
+    if (ctx.sprite.rig?.restFrameId === frame.id) {
+      const replacement = ctx.sprite.frames.find((candidate) => candidate.id !== frame.id);
+      if (!replacement) throw new Error('Cannot remove the rig rest frame');
+      ctx.sprite.rig.restFrameId = replacement.id;
+      restFrameReassignedTo = replacement.id;
+    }
     const index = ctx.sprite.frames.indexOf(frame);
     ctx.sprite.frames.splice(index, 1);
-    return { removed: frame.id, index };
+    return {
+      removed: frame.id,
+      index,
+      ...(restFrameReassignedTo ? { restFrameReassignedTo } : {}),
+    };
   },
 });
 
@@ -371,6 +415,7 @@ export const setPaletteCommand = defineCommand({
   apply(ctx, p) {
     const palette = ctx.draft.palette();
     palette.colors = p.colors.map((c) => parseColor(c));
+    palette.roles = {};
     if (p.name !== undefined) palette.name = p.name;
     return { paletteId: palette.id, size: palette.colors.length };
   },
@@ -382,6 +427,7 @@ export const setPaletteColorCommand = defineCommand({
   params: z.object({
     index: z.number().int().min(0),
     color: colorSchema,
+    role: z.string().min(1).nullable().optional().describe('Semantic material role, or null to clear it.'),
   }),
   apply(ctx, p) {
     const palette = ctx.draft.palette();
@@ -389,7 +435,12 @@ export const setPaletteColorCommand = defineCommand({
       throw new Error(`Palette index ${p.index} is out of range (size ${palette.colors.length})`);
     }
     palette.colors[p.index] = parseColor(p.color);
-    return { index: p.index, color: palette.colors[p.index] };
+    if (p.role !== undefined) {
+      palette.roles ??= {};
+      if (p.role === null) delete palette.roles[String(p.index)];
+      else palette.roles[String(p.index)] = p.role;
+    }
+    return { index: p.index, color: palette.colors[p.index], role: palette.roles?.[String(p.index)] ?? null };
   },
 });
 
@@ -403,6 +454,20 @@ export const addPaletteColorCommand = defineCommand({
     return { index: palette.colors.length - 1, size: palette.colors.length };
   },
 });
+
+/**
+ * Resolve a palette-material colour.
+ *
+ * Ramp anchors are palette *source material*, not paint, so they must not go through
+ * `resolveColor`: with a locked palette that snaps the requested anchors to the nearest
+ * existing swatches, which silently rebuilds the ramp out of unrelated colours (and, in
+ * `ensure_palette_role`, tags those swatches with the new role). `parseColor` still
+ * understands `pal:N` references, so this stays a superset of the paint behaviour minus
+ * the lock.
+ */
+function resolveMaterialColor(sprite: Sprite, input: z.infer<typeof colorSchema>): ReturnType<typeof parseColor> {
+  return parseColor(input, sprite.palette);
+}
 
 export const addPaletteRampCommand = defineCommand({
   name: 'add_palette_ramp',
@@ -442,11 +507,12 @@ export const addPaletteRampCommand = defineCommand({
       .describe('`append` (default) adds the ramp to the existing palette; `replace` swaps the whole palette for it.'),
     dedupe: z.boolean().optional().describe('Skip colours already present in the palette. Defaults to true.'),
     name: z.string().optional().describe('Optional palette name, applied with either mode.'),
+    role: z.string().min(1).optional().describe('Semantic role assigned to every ramp slot, e.g. skin or leather.'),
   }),
   apply(ctx, p) {
     const palette = ctx.draft.palette();
-    const from = resolveColor(ctx.sprite, p.from);
-    const to = resolveColor(ctx.sprite, p.to);
+    const from = resolveMaterialColor(ctx.sprite, p.from);
+    const to = resolveMaterialColor(ctx.sprite, p.to);
     const ramp = buildHueRamp(from, to, p.steps ?? 5, {
       hueShift: p.hueShift ?? 20,
       shadowHue: p.shadowHue,
@@ -454,25 +520,36 @@ export const addPaletteRampCommand = defineCommand({
       saturationBoost: p.saturationBoost,
     });
     const mode = p.mode ?? 'append';
-    const existing = new Set(palette.colors.map((color) => packColor(color)));
+    const indexByPacked = new Map(palette.colors.map((color, index) => [packColor(color), index]));
+    const paletteIndices: number[] = [];
     let added = 0;
     let skipped = 0;
     if (mode === 'replace') {
       palette.colors = ramp.colors.slice();
+      palette.roles = {};
+      paletteIndices.push(...ramp.colors.map((_, index) => index));
       added = ramp.colors.length;
     } else {
-      for (const color of ramp.colors) {
+      ramp.colors.forEach((color) => {
         const key = packColor(color);
-        if (p.dedupe !== false && existing.has(key)) {
+        const existingIndex = indexByPacked.get(key);
+        if (p.dedupe !== false && existingIndex !== undefined) {
+          paletteIndices.push(existingIndex);
           skipped++;
-          continue;
+          return;
         }
+        const index = palette.colors.length;
         palette.colors.push(color);
-        existing.add(key);
+        indexByPacked.set(key, index);
+        paletteIndices.push(index);
         added++;
-      }
+      });
     }
     if (p.name !== undefined) palette.name = p.name;
+    if (p.role) {
+      palette.roles ??= {};
+      for (const index of paletteIndices) palette.roles[String(index)] = p.role;
+    }
     return {
       mode,
       from: colorToHex(from),
@@ -482,10 +559,78 @@ export const addPaletteRampCommand = defineCommand({
       skipped,
       size: palette.colors.length,
       colors: ramp.hex,
+      paletteIndices,
+      role: p.role ?? null,
       hue: ramp.hue,
     };
   },
 });
+
+export const ensurePaletteRoleCommand = defineCommand({
+  name: 'ensure_palette_role',
+  description:
+    'Ensure a semantic palette role exists by appending only missing colours, then tag every matching slot. Pass explicit colours or a hue-shifted dark/light ramp.',
+  params: z.object({
+    role: z.string().min(1).describe('Material/semantic role such as skin, leather, metal or outline.'),
+    colors: z.array(colorSchema).min(2).optional().describe('Exact role colours. Missing colours are appended.'),
+    from: colorSchema.optional().describe('Ramp dark anchor. Requires to and steps.'),
+    to: colorSchema.optional().describe('Ramp light anchor.'),
+    steps: z.number().int().min(2).max(32).optional(),
+    hueShift: z.number().min(0).max(90).optional(),
+    shadowHue: z.number().min(0).max(360).optional(),
+    highlightHue: z.number().min(0).max(360).optional(),
+    saturationBoost: z.number().min(-0.5).max(0.5).optional(),
+  }),
+  apply(ctx, p) {
+    if (!p.colors && (p.from === undefined || p.to === undefined)) {
+      throw new Error('Provide colors or both ramp from/to anchors.');
+    }
+    const palette = ctx.draft.palette();
+    const desired = p.colors
+      ? p.colors.map((color) => resolveMaterialColor(ctx.sprite, color))
+      : buildHueRamp(
+          resolveMaterialColor(ctx.sprite, p.from!),
+          resolveMaterialColor(ctx.sprite, p.to!),
+          p.steps ?? 5,
+          {
+            hueShift: p.hueShift ?? 20,
+            shadowHue: p.shadowHue,
+            highlightHue: p.highlightHue,
+            saturationBoost: p.saturationBoost,
+          },
+        ).colors;
+    const indexByPacked = new Map(palette.colors.map((color, index) => [packColor(color), index]));
+    const indices: number[] = [];
+    const added: string[] = [];
+    for (const color of desired) {
+      const key = packColor(color);
+      let index = indexByPacked.get(key);
+      if (index === undefined) {
+        index = palette.colors.length;
+        palette.colors.push(color);
+        indexByPacked.set(key, index);
+        added.push(colorToHex(color, true));
+      }
+      indices.push(index);
+    }
+    palette.roles ??= {};
+    for (const index of indices) palette.roles[String(index)] = p.role;
+    return { role: p.role, indices, added, size: palette.colors.length };
+  },
+});
+
+function remapPaletteRoles(
+  roles: Record<string, string> | undefined,
+  indexMap: Record<string, number | null>,
+): Record<string, string> | undefined {
+  if (!roles) return undefined;
+  const next: Record<string, string> = {};
+  for (const [oldIndex, role] of Object.entries(roles)) {
+    const mapped = indexMap[oldIndex];
+    if (mapped !== null && mapped !== undefined) next[String(mapped)] = role;
+  }
+  return next;
+}
 
 export const removePaletteColorCommand = defineCommand({
   name: 'remove_palette_color',
@@ -498,6 +643,13 @@ export const removePaletteColorCommand = defineCommand({
       throw new Error(`Palette index ${p.index} is out of range (size ${palette.colors.length})`);
     }
     const [removed] = palette.colors.splice(p.index, 1);
+    const indexMap: Record<string, number | null> = {};
+    palette.colors.forEach((_, index) => {
+      indexMap[String(index < p.index ? index : index + 1)] = index;
+    });
+    indexMap[String(p.index)] = null;
+    const roles = remapPaletteRoles(palette.roles, indexMap);
+    if (roles) palette.roles = roles;
     return { index: p.index, removed };
   },
 });
@@ -579,6 +731,8 @@ export const prunePaletteCommand = defineCommand({
     if (!dryRun && candidates.length > 0) {
       const remove = new Set(candidates.map((candidate) => candidate.index));
       palette.colors = palette.colors.filter((_, index) => !remove.has(index));
+      const roles = remapPaletteRoles(palette.roles, indexMap);
+      if (roles) palette.roles = roles;
     }
 
     return {

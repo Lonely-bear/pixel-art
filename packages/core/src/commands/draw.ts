@@ -4,6 +4,7 @@ import { resolveDitherLevel, type DitherPattern } from '../dither.js';
 import { base64ByteLength, decodeBase64 } from '../binary.js';
 import { clipRect, fullRect } from '../geometry.js';
 import { frameMask, compositeFrame } from '../render.js';
+import { resolveFrame } from '../document.js';
 import {
   antialias,
   clearRegion,
@@ -652,6 +653,59 @@ export const replaceColorCommand = defineCommand({
       mask: clipMask(ctx, p.clip, p.layer, p.frame),
     });
     return { painted, ...clipWarning(ctx, p.clip, p.layer) };
+  },
+});
+
+const recolorFrameSelectorSchema = z
+  .union([z.literal('all'), z.object({ from: z.number().int().min(0), to: z.number().int().min(0) }).strict(), z.array(frameRefSchema).min(1)])
+  .describe('All frames, an inclusive index range, or explicit frame references.');
+
+export const replaceColorsCommand = defineCommand({
+  name: 'replace_colors',
+  description:
+    'Replace a colour across many cels in one command. Unlike single-cel replace_color, this can update the whole document, one frame, a range, or an explicit frame list, optionally restricted to one layer.',
+  params: z.object({
+    from: colorSchema,
+    to: nullableColorSchema.describe('Replacement colour, or null to erase.'),
+    frames: recolorFrameSelectorSchema.optional().describe('Defaults to every frame.'),
+    layer: layerRefSchema.optional().describe('Restrict to one layer. Omit to include every layer.'),
+    rect: rectSchema.optional().describe('Pixel region to limit the replacement.'),
+    tolerance: z.number().min(0).max(255).optional(),
+    ...blendOptionsShape,
+  }),
+  apply(ctx, p) {
+    const from = resolveColor(ctx.sprite, p.from);
+    const to = resolveColor(ctx.sprite, p.to);
+    let frameIndexes = ctx.sprite.frames.map((_, index) => index);
+    if (p.frames !== undefined && p.frames !== 'all') {
+      if (Array.isArray(p.frames)) {
+        frameIndexes = p.frames.map((ref) => ctx.sprite.frames.findIndex((frame) => frame.id === resolveFrame(ctx.sprite, ref).id));
+      } else {
+        const fromIndex = Math.min(p.frames.from, p.frames.to);
+        const toIndex = Math.max(p.frames.from, p.frames.to);
+        if (toIndex >= ctx.sprite.frames.length) throw new Error(`Frame range ${p.frames.from}-${p.frames.to} exceeds frame count.`);
+        frameIndexes = Array.from({ length: toIndex - fromIndex + 1 }, (_, offset) => fromIndex + offset);
+      }
+    }
+    const layerId = p.layer === undefined ? null : layerIdOf(ctx.sprite, p.layer);
+    let painted = 0;
+    let cels = 0;
+    for (const frameIndex of frameIndexes) {
+      const frame = ctx.sprite.frames[frameIndex];
+      if (!frame) throw new Error(`Unknown frame index: ${frameIndex}`);
+      for (const [candidateLayerId, source] of frame.cels) {
+        if (layerId !== null && candidateLayerId !== layerId) continue;
+        const buffer = ctx.draft.cel(candidateLayerId, frame.id)!;
+        painted += replaceColor(buffer, from, to, {
+          rect: p.rect,
+          tolerance: p.tolerance,
+          blend: p.blend,
+          opacity: p.opacity,
+        });
+        cels++;
+      }
+    }
+    return { painted, cels, frameCount: frameIndexes.length, from, to };
   },
 });
 

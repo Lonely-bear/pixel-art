@@ -69,12 +69,12 @@ Read ${SKILL_URI} (or call \`read_skill\`) for the full craft guide. Keep the to
 
 Workflow:
 1. If a document is already open and has a finished base frame, use it. Otherwise draw the first frame first - follow the \`draw_sprite\` prompt - and only animate once frame 0 looks right.
-2. Use \`duplicate_frame\` to create each new frame from the previous one, then change ONE thing per frame. Never redraw the whole sprite: for a bounce, move the whole silhouette with \`copy_region\`; for a limb, redraw just that limb.
+2. Use \`duplicate_frame\` or a persistent rig. For a reusable limb/weapon, create stable part pivots with \`create_rig\`, save named poses, preview with \`preview_pose\`, and only bake into explicit frames. For a simple whole-body motion, duplicate and change one thing.
 3. Keep everything that should not move identical between frames.
-4. Set frame durations with \`update_frame\` (100-150 ms baseline; a run cycle is faster than a walk).
-5. Add an animation tag with \`add_tag\` covering all frames, direction "${dir}", so the engine knows the loop.
+4. Batch frame durations with \`set_frame_durations\` (100-150 ms baseline).
+5. Create/update the animation tag with \`upsert_tags\`, direction "${dir}".
 6. Batch final timing with \`set_frame_durations\` and tags with \`upsert_tags\`, then call \`preview_animation {tag, onion: {before: 1, after: 1}}\`. Inspect that playback-ordered contact sheet and check the loop: the last frame must lead back into the first without a jump.
-7. Export with \`export_sheet\` using \`layout: "grid"\`, \`padding: 1\` and a power-of-two column count.
+7. Run \`quality_report {assetType: "character", tag}\`, then finish with one \`finalize_document\` plan containing source, grid sheet, GIF, contact sheet and a hashed manifest.
 
 Read ${SKILL_URI} (or call \`read_skill\`) for the craft guide - section 7 covers animation.`);
     },

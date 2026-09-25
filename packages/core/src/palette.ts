@@ -15,6 +15,8 @@ export interface Palette {
   id: string;
   name: string;
   colors: Color[];
+  /** Optional semantic role by decimal palette index, e.g. `"3": "skin"`. */
+  roles?: Record<string, string>;
 }
 
 /** DawnBringer 16 — a widely used, well-balanced 16-colour pixel art ramp. */

@@ -93,6 +93,66 @@ export interface MapObject {
   properties: Record<string, MapPropertyValue>;
 }
 
+export interface PartTransform {
+  dx?: number;
+  dy?: number;
+  rotationDegrees?: number;
+  scaleX?: number;
+  scaleY?: number;
+}
+
+export interface RigPart {
+  id: string;
+  name: string;
+  layerIds: string[];
+  parentId?: string;
+  /** Rest-pose pivot in canvas coordinates. */
+  pivot: { x: number; y: number };
+}
+
+export interface RigPose {
+  id: string;
+  name: string;
+  transforms: Record<string, PartTransform>;
+}
+
+export interface RigTween {
+  id: string;
+  name: string;
+  fromPoseId: string;
+  toPoseId: string;
+  durationMs: number;
+  easing: 'linear' | 'step' | 'ease-in' | 'ease-out' | 'ease-in-out';
+}
+
+export interface RigAnchor {
+  id: string;
+  name: string;
+  partId?: string;
+  x: number;
+  y: number;
+}
+
+export interface RigHitbox {
+  id: string;
+  name: string;
+  partId?: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotationDegrees?: number;
+}
+
+export interface SpriteRig {
+  restFrameId: FrameId;
+  parts: RigPart[];
+  poses: RigPose[];
+  tweens: RigTween[];
+  anchors: RigAnchor[];
+  hitboxes: RigHitbox[];
+}
+
 export interface Sprite {
   id: SpriteId;
   name: string;
@@ -102,6 +162,7 @@ export interface Sprite {
   layers: Layer[];
   frames: Frame[];
   tags: AnimationTag[];
+  rig?: SpriteRig;
   palette: Palette;
   /**
    * When true, every colour written through a command is snapped to the nearest
@@ -256,7 +317,28 @@ export function cloneSpriteStructure(sprite: Sprite): Sprite {
     layers: sprite.layers.map((l) => ({ ...l })),
     frames: sprite.frames.map((f) => ({ ...f, cels: new Map(f.cels) })),
     tags: sprite.tags.map((t) => ({ ...t })),
-    palette: { ...sprite.palette, colors: sprite.palette.colors.slice() },
+    ...(sprite.rig
+      ? {
+          rig: {
+            ...sprite.rig,
+            parts: sprite.rig.parts.map((part) => ({ ...part, layerIds: [...part.layerIds], pivot: { ...part.pivot } })),
+            poses: sprite.rig.poses.map((pose) => ({
+              ...pose,
+              transforms: Object.fromEntries(
+                Object.entries(pose.transforms).map(([partId, transform]) => [partId, { ...transform }]),
+              ),
+            })),
+            tweens: sprite.rig.tweens.map((tween) => ({ ...tween })),
+            anchors: sprite.rig.anchors.map((anchor) => ({ ...anchor })),
+            hitboxes: sprite.rig.hitboxes.map((hitbox) => ({ ...hitbox })),
+          },
+        }
+      : {}),
+    palette: {
+      ...sprite.palette,
+      colors: sprite.palette.colors.slice(),
+      ...(sprite.palette.roles ? { roles: { ...sprite.palette.roles } } : {}),
+    },
     tilemaps: sprite.tilemaps?.map((t) => ({ ...t, data: t.data })),
     tileset: sprite.tileset
       ? {

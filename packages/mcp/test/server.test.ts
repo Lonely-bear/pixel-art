@@ -82,6 +82,16 @@ describe('tool surface', () => {
     expect(names).toContain('scatter');
     expect(names).toContain('finalize_document');
     expect(names).toContain('preview_animation');
+    expect(names).toContain('preview_pose');
+    expect(names).toContain('create_sprite_spec');
+    expect(names).toContain('create_rig');
+    expect(names).toContain('bake_pose');
+    expect(names).toContain('transform_cel');
+    expect(names).toContain('transform_part');
+    expect(names).toContain('replace_colors');
+    expect(names).toContain('ensure_palette_role');
+    expect(names).toContain('describe_command');
+    expect(names).toContain('find_workflow');
     expect(names).toContain('set_frame_durations');
     expect(names).toContain('upsert_tags');
     expect(names).toContain('prune_palette');
@@ -183,6 +193,21 @@ describe('tool surface', () => {
 
     const allSessions = payload((await client.callTool({ name: 'list_commands', arguments: {} })) as ToolResult);
     expect((allSessions.sessionTools as Array<{ name: string }>).map((tool) => tool.name)).toContain('apply_ops');
+  });
+
+  it('describes one command exactly and finds task-level workflows', async () => {
+    const described = payload((await client.callTool({
+      name: 'describe_command',
+      arguments: { name: 'bake_pose' },
+    })) as ToolResult);
+    expect((described.command as { name: string; readOnly: boolean }).name).toBe('bake_pose');
+    expect((described.command as { readOnly: boolean }).readOnly).toBe(false);
+
+    const workflow = payload((await client.callTool({
+      name: 'find_workflow',
+      arguments: { goal: 'create a character attack animation and export it' },
+    })) as ToolResult);
+    expect((workflow.workflows as Array<{ id: string }>)[0].id).toBe('character-animation');
   });
 
   it('documents the landscape primitives well enough to call without reading the source', async () => {
@@ -983,6 +1008,69 @@ describe('quality and softness tools', () => {
     expect(invalid.isError).toBe(true);
     expect(firstText(invalid)).toMatch(/base64|validation/i);
   });
+
+  it('supports character animation diagnostics and intentional detail regions', async () => {
+    await client.callTool({ name: 'create_document', arguments: { width: 8, height: 8, layers: ['base'], frames: 3 } });
+    await client.callTool({ name: 'draw_pixels', arguments: { frame: 0, pixels: [{ x: 0, y: 0, color: '#ff0000' }] } });
+    await client.callTool({ name: 'draw_pixels', arguments: { frame: 1, pixels: [{ x: 3, y: 3, color: '#00ff00' }] } });
+    await client.callTool({ name: 'draw_pixels', arguments: { frame: 2, pixels: [{ x: 6, y: 6, color: '#0000ff' }] } });
+
+    const raw = payload((await client.callTool({ name: 'quality_report', arguments: {} })) as ToolResult);
+    expect((raw.noise as { isolated: number }).isolated).toBe(1);
+
+    const character = payload((await client.callTool({
+      name: 'quality_report',
+      arguments: {
+        assetType: 'character',
+        intentionalDetailRects: [{ x: 0, y: 0, w: 1, h: 1, kind: 'eye' }],
+      },
+    })) as ToolResult);
+    expect((character.noise as { isolated: number; intentionalPixels: number }).isolated).toBe(0);
+    expect((character.noise as { intentionalPixels: number }).intentionalPixels).toBe(1);
+    expect(character.assetType).toBe('character');
+    expect(character.assetTypeIsLabel).toBe(false);
+    expect((character.animation as { frameCount: number }).frameCount).toBe(3);
+    expect((character.animation as { transitions: unknown[] }).transitions).toHaveLength(2);
+    expect((character.warnings as Array<{ code: string }>).some((warning) => warning.code.startsWith('landscape_'))).toBe(false);
+  });
+
+  it('infers the asset type under auto and labels the non-analysing modes honestly', async () => {
+    await client.callTool({ name: 'create_document', arguments: { width: 8, height: 8, layers: ['base'] } });
+    await client.callTool({ name: 'draw_rect', arguments: { rect: { x: 1, y: 1, w: 4, h: 4 }, color: '#00ff00', fill: true } });
+
+    const singleFrame = payload((await client.callTool({ name: 'quality_report', arguments: { assetType: 'auto' } })) as ToolResult);
+    expect(singleFrame.assetType).toBe('raster');
+    expect(singleFrame.assetTypeRequested).toBe('auto');
+    expect(singleFrame.animation).toBeUndefined();
+
+    const labelled = payload((await client.callTool({ name: 'quality_report', arguments: { assetType: 'prop' } })) as ToolResult);
+    expect(labelled.assetType).toBe('prop');
+    // A label-only mode must say so instead of implying a different analysis ran.
+    expect(labelled.assetTypeIsLabel).toBe(true);
+    expect(labelled.animation).toBeUndefined();
+
+    await client.callTool({ name: 'duplicate_frame', arguments: { frame: 0 } });
+    const inferred = payload((await client.callTool({ name: 'quality_report', arguments: { assetType: 'auto' } })) as ToolResult);
+    expect(inferred.assetType).toBe('character');
+    expect((inferred.animation as { frameCount: number }).frameCount).toBe(2);
+  });
+
+  it('raises warnings for the cross-frame defects it measures', async () => {
+    await client.callTool({ name: 'create_document', arguments: { width: 8, height: 8, layers: ['base'], frames: 2 } });
+    // Frame 0 sits in the top-left corner, frame 1 in the bottom-right: a large
+    // centroid drift and a silhouette jump, plus a canvas-edge touch.
+    await client.callTool({ name: 'draw_pixels', arguments: { frame: 0, pixels: [{ x: 0, y: 0, color: '#ff0000' }] } });
+    await client.callTool({ name: 'draw_pixels', arguments: { frame: 1, pixels: [{ x: 7, y: 7, color: '#00ff00' }] } });
+
+    const report = payload((await client.callTool({
+      name: 'quality_report',
+      arguments: { assetType: 'character', maxCentroidDriftWarning: 3 },
+    })) as ToolResult);
+    const codes = (report.animation as { warnings: Array<{ code: string }> }).warnings.map((warning) => warning.code);
+    expect(codes).toContain('character_silhouette_jump');
+    expect(codes).toContain('character_centroid_drift');
+    expect(codes).toContain('character_canvas_clipping');
+  });
 });
 
 describe('resources and prompts', () => {
@@ -1159,6 +1247,25 @@ describe('export', () => {
       { width: 32, height: 32 },
     ]);
     expect((body.document as { dirty: boolean }).dirty).toBe(false);
+  });
+
+  it('skips unchanged source and output files during incremental finalisation', async () => {
+    await client.callTool({ name: 'create_document', arguments: { width: 4, height: 4, layers: ['base'] } });
+    await client.callTool({ name: 'draw_rect', arguments: { rect: { x: 0, y: 0, w: 2, h: 2 }, color: '#ff0000', fill: true } });
+    const source = join(tempDir, 'incremental.pixel');
+    const image = join(tempDir, 'incremental.png');
+    const manifest = join(tempDir, 'incremental.json');
+    const plan = {
+      path: source,
+      outputs: [{ type: 'png', path: image }],
+      manifest: { path: manifest, hashes: true, incremental: true },
+    };
+
+    const first = payload((await client.callTool({ name: 'finalize_document', arguments: plan })) as ToolResult);
+    expect(first.ok).toBe(true);
+    const second = payload((await client.callTool({ name: 'finalize_document', arguments: plan })) as ToolResult);
+    expect(second.skippedFiles).toEqual(expect.arrayContaining([source, image]));
+    expect((second.manifest as { unchanged: boolean }).unchanged).toBe(true);
   });
 
   it('renders a multi-format export plan and manifest in one finalisation call', async () => {
@@ -1374,6 +1481,69 @@ describe('layered and onion previews', () => {
     expect(future.b).toBe(255);
     expect(future.a).toBeGreaterThan(0);
     expect(future.a).toBeLessThan(255);
+  });
+});
+
+describe('character rig workflow', () => {
+  it('creates a declarative rig, previews a pose and bakes it explicitly', async () => {
+    const created = (await client.callTool({
+      name: 'create_sprite_spec',
+      arguments: {
+        name: 'Rig character',
+        width: 8,
+        height: 8,
+        layers: ['body', 'arm'],
+        frames: 2,
+        tags: [{ name: 'idle', from: 0, to: 1, direction: 'pingpong' }],
+        paletteRoles: [{ role: 'skin', colors: ['#ff0000', '#00ff00'] }],
+        rig: {
+          restFrame: 0,
+          parts: [
+            { name: 'body', pivot: { x: 4, y: 4 }, layers: ['body'] },
+            { name: 'arm', pivot: { x: 4, y: 4 }, layers: ['arm'], parent: 'body' },
+          ],
+        },
+      },
+    })) as ToolResult;
+    expect(payload(created).ok).toBe(true);
+    expect((payload(created).rig as { partCount: number }).partCount).toBe(2);
+    expect((payload(created).configured as { tags: { created: unknown[] }; paletteRoles: Array<{ role: string }> }).tags.created).toHaveLength(1);
+    expect((payload(created).configured as { paletteRoles: Array<{ role: string }> }).paletteRoles[0].role).toBe('skin');
+
+    await client.callTool({ name: 'draw_pixels', arguments: { layer: 'arm', frame: 0, pixels: [{ x: 5, y: 4, color: '#ff0000' }] } });
+    const rig = (payload((await client.callTool({ name: 'get_rig', arguments: {} })) as ToolResult).summary as {
+      rig: { parts: Array<{ id: string; name: string }> };
+    }).rig;
+    const arm = rig.parts.find((part) => part.name === 'arm')!;
+    await client.callTool({
+      name: 'save_pose',
+      arguments: { name: 'raised', transforms: { [arm.id]: { rotationDegrees: 90 } } },
+    });
+
+    const preview = (await client.callTool({
+      name: 'preview_pose',
+      arguments: { pose: 'raised', scale: 2 },
+    })) as ToolResult;
+    expect(preview.isError).toBeFalsy();
+    expect(payload(preview).partBounds).toMatchObject({ arm: { x: 4, y: 5, w: 1, h: 1 } });
+    expect(decodedImage(preview).width).toBe(16);
+
+    const baked = (await client.callTool({
+      name: 'bake_pose',
+      arguments: { pose: 'raised', targetFrame: 1 },
+    })) as ToolResult;
+    expect(baked.isError).toBeFalsy();
+    const measured = payload((await client.callTool({
+      name: 'measure_region',
+      arguments: { layer: 'arm', frame: 1 },
+    })) as ToolResult);
+    expect((measured.summary as { bounds: unknown }).bounds).toEqual({ x: 4, y: 5, w: 1, h: 1 });
+    const quality = payload((await client.callTool({
+      name: 'quality_report',
+      arguments: { assetType: 'character' },
+    })) as ToolResult);
+    expect((quality.rig as { partCount: number }).partCount).toBe(2);
+    expect((quality.palette as { documentUsage: { used: number } }).documentUsage.used).toBeGreaterThan(0);
   });
 });
 

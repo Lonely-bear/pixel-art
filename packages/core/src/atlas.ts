@@ -162,6 +162,24 @@ export function toAsepriteJson(
         to: tag.to,
         direction: tag.direction,
       })),
+      ...(sprite.rig
+        ? {
+            rig: {
+              restFrameId: sprite.rig.restFrameId,
+              parts: sprite.rig.parts.map((part) => ({
+                id: part.id,
+                name: part.name,
+                parentId: part.parentId,
+                layerIds: part.layerIds,
+                pivot: part.pivot,
+              })),
+              anchors: sprite.rig.anchors,
+              hitboxes: sprite.rig.hitboxes,
+              poses: sprite.rig.poses,
+              tweens: sprite.rig.tweens,
+            },
+          }
+        : {}),
       layers: sprite.layers.map((layer) => ({
         name: layer.name,
         opacity: Math.round(layer.opacity * 255),
@@ -181,6 +199,16 @@ export function toGenericAtlasJson(sprite: Sprite, atlas: Atlas): Record<string,
     rows: atlas.rows,
     frames: atlas.frames.map((f) => ({ index: f.index, x: f.x, y: f.y, durationMs: f.durationMs })),
     animations: atlas.tags,
+    rig: sprite.rig
+      ? {
+          restFrameId: sprite.rig.restFrameId,
+          parts: sprite.rig.parts,
+          poses: sprite.rig.poses,
+          tweens: sprite.rig.tweens,
+          anchors: sprite.rig.anchors,
+          hitboxes: sprite.rig.hitboxes,
+        }
+      : null,
     palette: sprite.palette.colors.map((c) => ({
       r: c.r,
       g: c.g,

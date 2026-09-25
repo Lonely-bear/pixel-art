@@ -31,6 +31,7 @@ export * from './draft.js';
 export * from './raster.js';
 export * from './tilemap.js';
 export * from './transform.js';
+export * from './rig.js';
 export * from './render.js';
 export * from './png.js';
 export * from './serialize.js';

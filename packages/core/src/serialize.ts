@@ -1,6 +1,6 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { PixelBuffer } from './buffer.js';
-import type { AnimationTag, Layer, MapObject, MapPropertyValue, Sprite, TilemapLayer } from './document.js';
+import type { AnimationTag, Layer, MapObject, MapPropertyValue, Sprite, SpriteRig, TilemapLayer } from './document.js';
 import { createPalette, type Palette } from './palette.js';
 import { decodePNG, encodePNG } from './png.js';
 
@@ -20,7 +20,7 @@ import { decodePNG, encodePNG } from './png.js';
  */
 
 export const PIXEL_FORMAT = 'pixel-art/sprite';
-export const PIXEL_FORMAT_VERSION = 1;
+export const PIXEL_FORMAT_VERSION = 2;
 
 export interface CelIndexEntry {
   layerId: string;
@@ -39,6 +39,7 @@ export interface SpriteManifest {
     layers: Layer[];
     frames: { id: string; durationMs: number }[];
     tags: AnimationTag[];
+    rig?: SpriteRig;
     palette: Palette;
     paletteLocked?: boolean;
   };
@@ -80,7 +81,7 @@ export function serializeSprite(sprite: Sprite): Uint8Array {
 
   const manifest: SpriteManifest = {
     format: PIXEL_FORMAT,
-    version: PIXEL_FORMAT_VERSION,
+    version: sprite.rig ? PIXEL_FORMAT_VERSION : 1,
     sprite: {
       id: sprite.id,
       name: sprite.name,
@@ -89,6 +90,7 @@ export function serializeSprite(sprite: Sprite): Uint8Array {
       layers: sprite.layers,
       frames: sprite.frames.map((f) => ({ id: f.id, durationMs: f.durationMs })),
       tags: sprite.tags,
+      ...(sprite.rig ? { rig: sprite.rig } : {}),
       palette: sprite.palette,
       paletteLocked: sprite.paletteLocked,
     },
@@ -149,6 +151,9 @@ export function deserializeSprite(bytes: Uint8Array): Sprite {
   if (manifest.format !== PIXEL_FORMAT) {
     throw new Error(`Unsupported format: ${manifest.format}`);
   }
+  if (!Number.isInteger(manifest.version) || manifest.version < 1) {
+    throw new Error(`Unsupported .pixel version: ${manifest.version}`);
+  }
   if (manifest.version > PIXEL_FORMAT_VERSION) {
     throw new Error(
       `File was written by a newer version (${manifest.version} > ${PIXEL_FORMAT_VERSION})`,
@@ -179,6 +184,7 @@ export function deserializeSprite(bytes: Uint8Array): Sprite {
     layers: source.layers,
     frames,
     tags: source.tags ?? [],
+    ...(source.rig ? { rig: source.rig } : {}),
     palette: normalizePalette(source.palette),
     paletteLocked: source.paletteLocked ?? false,
     ...(manifest.mapObjects?.length
@@ -238,7 +244,41 @@ export function deserializeSprite(bytes: Uint8Array): Sprite {
       .filter((t): t is TilemapLayer => t !== null);
   }
 
+  validateStoredRig(sprite);
   return sprite;
+}
+
+function validateStoredRig(sprite: Sprite): void {
+  const rig = sprite.rig;
+  if (!rig) return;
+  if (!sprite.frames.some((frame) => frame.id === rig.restFrameId)) throw new Error(`Rig rest frame not found: ${rig.restFrameId}`);
+  const layerIds = new Set(sprite.layers.map((layer) => layer.id));
+  const partIds = new Set<string>();
+  const partNames = new Set<string>();
+  for (const part of rig.parts) {
+    if (partIds.has(part.id) || partNames.has(part.name)) throw new Error(`Invalid rig part identity: ${part.name}`);
+    partIds.add(part.id);
+    partNames.add(part.name);
+    for (const layerId of part.layerIds) {
+      if (!layerIds.has(layerId)) throw new Error(`Rig part ${part.name} references missing layer ${layerId}.`);
+    }
+  }
+  for (const part of rig.parts) {
+    if (part.parentId && !partIds.has(part.parentId)) throw new Error(`Rig part ${part.name} has missing parent ${part.parentId}.`);
+  }
+  const poseIds = new Set<string>();
+  for (const pose of rig.poses) {
+    if (poseIds.has(pose.id)) throw new Error(`Duplicate rig pose id: ${pose.id}`);
+    poseIds.add(pose.id);
+    for (const partId of Object.keys(pose.transforms)) {
+      if (!partIds.has(partId)) throw new Error(`Pose ${pose.name} references missing part ${partId}.`);
+    }
+  }
+  for (const tween of rig.tweens) {
+    if (!poseIds.has(tween.fromPoseId) || !poseIds.has(tween.toPoseId)) {
+      throw new Error(`Tween ${tween.name} references a missing pose.`);
+    }
+  }
 }
 
 function normalizePalette(palette: Palette | undefined): Palette {
@@ -252,5 +292,6 @@ function normalizePalette(palette: Palette | undefined): Palette {
       b: c.b,
       a: c.a === undefined ? 255 : c.a,
     })),
+    ...(palette.roles ? { roles: { ...palette.roles } } : {}),
   };
 }

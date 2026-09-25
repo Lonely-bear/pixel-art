@@ -176,6 +176,7 @@ const en = {
   'command.draw_pixels': 'Draw pixels',
   'command.fill': 'Flood fill',
   'command.replace_color': 'Replace colour',
+  'command.replace_colors': 'Replace colour across frames',
   'command.add_layer': 'Add layer',
   'command.remove_layer': 'Remove layer',
   'command.update_layer': 'Update layer',
@@ -191,6 +192,7 @@ const en = {
   'command.add_palette_color': 'Add palette colour',
   'command.remove_palette_color': 'Remove palette colour',
   'command.prune_palette': 'Prune unused palette colours',
+  'command.ensure_palette_role': 'Ensure palette role',
   'command.quantize_to_palette': 'Quantize to palette',
   'command.add_tag': 'Add animation tag',
   'command.remove_tag': 'Remove animation tag',
@@ -214,6 +216,10 @@ const en = {
   'command.get_map_objects': 'Get map objects',
   'command.translate': 'Move artwork',
   'command.squash': 'Transform artwork',
+  'command.transform_cel': 'Transform layer/frame',
+  'command.create_rig': 'Create character rig',
+  'command.bake_pose': 'Bake character pose',
+  'command.tween_pose': 'Bake pose tween',
 } as const;
 
 export type TranslationKey = keyof typeof en;
@@ -383,6 +389,7 @@ const zh: Record<TranslationKey, string> = {
   'command.draw_pixels': '绘制像素',
   'command.fill': '填充区域',
   'command.replace_color': '替换颜色',
+  'command.replace_colors': '跨帧替换颜色',
   'command.add_layer': '新建图层',
   'command.remove_layer': '删除图层',
   'command.update_layer': '更新图层',
@@ -398,6 +405,7 @@ const zh: Record<TranslationKey, string> = {
   'command.add_palette_color': '添加调色板颜色',
   'command.remove_palette_color': '删除调色板颜色',
   'command.prune_palette': '清理未使用调色板颜色',
+  'command.ensure_palette_role': '确保调色板角色',
   'command.quantize_to_palette': '量化到调色板',
   'command.add_tag': '添加动画标签',
   'command.remove_tag': '删除动画标签',
@@ -421,6 +429,10 @@ const zh: Record<TranslationKey, string> = {
   'command.get_map_objects': '读取地图对象',
   'command.translate': '移动画作',
   'command.squash': '变换画作',
+  'command.transform_cel': '变换图层/帧',
+  'command.create_rig': '创建角色绑定',
+  'command.bake_pose': '烘焙角色姿态',
+  'command.tween_pose': '烘焙姿态补间',
 };
 
 const messages: Record<AppLocale, Record<TranslationKey, string>> = {

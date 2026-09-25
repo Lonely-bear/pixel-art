@@ -10,6 +10,7 @@ export * from './draw.js';
 export * from './generative.js';
 export * from './structure.js';
 export * from './transform.js';
+export * from './rig.js';
 export * from './map.js';
 export * from './tilemap.js';
 
@@ -31,6 +32,7 @@ import {
   measureRegionCommand,
   outlineCommand,
   replaceColorCommand,
+  replaceColorsCommand,
 } from './draw.js';
 import {
   addFrameCommand,
@@ -40,6 +42,7 @@ import {
   addTagCommand,
   duplicateFrameCommand,
   duplicateLayerCommand,
+  ensurePaletteRoleCommand,
   getLayerCommand,
   mergeLayerDownCommand,
   prunePaletteCommand,
@@ -68,9 +71,11 @@ import {
   mirrorCommand,
   scaleSpriteCommand,
   squashCommand,
+  transformCelCommand,
   translateCommand,
 } from './transform.js';
 import { mapCommands } from './map.js';
+import { rigCommands } from './rig.js';
 import { tilemapCommands } from './tilemap.js';
 
 /**
@@ -96,6 +101,7 @@ export const allCommands: Command[] = [
   antialiasCommand,
   despeckleCommand,
   replaceColorCommand,
+  replaceColorsCommand,
   clearRegionCommand,
   copyRegionCommand,
   measureRegionCommand,
@@ -122,6 +128,7 @@ export const allCommands: Command[] = [
   setPaletteColorCommand,
   addPaletteColorCommand,
   addPaletteRampCommand,
+  ensurePaletteRoleCommand,
   removePaletteColorCommand,
   prunePaletteCommand,
   quantizeToPaletteCommand,
@@ -137,6 +144,9 @@ export const allCommands: Command[] = [
   // Per-cel motion
   translateCommand,
   squashCommand,
+  transformCelCommand,
+  // Character rigs, poses, anchors and tween baking
+  ...rigCommands,
   // Tilemaps, gameplay metadata and auto-tiling
   ...tilemapCommands,
   ...mapCommands,

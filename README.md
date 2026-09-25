@@ -204,15 +204,18 @@ The tool catalog is generated from the same Zod schemas used to validate command
 | --- | --- |
 | `get_preview` | Returns an actual PNG for one frame or all frames, optionally cropped, zoomed, layer-isolated, or onion-skinned. |
 | `preview_animation` | Renders a timeline or tag-expanded playback contact sheet with sequence-aware onion skin. |
+| `preview_pose` | Renders a rig pose/tween and resolves anchor and hitbox world geometry. |
+| `create_sprite_spec` | Creates layers, frames, tags, palette roles and an optional rig from one declarative scaffold. |
 | `preview_tilemap` | Renders an unbaked map with optional tile grid, numeric indices, invalid-cell and changed-area overlays. |
 | `apply_ops` | Batches edits, supports atomic rollback, and can return a preview in the same round trip. |
 | `set_frame_durations` / `upsert_tags` | Updates complete animation ranges and multiple tags in one validated command. |
 | `expectedVersion` | Rejects stale writes with a version conflict instead of overwriting newer work. |
 | `clip` | Keeps shading, highlights, and dither bands inside a silhouette or selected layer. |
 | `add_palette_ramp` | Builds hue-shifted material ramps instead of flat interpolation. |
-| `prune_palette` | Finds colours unused by all selected raw cels, with dry-run and index remapping. |
-| `quality_report` | Reports raster defects and composition evidence, or analyses a tilemap's variants, repetition, open edges and connected terrain. |
-| `finalize_document` | Saves the editable source and renders PNG/frame/sheet/GIF/contact outputs plus an optional hashed manifest. |
+| `prune_palette` | Finds colours unused by all selected raw cels, with dry-run, semantic-role remapping and index mapping. |
+| `ensure_palette_role` / `replace_colors` | Maintains material roles and applies one recolour across document/frame/range/list targets. |
+| `quality_report` | Reports raster/landscape/tilemap quality, or character silhouette stability, palette flicker and intentional-detail exemptions. |
+| `finalize_document` | Saves the editable source and renders PNG/frame/sheet/GIF/pose/contact outputs plus an optional hashed, incremental manifest. |
 | `run_script` | Runs a time-limited JavaScript batch as a single undo step, with isolated dry-run and source-relative error diagnostics. |
 | `load_plugin` | Registers plugin commands as live MCP tools. |
 
@@ -235,7 +238,7 @@ The attached GUI and agent then share documents and undo history: an agent edit 
 ## Creation toolkit
 
 - **Drawing** — pencil, eraser, line, rectangle, ellipse, polygon, bucket fill, colour replacement, clipping, and replace-style redraws.
-- **Animation** — frames, bulk durations, batched tags, timeline/playback contact sheets, onion skinning, whole-layer translation, squash/stretch, GIF, and spritesheets.
+- **Animation** — frames, bulk durations, batched tags, persistent character rigs/poses/tweens, pose and playback previews, anchors/hitboxes, onion skinning, arbitrary-angle local transforms, GIF, and spritesheets.
 - **Tilemaps** — tilesets, editable grids, curved weighted terrain brushes, sparse/weighted 16/47 transitions, alpha-edge local baking, grid/index previews, map-aware diagnostics, per-tile gameplay properties, independent map objects, and self-contained Tiled `.tmj` export.
 - **Pixel craft** — hue-shifted ramps, palette locking, safe unused-colour pruning, Bayer and clustered dithering, selective outlines, despeckle, and corner-aware antialiasing.
 - **Landscape diagnostics** — horizon, ridge, waterline, value-plane, light-concentration, and guiding-line evidence for full-bleed scenes.

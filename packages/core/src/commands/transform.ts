@@ -3,6 +3,7 @@ import { PixelBuffer } from '../buffer.js';
 import { getFrame } from '../document.js';
 import { clearRegion } from '../raster.js';
 import { compositeFrame } from '../render.js';
+import { remapRigGeometry, rigCrop, rigFlip, rigRotate, rigScale, rigTranslate } from '../rig.js';
 import {
   crop,
   flipHorizontal,
@@ -12,6 +13,7 @@ import {
   rotate90,
   scaleAbout,
   scaleNearest,
+  transformBufferAbout,
   translate,
 } from '../transform.js';
 import {
@@ -71,9 +73,15 @@ export const flipCommand = defineCommand({
   }),
   apply(ctx, p) {
     const targets = selectCels(ctx, p.layer, p.frame);
+    // A flip moves every pixel, so a whole-canvas flip also moves rig pivots. A scoped
+    // flip only moves some cels and the canvas stays put, so the rig is left alone.
+    const unscoped = p.layer === undefined && p.frame === undefined;
+    const rigRemapped = unscoped
+      ? remapRigGeometry(ctx.sprite, rigFlip(p.axis, ctx.sprite.width, ctx.sprite.height))
+      : false;
     const transform = p.axis === 'horizontal' ? flipHorizontal : flipVertical;
     for (const t of targets) t.frame.cels.set(t.layerId, transform(t.buffer));
-    return { cels: targets.length, axis: p.axis };
+    return { cels: targets.length, axis: p.axis, ...(rigRemapped ? { rigRemapped: true } : {}) };
   },
 });
 
@@ -258,13 +266,19 @@ export const rotateCommand = defineCommand({
       );
     }
     const targets = selectCels(ctx, p.layer, p.frame);
+    // Odd turns on a non-square canvas are already rejected above, so an unscoped turn
+    // always moves every pixel and therefore the whole coordinate system the rig uses.
+    const unscoped = p.layer === undefined && p.frame === undefined;
+    const rigRemapped = unscoped
+      ? remapRigGeometry(ctx.sprite, rigRotate(turns, ctx.sprite.width, ctx.sprite.height))
+      : false;
     for (const t of targets) t.frame.cels.set(t.layerId, rotate90(t.buffer, turns));
     if (turns % 2 === 1) {
       const { width, height } = ctx.sprite;
       ctx.sprite.width = height;
       ctx.sprite.height = width;
     }
-    return { cels: targets.length, turns };
+    return { cels: targets.length, turns, ...(rigRemapped ? { rigRemapped: true } : {}) };
   },
 });
 
@@ -284,12 +298,14 @@ export const resizeCanvasCommand = defineCommand({
     const offsetY = p.offsetY ?? 0;
     ctx.sprite.width = p.width;
     ctx.sprite.height = p.height;
+    // Pivots and anchors live in canvas space, so they travel with the artwork.
+    const rigRemapped = remapRigGeometry(ctx.sprite, rigTranslate(offsetX, offsetY));
     for (const frame of ctx.sprite.frames) {
       for (const [layerId, buffer] of frame.cels) {
         frame.cels.set(layerId, resizeCanvas(buffer, p.width, p.height, offsetX, offsetY));
       }
     }
-    return { previous, width: p.width, height: p.height };
+    return { previous, width: p.width, height: p.height, ...(rigRemapped ? { rigRemapped: true } : {}) };
   },
 });
 
@@ -303,12 +319,14 @@ export const cropCanvasCommand = defineCommand({
     const h = Math.max(1, p.rect.h);
     ctx.sprite.width = w;
     ctx.sprite.height = h;
+    // The crop rect becomes the new origin, so every rig coordinate shifts with it.
+    const rigRemapped = remapRigGeometry(ctx.sprite, rigCrop(p.rect.x, p.rect.y));
     for (const frame of ctx.sprite.frames) {
       for (const [layerId, buffer] of frame.cels) {
         frame.cels.set(layerId, resizeCanvas(buffer, w, h, -p.rect.x, -p.rect.y));
       }
     }
-    return { previous, width: w, height: h, rect: p.rect };
+    return { previous, width: w, height: h, rect: p.rect, ...(rigRemapped ? { rigRemapped: true } : {}) };
   },
 });
 
@@ -322,6 +340,9 @@ export const scaleSpriteCommand = defineCommand({
   apply(ctx, p) {
     if (p.factor > 16) throw new Error('Refusing to scale by more than 16x in one step');
     const previous = { width: ctx.sprite.width, height: ctx.sprite.height };
+    // Pivots scale with the artwork. A hitbox's local rotation would become a shear under
+    // a non-uniform-free scale, so it is dropped rather than silently misreported.
+    const rigRemapped = remapRigGeometry(ctx.sprite, rigScale(p.factor), true);
     for (const frame of ctx.sprite.frames) {
       for (const [layerId, buffer] of frame.cels) {
         frame.cels.set(layerId, scaleNearest(buffer, p.factor));
@@ -329,7 +350,7 @@ export const scaleSpriteCommand = defineCommand({
     }
     ctx.sprite.width = previous.width * p.factor;
     ctx.sprite.height = previous.height * p.factor;
-    return { previous, factor: p.factor, width: ctx.sprite.width, height: ctx.sprite.height };
+    return { previous, factor: p.factor, width: ctx.sprite.width, height: ctx.sprite.height, ...(rigRemapped ? { rigRemapped: true } : {}) };
   },
 });
 
@@ -402,6 +423,73 @@ export const translateCommand = defineCommand({
     const targets = frameCels(ctx, p.layer, p.frame);
     for (const t of targets) t.frame.cels.set(t.layerId, translate(t.buffer, p.dx, p.dy));
     return { cels: targets.length, dx: p.dx, dy: p.dy };
+  },
+});
+
+export const transformCelCommand = defineCommand({
+  name: 'transform_cel',
+  description:
+    'Transform one layer/frame in a fixed canvas with nearest-neighbour affine sampling. Supports arbitrary-angle rotation, translation and scale about an explicit pivot without changing sprite dimensions or creating new colours.',
+  params: z.object({
+    layer: layerOrAllSchema,
+    frame: frameRefSchema,
+    pivot: pointSchema.describe('Fixed canvas-space pivot that stays in place.'),
+    dx: z.number().optional().describe('Horizontal translation in pixels.'),
+    dy: z.number().optional().describe('Vertical translation in pixels.'),
+    rotationDegrees: z.number().optional().describe('Clockwise rotation in degrees.'),
+    scaleX: z.number().positive().max(8).optional().describe('Horizontal scale. Defaults to 1.'),
+    scaleY: z.number().positive().max(8).optional().describe('Vertical scale. Defaults to 1.'),
+  }),
+  apply(ctx, p) {
+    const targets = frameCels(ctx, p.layer, p.frame);
+    if (targets.length === 0) {
+      throw new Error('No cel matched that layer/frame, so there is nothing to transform.');
+    }
+    const transform = {
+      dx: p.dx ?? 0,
+      dy: p.dy ?? 0,
+      rotationDegrees: p.rotationDegrees ?? 0,
+      scaleX: p.scaleX ?? 1,
+      scaleY: p.scaleY ?? 1,
+    };
+    let sourcePixels = 0;
+    let outputPixels = 0;
+    let clippedPixels = 0;
+    for (const target of targets) {
+      const sourceBounds = target.buffer.opaqueBounds();
+      for (let i = 3; i < target.buffer.data.length; i += 4) {
+        if (target.buffer.data[i] > 0) sourcePixels++;
+      }
+      const transformed = transformBufferAbout(target.buffer, p.pivot, transform);
+      for (let i = 3; i < transformed.data.length; i += 4) {
+        if (transformed.data[i] > 0) outputPixels++;
+      }
+      // Clipping means "left the canvas", not "fewer pixels": an arbitrary-angle rotation
+      // legitimately resamples to fewer opaque pixels through gaps, and reporting that as
+      // clipping sends the caller hunting for a defect that is not there.
+      const outputBounds = transformed.opaqueBounds();
+      if (sourceBounds && sourcePixels > 0) {
+        if (outputBounds === null) clippedPixels += sourcePixels;
+        else if (
+          outputBounds.x < 0 ||
+          outputBounds.y < 0 ||
+          outputBounds.x + outputBounds.w > ctx.sprite.width ||
+          outputBounds.y + outputBounds.h > ctx.sprite.height
+        ) {
+          clippedPixels++;
+        }
+      }
+      target.frame.cels.set(target.layerId, transformed);
+    }
+    return {
+      cels: targets.length,
+      pivot: p.pivot,
+      ...transform,
+      sourcePixels,
+      outputPixels,
+      clippedPixels,
+      resamplingLossPixels: Math.max(0, sourcePixels - outputPixels - clippedPixels),
+    };
   },
 });
 

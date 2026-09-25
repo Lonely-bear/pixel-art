@@ -59,9 +59,9 @@ Documents live in this session and are addressed by id; one is active, and every
 tool defaults to it, so most calls need only the arguments they actually change.
 
 Workflow that works:
-1. \`create_document\` returns the complete layer/frame/palette structure, so you can
-   draw immediately. Call \`get_document\` only after \`import_image\`/\`open_document\`
-   or when a structural change means you need a fresh view.
+1. \`create_document\` returns the complete layer/frame/palette structure. Use
+   \`create_sprite_spec\` when a character also needs tags, palette roles and a persistent rig.
+   Call \`find_workflow\` for a multi-step task and \`describe_command\` for one exact schema.
 2. Block the silhouette in one flat colour. For the fast draw→look loop, call
    \`run_script\` or \`apply_ops\` with \`preview: true\` and
    \`previewOptions: {scale: 4}\`; for a completed animation use \`preview_animation\` with
@@ -79,13 +79,12 @@ Workflow that works:
    \`transitions\` for organic edges, and \`preview_tilemap\` with the returned changed
    cells/rect for an immediate grid+index PNG. A mutation's optional \`bake\` redraws only
    changed cells with alpha-over, so an unbaked grid does not need a full rebake to look.
-6. Before finishing, run \`quality_report\` and fix its warnings. Pass \`tilemap\` for an
-   unbaked grid: repeated texture is reported as structure/evidence, not automatically
-   despeckled. For raster art, use \`despeckle\` for isolated pixels, \`antialias\` for harsh
-   edges and less glow for clipped highlights.
-7. Finish with one \`finalize_document\` call that saves the editable \`.pixel\` source
-   and writes the exact PNG exports you need. Use \`export_sheet\` for engines or
-   \`export_gif\` for animation instead when those formats are required.
+6. Before finishing, run \`quality_report\`. Use \`assetType: "character"\` and
+   \`intentionalDetailRects\` for characters, \`tilemap\` for unbaked grids, and
+   \`despeckle\`/\`antialias\` only for defects the report actually identifies.
+7. Finish with one \`finalize_document\` export plan. It writes source, PNG/frame/sheet,
+   GIF, pose and contact outputs; add a hashed manifest and \`incremental: true\` for a
+   reusable asset package.
 
 Conventions: origin is top-left, x right, y **down**, pixels are zero-based.
 Layers are indexed from the **bottom** (index 0 is the bottom layer); refer to

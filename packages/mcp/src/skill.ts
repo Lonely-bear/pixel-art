@@ -251,6 +251,12 @@ render. Break them and no amount of extra shading recovers the result.
 - Check the loop: the last frame should lead back into the first. After tags exist, call
   \`preview_animation {tag, onion: {before: 1, after: 1}}\` so reverse/pingpong neighbours
   follow the actual playback order; do not inspect only individual timeline frames.
+- For a reusable multi-part character, prefer named layer-bound parts with fixed pivots.
+  \`create_rig\` stores the hierarchy; \`save_pose\` stores sparse transforms; \`preview_pose\`
+  and \`preview_animation\` are non-destructive checks. Only \`bake_pose\`/\`tween_pose\` writes
+  pixels, and they require explicit destination frames. \`set_anchor\`/\`set_hitbox\` keep
+  gameplay geometry attached to the same part. Use \`transform_cel\` for a one-off arbitrary
+  angle correction without building a rig.
 
 ## 8. Iterating
 
@@ -328,9 +334,14 @@ render. Break them and no amount of extra shading recovers the result.
   horizon/ridge/waterline candidates, reports each boundary's straightness/regularity,
   and measures whether a bright or coherent vertical/diagonal guiding line crosses the
   lower frame. It is evidence, not a beauty score: read \`landscape.conclusion\` and
-  its warnings alongside the presence half. Before removing slots, use
-  \`prune_palette {dryRun: true}\`; it scans every selected raw cel (including hidden
-  layers) and returns a removal list plus an old-to-new index map.
+  its warnings alongside the presence half. For characters, pass
+  \`assetType: "character"\` to suppress irrelevant landscape/band findings and analyse
+  silhouette jumps, centroid drift, palette flicker and loop closure across frames.
+  Declare eyes, teeth, hair, fabric and weapon highlights as
+  \`intentionalDetailRects\`, not as global texture that weakens real defect checks.
+- Before removing palette slots, use \`prune_palette {dryRun: true}\`; it scans every
+  selected raw cel (including hidden layers), remaps semantic roles, and returns an
+  old-to-new index map.
 - If a high-frequency region is deliberate texture — sparkle, grain, foliage, water
   glitter — pass it as \`textureRects\`. Outliers inside are counted as
   \`noise.texturedOutliers\` and stop raising the noise warning, **and** their bright
@@ -531,8 +542,10 @@ export const SKILL_SUMMARY =
   'and break up repeated shapes. Run quality_report before finalising and read its ' +
   'presence half as well as its defect half - a clean defectScore with a narrow ' +
   'presence.valueRange means the piece was sanded flat, not finished. For animation, batch ' +
-  'durations/tags with set_frame_durations/upsert_tags and review tag order with ' +
-  'preview_animation. Finish with one finalize_document export plan. Read pixel://skill ' +
+  'durations/tags with set_frame_durations/upsert_tags. For reusable character parts, use ' +
+  'a persistent rig plus preview_pose and explicit-frame pose baking; quality_report ' +
+  'assetType:character checks silhouette stability across frames. Finish with one ' +
+  'finalize_document export plan. Read pixel://skill ' +
   'before drawing anything non-trivial.';
 
 /** URI of the scripting/plugin guide resource. */

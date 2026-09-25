@@ -227,9 +227,9 @@ To connect to a running desktop app instead of the standalone server, append
 ### What it exposes
 
 - **A generated tool catalog plus session tools.** Every core command is generated straight from its zod schema, alongside
-  hand-written session and perception tools: `create_document`, `open_document`,
+  hand-written session and perception tools: `create_document`, `create_sprite_spec`, `open_document`,
   `save_document`, `finalize_document`, `import_image` (PNG or Aseprite), `select_document`, `close_document`,
-  `list_documents`, `get_document`, `get_preview`, `preview_animation`, `preview_tilemap`, `get_pixels`, `quality_report`, `get_palette`, `get_history`,
+  `list_documents`, `get_document`, `get_preview`, `preview_pose`, `preview_animation`, `preview_tilemap`, `get_pixels`, `quality_report`, `get_palette`, `get_history`,
   `undo`, `redo`, `apply_ops`, `export_png`, `export_sheet`, `export_tiled`, `export_gif`,
   `list_commands`, `read_skill`, and the scripting tools `run_script`, `load_plugin`,
   `list_plugins`. Loading a plugin registers its commands as real tools on the fly.
@@ -237,8 +237,9 @@ To connect to a running desktop app instead of the standalone server, append
   `undo`/`redo`/`get_history`, `apply_ops`, and the perception/export tools are discoverable
   from one call. Its compact response includes `readOnly`; use exact `name`, parameter-name
   `param`, substring `filter`, and optional `limit` for progressive discovery, then
-  `verbose: true` for full schemas. `undo`/`redo` take `steps` (alias `count`).
-  `create_document` takes `select: false`
+  `verbose: true` for full schemas. `describe_command {name}` returns one exact live
+  schema, while `find_workflow {goal}` searches task-level command sequences. `undo`/`redo`
+  take `steps` (alias `count`). `create_document` takes `select: false`
   to build a scratch document without stealing focus, `select_document` accepts an id or a
   name, and `get_preview` takes `rect` to crop-zoom a detail. Document summaries expose
   both `active` and `activeDocumentId`; an explicit `get_document {document}` reads without
@@ -287,26 +288,35 @@ To connect to a running desktop app instead of the standalone server, append
    of digital 1px stipple.
 6. **`finalize_document` closes the production loop in one call.** It saves the editable
    `.pixel` source and renders a typed output plan: individual PNGs, all-frame PNGs,
-   spritesheet + Aseprite JSON, tag-aware GIF, and timeline/playback contact sheets. Every
-   output is rendered before any file is written. An optional manifest records source version,
-   frame durations, tags, actual output paths/sizes, and SHA-256 hashes. The legacy PNG-only
-   `exports` array remains accepted.
-7. **`quality_report` turns "it feels harsh" into a checklist.** It reports isolated-pixel
-   ratio, colour-outlier ratio, mean edge contrast, clipped-highlight ratio and palette
-   usage, plus a 0–100 `defectScore` (higher means cleaner, not finished) and warnings.
-   The presence half reports value range, depth planes and light concentration; the
-   landscape half reports internal horizon/ridge/waterline candidates and guiding-line
-   evidence. The matching fixes are `despeckle` (remove lone speckles and local outliers)
-   and `antialias` (selectively soften silhouette corners and internal colour steps),
-   both palette-lock aware.
+   spritesheet + Aseprite JSON, tag-aware GIF, pose renders, and timeline/playback contact
+   sheets. Every output is rendered before any file is written. An optional manifest records
+   source version, frame durations, tags, actual output paths/sizes, and SHA-256 hashes;
+   `incremental: true` reuses that manifest to skip unchanged source/output files. The legacy
+   PNG-only `exports` array remains accepted.
+7. **`quality_report` is asset-aware where it matters.** Only `character` changes the
+   analysis: it suppresses full-width-band/landscape findings (a figure is not a horizon)
+   and defaults to all-frame analysis reporting silhouette overlap, centroid drift, palette
+   Jaccard, canvas-edge contact and last-to-first loop closure - each with a real `warning`
+   entry, not just a number. A transition counts as a silhouette jump when overlap falls
+   below `minSilhouetteIouWarning` (default 0.5), which is scale-invariant: a 64x64
+   character moving a limb must not be judged by how much of the whole canvas it touched.
+   `assetType: "auto"` infers character from a rig or multiple frames; every other value is
+   a **label** for the same single-frame diagnostics, echoed back with `assetTypeIsLabel:
+   true` so a caller never mistakes a label for a different analysis.
+   `intentionalDetailRects` exempts eyes, teeth, hair, fabric and weapon highlights from
+   isolated/outlier/edge/highlight checks only; it deliberately does not suppress the
+   light-source probe.
 8. **`add_palette_ramp` builds hue-shifted material ramps.** Give it a dark and a light
    anchor plus a step count, and it generates the intermediate colours in HSL, pulling the
    dark end toward blue/violet and the light end toward amber by `hueShift` degrees
    (default 20). `shadowHue`/`highlightHue` set absolute endpoint hues, `saturationBoost`
    adds mid-ramp richness, and `mode: "replace"` can swap the whole palette for a single
-   coherent ramp. `prune_palette` scans the raw cels in a document/frame/tag scope (including
-   hidden layers), defaults to dry-run, protects explicit `keep` indices, and returns an
-   old-to-new index map before removing genuinely unused slots.
+   coherent ramp. `ensure_palette_role` appends only missing exact/ramp colours and tags their
+   indices as skin/leather/metal/etc.; those roles survive serialization and are remapped by
+   pruning. `replace_colors` applies one safe global swap over all/ranged/listed frames with
+   optional layer/region limits. `prune_palette` scans the raw cels in a document/frame/tag
+   scope (including hidden layers), defaults to dry-run, protects explicit `keep` indices,
+   and returns an old-to-new index map before removing genuinely unused slots.
 9. **Binary and generative primitives avoid per-pixel JSON overhead.** `put_pixels` writes
    a base64 RGBA8888 rectangle in one command, with the script convenience API
    `putPixels(rect, data, options?)`; the core raster API also exposes
@@ -329,12 +339,42 @@ To connect to a running desktop app instead of the standalone server, append
 - `preview_animation` returns one contact-sheet PNG in raw timeline or tag-expanded playback
   order. Its onion neighbours follow that selected sequence, so reverse/pingpong previews show
   the motion the tag actually plays rather than adjacent timeline indices.
-- `translate { layer: "*", dx, dy }` shifts every layer of a frame together and clears the
-  band it vacates. A 3-frame bob used to cost a `copy_region` plus a `clear_region` per
-  layer per frame — 24 operations to say "move it down one".
+- `translate { layer: "*", dx, dy }` shifts every layer of one frame together and clears
+  the vacated band, so a whole-sprite bob remains registered.
 - `squash { layer: "*", scaleX, scaleY, pivot: "bottom" }` scales about a pivot with
   nearest-neighbour sampling, keeping the canvas size so the artwork stays registered.
   `scaleY: 0.9, scaleX: 1.08` is the down beat of a bounce.
+
+### Character rigs, poses and gameplay metadata
+
+- `create_rig` binds named parts to existing layer IDs and a stable rest frame. Pivots and
+  optional parent relationships are persistent metadata; a part may own several material
+  layers but layers cannot be silently claimed by two parts.
+- `save_pose` stores sparse part transforms. `preview_pose` renders a pose or stored tween
+  at any progress and resolves world-space anchors/hitboxes. `bake_pose` (with
+  `apply_pose`/`draw_pose` compatibility aliases) requires an explicit `targetFrame` and
+  refuses to overwrite existing pixels unless requested.
+- `tween_pose` samples two poses into consecutive frames, splitting total duration and
+  appending missing destination frames. `transform_part` is the destructive single-frame
+  counterpart for quick local corrections; `transform_cel` provides fixed-canvas arbitrary
+  angle rotation/translation/scale without requiring a rig.
+- `set_anchor` / `set_hitbox` and their remove commands store engine-facing local geometry.
+  `preview_pose` returns transformed anchor points and hitbox polygons. Aseprite sheet JSON
+  and the generic atlas manifest also carry rig parts, poses, tweens, anchors and hitboxes.
+- **Rig geometry travels with the artwork.** Pivots, anchors and hitboxes are stored in
+  canvas coordinates, so `crop_canvas`, `resize_canvas`, `scale_sprite`, unscoped `flip`
+  and unscoped `rotate` all remap them by the same mapping as the pixels and report
+  `rigRemapped: true`. A scoped flip/rotate leaves the canvas - and therefore the rig -
+  alone. Pose baking refuses to write the rig rest frame, and `transform_part` refuses to
+  rasterise into it, because poses render *from* that frame and overwriting it makes every
+  later render drift. Baking classifies destination layers: part-owned layers are driven
+  by the pose and cleared when it empties them (`clearedPartLayers`), while layers the rig
+  does not own are the destination's own and are left alone (`preservedLayers`).
+- Rig-bearing `.pixel` files use container format v2. Version-1 files remain readable, and
+  rig-free documents continue to write v1 for compatibility.
+- `create_sprite_spec` is a declarative structural scaffold: layers, frames, tags, semantic
+  palette roles and an optional rig in one call. It creates no artwork or art-direction
+  decisions beyond the supplied structure.
 
 ### Tilemaps and auto-tiling
 

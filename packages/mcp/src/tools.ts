@@ -15,7 +15,7 @@
  * concurrency, so a stale agent edit fails loudly instead of clobbering work).
  */
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult, ContentBlock, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
@@ -27,11 +27,16 @@ import {
   compositeFrame,
   compositeWithOnion,
   createEditor,
+  describeCommand,
   describeCommands,
   encodeGIF,
   encodePNG,
   extractRegion,
   fillCommandDefaults,
+  findRigPose,
+  flattenAlpha,
+  findRigTween,
+  interpolatePose,
   requiredCommandArgs,
   frameRefSchema,
   isAseprite,
@@ -44,6 +49,10 @@ import {
   ditherLevelResolution as coreDitherLevelResolution,
   blitTilemap,
   renderTilemap,
+  renderInterpolatedPose,
+  renderPose,
+  requireRig,
+  resolveRigGeometry,
   resolveTilemap,
   scaleAtlas,
   scaleNearest,
@@ -54,6 +63,8 @@ import {
   toAsepriteJson,
   toTiledJson,
   type Command,
+  type RenderedPose,
+  type RigPose,
   type Sprite,
   type TilemapLayer,
 } from '@pixel/core';
@@ -78,6 +89,8 @@ const versionRef = z
   .describe(
     'Optimistic concurrency guard. The edit is rejected with a `version_conflict` error unless the document is exactly at this version. Pass the `version` returned by your last read or write.',
   );
+
+const spritePointSchema = z.object({ x: z.number(), y: z.number() }).strict();
 
 const previewRectSchema = z
   .object({
@@ -210,6 +223,15 @@ const exportOutputSchema = z.discriminatedUnion('type', [
     loop: z.boolean().optional(),
   }).strict(),
   z.object({
+    type: z.literal('pose'),
+    path: z.string(),
+    pose: z.string().optional(),
+    tween: z.string().optional(),
+    progress: z.number().min(0).max(1).optional(),
+    scale: z.number().int().min(1).max(32).optional(),
+    background: previewBackgroundSchema,
+  }).strict(),
+  z.object({
     type: z.literal('contact'),
     path: z.string(),
     tag: z.union([z.string(), z.number().int()]).optional(),
@@ -227,6 +249,7 @@ const exportManifestSchema = z
   .object({
     path: z.string().describe('Destination manifest JSON path.'),
     hashes: z.boolean().optional().describe('Include SHA-256 hashes. Defaults to true.'),
+    incremental: z.boolean().optional().describe('Compare an existing manifest and skip files whose hashes are unchanged.'),
   })
   .strict();
 
@@ -241,12 +264,15 @@ const READ_ONLY_TOOLS = new Set([
   'get_palette',
   'get_history',
   'get_preview',
+  'preview_pose',
   'preview_animation',
   'preview_tilemap',
   'get_pixels',
   'histogram',
   'quality_report',
   'list_commands',
+  'describe_command',
+  'find_workflow',
   'list_documents',
 ]);
 
@@ -263,15 +289,17 @@ const SESSION_TOOLS: Array<{ name: string; description: string }> = [
   { name: 'redo', description: 'Redo undone edit(s).' },
   { name: 'get_history', description: 'Recent commands with labels and summaries.' },
   { name: 'get_preview', description: 'Render the sprite (or a rect) as a PNG to look at.' },
+  { name: 'preview_pose', description: 'Render a rig pose or tween progress as a PNG and resolve anchor/hitbox world geometry.' },
   { name: 'preview_animation', description: 'Render a timeline or tag-expanded playback contact sheet with optional onion skin.' },
   { name: 'preview_tilemap', description: 'Render an unbaked tilemap with optional grid, tile-index and changed-cell overlays.' },
   { name: 'get_pixels', description: 'Exact pixel colours in a small region.' },
   { name: 'histogram', description: 'Per-colour pixel counts and unused palette slots for a region.' },
-  { name: 'quality_report', description: 'Objective defect/presence report with internal landscape structure and fix warnings.' },
+  { name: 'quality_report', description: 'Asset-aware raster report with character animation stability and intentional-detail exemptions.' },
   { name: 'get_document', description: 'Layers, frames, tags, palette.' },
   { name: 'get_palette', description: 'Palette as hex colours with indices.' },
   { name: 'list_documents', description: 'List open documents.' },
   { name: 'create_document', description: 'Create a blank sprite document.' },
+  { name: 'create_sprite_spec', description: 'Create sprite structure, animation tags, palette roles and an optional rig from one declarative spec.' },
   { name: 'open_document', description: 'Load a `.pixel` document.' },
   { name: 'save_document', description: 'Save to a `.pixel` file.' },
   { name: 'finalize_document', description: 'Save the editable source and render PNG/frame/sheet/GIF/contact outputs plus an optional manifest.' },
@@ -288,6 +316,8 @@ const SESSION_TOOLS: Array<{ name: string; description: string }> = [
   { name: 'list_plugins', description: 'List loaded plugins.' },
   { name: 'read_skill', description: 'The pixel-art craft guide.' },
   { name: 'list_commands', description: 'This catalogue.' },
+  { name: 'describe_command', description: 'Return one exact command schema and read-only metadata.' },
+  { name: 'find_workflow', description: 'Find task-level pixel-art workflows and recommended command sequences.' },
 ];
 
 function text(value: string): ContentBlock {
@@ -738,7 +768,21 @@ function describeSprite(sprite: Sprite): Record<string, unknown> {
       direction: t.direction,
       repeat: t.repeat,
     })),
-    palette: { name: sprite.palette.name, size: sprite.palette.colors.length },
+    palette: {
+      name: sprite.palette.name,
+      size: sprite.palette.colors.length,
+      roles: sprite.palette.roles ?? {},
+    },
+    rig: sprite.rig
+      ? {
+          restFrameId: sprite.rig.restFrameId,
+          partCount: sprite.rig.parts.length,
+          poseCount: sprite.rig.poses.length,
+          tweenCount: sprite.rig.tweens.length,
+          anchorCount: sprite.rig.anchors.length,
+          hitboxCount: sprite.rig.hitboxes.length,
+        }
+      : null,
     paletteLocked: sprite.paletteLocked ?? false,
     celCount: sprite.frames.reduce((sum, f) => sum + f.cels.size, 0),
     hasTileset: Boolean(sprite.tileset),
@@ -758,6 +802,65 @@ function describeSprite(sprite: Sprite): Record<string, unknown> {
   };
 }
 
+function documentPaletteUsage(sprite: Sprite): {
+  used: number;
+  unused: number;
+  usedIndices: number[];
+  unusedIndices: number[];
+} | null {
+  // Bound the scan by cels, not frames: the loop below visits every cel of every frame.
+  let cels = 0;
+  for (const frame of sprite.frames) cels += frame.cels.size;
+  if (sprite.width * sprite.height * cels > 16_777_216) return null;
+  const usedKeys = new Set<number>();
+  for (const frame of sprite.frames) {
+    for (const buffer of frame.cels.values()) {
+      for (let i = 0; i < buffer.data.length; i += 4) {
+        if (buffer.data[i + 3] === 0) continue;
+        usedKeys.add(((buffer.data[i] & 255) << 24) | ((buffer.data[i + 1] & 255) << 16) |
+          ((buffer.data[i + 2] & 255) << 8) | (buffer.data[i + 3] & 255));
+      }
+    }
+  }
+  const usedIndices: number[] = [];
+  const unusedIndices: number[] = [];
+  sprite.palette.colors.forEach((color, index) => {
+    const key = ((color.r & 255) << 24) | ((color.g & 255) << 16) | ((color.b & 255) << 8) | (color.a & 255);
+    (usedKeys.has(key) ? usedIndices : unusedIndices).push(index);
+  });
+  return { used: usedIndices.length, unused: unusedIndices.length, usedIndices, unusedIndices };
+}
+
+/**
+ * Asset labels accepted by `quality_report`.
+ *
+ * Only `character` switches the analysis: it suppresses full-width-band and landscape
+ * findings (a character is not a horizon) and turns on the cross-frame stability pass.
+ * The remaining values are labels for the same single-frame raster diagnostics - they
+ * record intent in the report so a later pass can tell a prop apart from a backdrop,
+ * and they make `auto` inference explicit rather than magic.
+ */
+type QualityAssetType = 'raster' | 'character' | 'landscape' | 'prop' | 'tile' | 'auto';
+
+/**
+ * Collapse `auto` into a concrete label and report back what was inferred.
+ *
+ * The inference stays deliberately conservative: a rig or more than one frame means the
+ * caller is dealing with a character, a tilemap being analysed directly means `tile`, and
+ * anything else stays `raster`. Returning the guess matters more than the guess itself -
+ * a wrong automatic label should be visible and correctable, not silently baked in.
+ */
+function resolveQualityAssetType(
+  sprite: Sprite,
+  requested: QualityAssetType | undefined,
+  analysingTilemap: boolean,
+): Exclude<QualityAssetType, 'auto'> {
+  if (requested && requested !== 'auto') return requested;
+  if (analysingTilemap) return 'tile';
+  if (sprite.rig || sprite.frames.length > 1) return 'character';
+  return 'raster';
+}
+
 interface QualityAnalysisOptions {
   rect?: { x: number; y: number; w: number; h: number };
   noiseThreshold?: number;
@@ -775,6 +878,14 @@ interface QualityAnalysisOptions {
    * because high-frequency detail is the point there, not a defect.
    */
   textureRects?: Array<{ x: number; y: number; w: number; h: number }>;
+  assetType?: QualityAssetType;
+  intentionalDetailRects?: Array<{
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    kind?: 'eye' | 'teeth' | 'weapon' | 'hair' | 'fabric' | 'other';
+  }>;
 }
 
 type PixelAt = (x: number, y: number) => { r: number; g: number; b: number; a: number } | null;
@@ -1182,6 +1293,7 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
   const tilemapAnalysis = options.tilemap && sprite.tileset
     ? analyzeTilemapQuality(options.tilemap, sprite.tileset)
     : null;
+  const resolvedAssetType = resolveQualityAssetType(sprite, options.assetType, tilemapAnalysis !== null);
   const frame = options.tilemap ? null : resolveFrame(sprite, frameRef ?? 0);
   let buffer: PixelBuffer;
   if (options.tilemap) {
@@ -1247,21 +1359,25 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
   let isolated = 0;
   let outliers = 0;
   let texturedOutliers = 0;
+  let intentionalPixels = 0;
   let overexposed = 0;
   // textureRects arrive in canvas space; the analysis may run on an extracted rect.
   const textureOffsetX = options.rect?.x ?? 0;
   const textureOffsetY = options.rect?.y ?? 0;
-  const isTextured = (x: number, y: number): boolean => {
-    const tex = options.textureRects;
-    if (!tex || tex.length === 0) return false;
+  const inCanvasRects = (
+    x: number,
+    y: number,
+    rects: Array<{ x: number; y: number; w: number; h: number }> | undefined,
+  ): boolean => {
+    if (!rects || rects.length === 0) return false;
     const cx = x + textureOffsetX;
     const cy = y + textureOffsetY;
-    for (let i = 0; i < tex.length; i++) {
-      const r = tex[i];
-      if (cx >= r.x && cy >= r.y && cx < r.x + r.w && cy < r.y + r.h) return true;
-    }
-    return false;
+    return rects.some((rect) => cx >= rect.x && cy >= rect.y && cx < rect.x + rect.w && cy < rect.y + rect.h);
   };
+  const isTextured = (x: number, y: number): boolean => inCanvasRects(x, y, options.textureRects);
+  const isIntentional = (x: number, y: number): boolean =>
+    inCanvasRects(x, y, options.intentionalDetailRects);
+  const isExemptDetail = (x: number, y: number): boolean => isTextured(x, y) || isIntentional(x, y);
   const offsets: Array<[number, number]> = [
     [0, -1], [1, -1], [1, 0], [1, 1],
     [0, 1], [-1, 1], [-1, 0], [-1, -1],
@@ -1293,7 +1409,9 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
       luminanceSum += luminance;
       luminanceSq += luminance * luminance;
       luminanceCount++;
-      if (luminance > 235) overexposed++;
+      const intentional = isIntentional(x, y);
+      if (intentional) intentionalPixels++;
+      if (luminance > 235 && !intentional) overexposed++;
 
       let neighbours = 0;
       let matching = 0;
@@ -1312,15 +1430,16 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
       for (const [ox, oy] of [[1, 0], [0, 1]] as Array<[number, number]>) {
         const n = at(x + ox, y + oy);
         if (!n || n.a < alphaThreshold) continue;
+        if (intentional && isIntentional(x + ox, y + oy)) continue;
         edgeSum += Math.abs(luminance - (0.2126 * n.r + 0.7152 * n.g + 0.0722 * n.b));
         edgeCount++;
       }
       if (neighbours === 0) {
-        isolated++;
+        if (!intentional) isolated++;
       } else if (matching <= 1) {
         const avg = { r: nr / neighbours, g: ng / neighbours, b: nb / neighbours };
         if (distance(c, avg) > noiseThreshold) {
-          if (isTextured(x, y)) texturedOutliers++;
+          if (isExemptDetail(x, y)) texturedOutliers++;
           else outliers++;
         }
       }
@@ -1342,6 +1461,9 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
   const bands = countHorizontalBands(at, width, height, alphaThreshold, 20, 32);
   const rhythm = analyzeSkylineRhythm(at, width, height, alphaThreshold);
   const landscape = analyzeLandscape(buffer, alphaThreshold);
+  // Only `textureRects` may suppress the light-source probe. `intentionalDetailRects`
+  // is documented as exempting isolated/outlier/edge/overexposed pixels, and letting it
+  // filter bright pixels here would silently flip `hasLightSource` for a whole frame.
   const presence = analyzePresence(at, width, height, alphaThreshold, isTextured);
   const planeMeans = presence.planes.map((p) => p.mean).filter((m) => m >= 0);
   // Depth only exists if adjacent planes differ. Equal means mean the scene has
@@ -1660,6 +1782,19 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
     }
   }
 
+  const characterMode = resolvedAssetType === 'character';
+  // A character is not a horizon: full-width bands, scene rhythm and depth-plane
+  // findings describe a backdrop, not a figure, so they are dropped rather than
+  // reported as if the artist had got the silhouette wrong.
+  const reportedWarnings = characterMode
+    ? warnings.filter((warning) =>
+        warning.code !== 'horizontal_banding' &&
+        warning.code !== 'uniform_rhythm' &&
+        warning.code !== 'flat_depth_planes' &&
+        !warning.code.startsWith('landscape_'),
+      )
+    : warnings;
+
   return {
     source: options.tilemap
       ? {
@@ -1727,15 +1862,243 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
       outlierRatio,
       texturedOutliers,
       textureRects: options.textureRects ?? [],
+      intentionalPixels,
+      intentionalDetailRects: options.intentionalDetailRects ?? [],
       threshold: noiseThreshold,
     },
     overexposedRatio,
+    assetType: resolvedAssetType,
+    assetTypeRequested: options.assetType ?? null,
+    assetTypeIsLabel: resolvedAssetType !== 'character',
     defectScore,
-    defectScoreContext: tilemapMode ? 'tilemap-texture-diagnostic' : 'raster',
+    defectScoreContext: tilemapMode
+      ? 'tilemap-texture-diagnostic'
+      : resolvedAssetType === 'character'
+        ? 'character-raster-diagnostic'
+        : `${resolvedAssetType}-raster-diagnostic`,
     // Kept as a deprecated alias so existing callers do not break on the rename.
     softnessScore: defectScore,
     ...(regions.length > 0 ? { regions } : {}),
+    warnings: reportedWarnings,
+  };
+}
+
+interface AnimationQualityOptions {
+  alphaThreshold?: number;
+  maxChangedRatioWarning?: number;
+  minSilhouetteIouWarning?: number;
+  minPaletteJaccardWarning?: number;
+  maxCentroidDriftWarning?: number;
+}
+
+function analyzeCharacterAnimation(
+  sprite: Sprite,
+  sequence: ReturnType<typeof animationSequence>,
+  options: AnimationQualityOptions = {},
+): Record<string, unknown> {
+  const alphaThreshold = options.alphaThreshold ?? 1;
+  const totalPixels = sprite.width * sprite.height;
+  if (totalPixels * sequence.frames.length > 16_777_216) {
+    throw new Error(`Character animation analysis would inspect ${totalPixels * sequence.frames.length} pixels. Select fewer frames or a smaller canvas.`);
+  }
+  const paletteKeys = sprite.palette.colors.map((color) =>
+    ((color.r & 255) << 24) | ((color.g & 255) << 16) | ((color.b & 255) << 8) | (color.a & 255),
+  );
+  const frames: Array<Record<string, unknown>> = [];
+  const transitions: Array<Record<string, unknown>> = [];
+  const warnings: Array<{ code: string; severity: 'info' | 'warning'; message: string }> = [];
+  let firstMask: Uint8Array | undefined;
+  let firstFrame: Record<string, unknown> | undefined;
+  let previousMask: Uint8Array | undefined;
+  let previousFrame: Record<string, unknown> | undefined;
+
+  for (const entry of sequence.frames) {
+    const buffer = compositeFrame(sprite, entry.frameId);
+    const mask = new Uint8Array(totalPixels);
+    let area = 0;
+    let sumX = 0;
+    let sumY = 0;
+    let minX = sprite.width;
+    let minY = sprite.height;
+    let maxX = -1;
+    let maxY = -1;
+    const usedKeys = new Set<number>();
+    for (let i = 0; i < buffer.data.length; i += 4) {
+      if (buffer.data[i + 3] < alphaThreshold) continue;
+      const pixel = i / 4;
+      const x = pixel % sprite.width;
+      const y = Math.floor(pixel / sprite.width);
+      mask[pixel] = 1;
+      area++;
+      sumX += x;
+      sumY += y;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+      const key = ((buffer.data[i] & 255) << 24) | ((buffer.data[i + 1] & 255) << 16) |
+        ((buffer.data[i + 2] & 255) << 8) | (buffer.data[i + 3] & 255);
+      usedKeys.add(key);
+    }
+    const bounds = area > 0 ? { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 } : null;
+    const frameRecord: Record<string, unknown> = {
+      position: frames.length,
+      index: entry.index,
+      frameId: entry.frameId,
+      durationMs: entry.durationMs,
+      area,
+      bounds,
+      centroid: area > 0 ? { x: sumX / area, y: sumY / area } : null,
+      usedPaletteIndices: paletteKeys.flatMap((key, index) => usedKeys.has(key) ? [index] : []),
+      touchesCanvasEdge: area === 0 || minX === 0 || minY === 0 || maxX === sprite.width - 1 || maxY === sprite.height - 1,
+    };
+    frames.push(frameRecord);
+
+    if (previousMask && previousFrame) {
+      let intersection = 0;
+      let union = 0;
+      let changed = 0;
+      for (let i = 0; i < mask.length; i++) {
+        if (mask[i] && previousMask[i]) intersection++;
+        if (mask[i] || previousMask[i]) union++;
+        if (mask[i] !== previousMask[i]) changed++;
+      }
+      const previousUsed = new Set(previousFrame.usedPaletteIndices as number[]);
+      const currentUsed = new Set(frameRecord.usedPaletteIndices as number[]);
+      const paletteUnion = new Set([...previousUsed, ...currentUsed]);
+      const paletteIntersection = [...currentUsed].filter((index) => previousUsed.has(index)).length;
+      const transition = {
+        from: previousFrame.frameId,
+        to: frameRecord.frameId,
+        changedPixels: changed,
+        changedRatio: changed / Math.max(1, totalPixels),
+        silhouetteIou: union > 0 ? intersection / union : 1,
+        centroidDrift: previousFrame.centroid && frameRecord.centroid
+          ? Math.hypot(
+              (frameRecord.centroid as { x: number; y: number }).x - (previousFrame.centroid as { x: number; y: number }).x,
+              (frameRecord.centroid as { x: number; y: number }).y - (previousFrame.centroid as { x: number; y: number }).y,
+            )
+          : null,
+        paletteJaccard: paletteUnion.size > 0 ? paletteIntersection / paletteUnion.size : 1,
+      };
+      transitions.push(transition);
+      // Judge the silhouette by overlap, not by how much of the whole canvas changed:
+      // a 64x64 character moving a limb changes a few percent of the canvas and would
+      // never trip a canvas-relative threshold, while a small figure that teleports
+      // changes the same percentage as a large one that merely steps.
+      const iouFloor = options.minSilhouetteIouWarning ?? 0.5;
+      if (transition.silhouetteIou < iouFloor || transition.changedRatio > (options.maxChangedRatioWarning ?? 0.65)) {
+        warnings.push({
+          code: 'character_silhouette_jump',
+          severity: 'warning',
+          message: `Frame transition ${previousFrame.frameId} -> ${frameRecord.frameId} has silhouette overlap ${(transition.silhouetteIou * 100).toFixed(1)}% (${(transition.changedRatio * 100).toFixed(1)}% of the canvas changed); inspect for a teleported or disconnected part.`,
+        });
+      }
+      if (transition.paletteJaccard < (options.minPaletteJaccardWarning ?? 0.65)) {
+        warnings.push({ code: 'character_palette_flicker', severity: 'warning', message: `Frame transition ${previousFrame.frameId} -> ${frameRecord.frameId} changes ${(transition.paletteJaccard * 100).toFixed(1)}% of its palette usage; inspect unintended recolouring.` });
+      }
+      const drift = transition.centroidDrift;
+      if (drift !== null && drift > (options.maxCentroidDriftWarning ?? 3)) {
+        warnings.push({ code: 'character_centroid_drift', severity: 'warning', message: `Frame transition ${previousFrame.frameId} -> ${frameRecord.frameId} moves the silhouette centre by ${drift.toFixed(1)}px; a limb moving is fine, the whole body sliding is not.` });
+      }
+    } else {
+      firstMask = mask;
+      firstFrame = frameRecord;
+    }
+    // Edge contact is a property of one frame, not of a transition, so it is checked for
+    // every frame including the first - the rest pose is the one most likely to be cut off.
+    if (frameRecord.touchesCanvasEdge === true) {
+      warnings.push({ code: 'character_canvas_clipping', severity: 'warning', message: `Frame ${frameRecord.frameId} reaches the canvas edge; check whether a weapon or limb is cut off.` });
+    }
+    previousMask = mask;
+    previousFrame = frameRecord;
+  }
+
+  let loopClosure = null;
+  if (firstMask && previousMask && firstFrame && previousFrame && sequence.frames.length > 1) {
+    let changed = 0;
+    for (let i = 0; i < firstMask.length; i++) if (firstMask[i] !== previousMask[i]) changed++;
+    const changedRatio = changed / Math.max(1, totalPixels);
+    const closed = changedRatio <= (options.maxChangedRatioWarning ?? 0.65);
+    loopClosure = {
+      from: previousFrame.frameId,
+      to: firstFrame.frameId,
+      changedPixels: changed,
+      changedRatio,
+      closed,
+      ...(sequence.loops
+        ? null
+        : { note: 'This sequence does not loop, so a last-to-first difference is expected rather than a defect.' }),
+    };
+    // Only a looping sequence can be "not closing"; flagging a one-shot would be noise.
+    if (sequence.loops && !closed) {
+      warnings.push({
+        code: 'character_loop_not_closed',
+        severity: 'warning',
+        message: `The loop does not close: last -> first changes ${(changedRatio * 100).toFixed(1)}% of the canvas.`,
+      });
+    }
+  }
+
+  return {
+    tag: sequence.name,
+    loops: sequence.loops,
+    durationMs: sequence.durationMs,
+    frameCount: frames.length,
+    frames,
+    transitions,
+    loopClosure,
     warnings,
+  };
+}
+
+function analyzeRigQuality(sprite: Sprite): Record<string, unknown> | undefined {
+  const rig = sprite.rig;
+  if (!rig) return undefined;
+  // Every pose is a full-canvas resample of every part, so poses x parts x pixels is the
+  // real cost. Cap it rather than letting a large rig stall a read-only report.
+  const posesToRender = Math.max(1, rig.poses.length);
+  if (sprite.width * sprite.height * Math.max(1, rig.parts.length) * posesToRender > 16_777_216) {
+    return {
+      restFrameId: rig.restFrameId,
+      partCount: rig.parts.length,
+      poseCount: rig.poses.length,
+      anchorCount: rig.anchors.length,
+      hitboxCount: rig.hitboxes.length,
+      poses: [],
+      skipped: `Skipped per-pose bounds for ${posesToRender} poses x ${rig.parts.length} parts at ${sprite.width}x${sprite.height}; use preview_pose on specific poses instead.`,
+    };
+  }
+  const poses = rig.poses.map((pose) => {
+    const rendered = renderPose(sprite, pose);
+    const geometry = resolveRigGeometry(sprite, pose);
+    const outsideAnchors = geometry.anchors.filter((anchor) => {
+      const point = anchor.world as { x: number; y: number };
+      return point.x < 0 || point.y < 0 || point.x > sprite.width || point.y > sprite.height;
+    }).map((anchor) => anchor.name);
+    const outsideHitboxPoints = geometry.hitboxes.flatMap((hitbox) => {
+      const points = hitbox.polygon as Array<{ x: number; y: number }>;
+      return points.some((point) => point.x < 0 || point.y < 0 || point.x > sprite.width || point.y > sprite.height)
+        ? [hitbox.name]
+        : [];
+    });
+    return {
+      pose: pose.name,
+      partBounds: rendered.partBounds,
+      partBoundsById: rendered.partBoundsById,
+      partPixels: rendered.partPixels,
+      clippedParts: rendered.clippedParts,
+      outsideAnchors,
+      outsideHitboxes: outsideHitboxPoints,
+    };
+  });
+  return {
+    restFrameId: rig.restFrameId,
+    partCount: rig.parts.length,
+    poseCount: rig.poses.length,
+    anchorCount: rig.anchors.length,
+    hitboxCount: rig.hitboxes.length,
+    poses,
   };
 }
 
@@ -1897,6 +2260,45 @@ function renderExportOutputs(sprite: Sprite, outputs: ExportOutputSpec[]): Rende
       continue;
     }
 
+    if (output.type === 'pose') {
+      const rig = requireRig(sprite);
+      const progress = output.progress ?? 1;
+      let rendered: RenderedPose;
+      let resolvedPose: RigPose;
+      if (output.tween !== undefined) {
+        const tween = findRigTween(rig, output.tween);
+        const from = findRigPose(rig, tween.fromPoseId);
+        const to = findRigPose(rig, tween.toPoseId);
+        resolvedPose = { id: '__export_tween__', name: tween.name, transforms: interpolatePose(rig, from, to, progress, tween.easing) };
+        rendered = renderInterpolatedPose(sprite, from, to, progress, tween.easing);
+      } else {
+        if (!output.pose) throw new Error('Pose export requires `pose` or `tween`.');
+        const pose = findRigPose(rig, output.pose);
+        resolvedPose = pose;
+        if (progress < 1) {
+          const identity = { id: '__identity__', name: 'identity', transforms: {} };
+          resolvedPose = { id: '__export_pose__', name: pose.name, transforms: interpolatePose(rig, identity, pose, progress) };
+          rendered = renderInterpolatedPose(sprite, identity, pose, progress);
+        } else {
+          rendered = renderPose(sprite, pose);
+        }
+      }
+      const scale = output.scale ?? 1;
+      let image = output.background == null ? rendered.buffer : flattenAlpha(rendered.buffer, output.background);
+      if (scale > 1) image = scaleNearest(image, scale);
+      addPng(output.path, image, 'pose', {
+        pose: resolvedPose.name,
+        tween: output.tween ?? null,
+        progress,
+        partBounds: rendered.partBounds,
+        partBoundsById: rendered.partBoundsById,
+        partPixels: rendered.partPixels,
+        clippedParts: rendered.clippedParts,
+        geometry: resolveRigGeometry(sprite, resolvedPose),
+      });
+      continue;
+    }
+
     const contact = animationPreviewPayload(sprite, {
       tag: output.tag,
       frameOrder: output.frameOrder,
@@ -1933,6 +2335,91 @@ interface RawOp {
  * otherwise a command whose own parameters include `name` (like `add_tag`) would
  * lose it.
  */
+const WORKFLOW_CATALOG = [
+  {
+    id: 'character-animation',
+    title: 'Build and review a multi-part character animation',
+    keywords: ['character', 'animation', 'frames', 'attack', 'arm', 'weapon', 'loop'],
+    steps: [
+      'Create one named layer per durable part and duplicate the rest frame while building poses.',
+      'Create a rig with stable pivots, save named poses, then use preview_pose before baking.',
+      'Use transform_cel or transform_part for local mechanical adjustments; keep art intent explicit.',
+      'Batch final timing with set_frame_durations and create/update tags with upsert_tags.',
+      'Review preview_animation with the tag and onion skin, then finalize source/PNG/GIF/sheet/contact outputs.',
+    ],
+  },
+  {
+    id: 'batch-animation-metadata',
+    title: 'Batch frame durations and animation tags',
+    keywords: ['duration', 'timing', 'tags', 'idle', 'attack', 'pingpong'],
+    steps: [
+      'Call set_frame_durations once with all/range/list/tag updates.',
+      'Call upsert_tags once for creates and updates; fix reported name/range conflicts before retrying.',
+      'Preview the tag in playback order with preview_animation.',
+    ],
+  },
+  {
+    id: 'safe-scripting',
+    title: 'Safely generate or modify many pixels from a script',
+    keywords: ['script', 'dry run', 'transaction', 'error', 'procedural'],
+    steps: [
+      'Prototype with run_script dryRun:true and preview:true.',
+      'Fix errorInfo line/column and command failures, then commit without dryRun.',
+      'Use apply_ops atomic:true for declarative command batches that must fully roll back.',
+    ],
+  },
+  {
+    id: 'palette-maintenance',
+    title: 'Maintain a role-oriented palette',
+    keywords: ['palette', 'ramp', 'unused', 'prune', 'role', 'skin', 'leather'],
+    steps: [
+      'Build coherent ramps with add_palette_ramp role or ensure_palette_role.',
+      'Inspect usage with quality_report/get_palette, then run prune_palette dryRun:true.',
+      'Commit pruning only after checking its old-to-new indexMap and keep list.',
+    ],
+  },
+  {
+    id: 'global-recolor',
+    title: 'Recolour a sprite across frames or layers',
+    keywords: ['replace color', 'recolour', 'recolor', 'palette swap', 'all frames'],
+    steps: [
+      'Use replace_colors for document/frame/range/list targets and an optional layer restriction.',
+      'Use single-cel replace_color when clip/mask behaviour is required.',
+      'Preview affected frames with preview_animation before committing a broad palette migration.',
+    ],
+  },
+  {
+    id: 'asset-delivery',
+    title: 'Deliver a production asset bundle',
+    keywords: ['export', 'bundle', 'gif', 'sheet', 'manifest', 'engine'],
+    steps: [
+      'Run quality_report and fix warnings.',
+      'Call finalize_document once with typed PNG/frames/sheet/GIF/contact outputs.',
+      'Enable manifest hashes and verify every returned absolute path.',
+    ],
+  },
+  {
+    id: 'pose-animation',
+    title: 'Create, preview and bake character poses',
+    keywords: ['rig', 'pose', 'pivot', 'tween', 'anchor', 'hitbox'],
+    steps: [
+      'Create the rig from stable rest-frame layer bindings and explicit pivots.',
+      'Save poses/tweens, add anchors/hitboxes, and inspect preview_pose plus resolved geometry.',
+      'Bake only into explicit target frames with overwrite:true, then review preview_animation.',
+    ],
+  },
+  {
+    id: 'landscape-quality',
+    title: 'Diagnose a landscape or tilemap asset',
+    keywords: ['landscape', 'tilemap', 'horizon', 'waterline', 'ridge'],
+    steps: [
+      'Run quality_report and read structure.landscape: horizon/ridge/waterline candidates, boundary regularity and guiding-line evidence. assetType:landscape only labels the report; the landscape diagnostics run for any non-character asset.',
+      'Pass tilemap/underlay for unbaked grid structure and terrain connectivity.',
+      'Treat warnings as evidence and confirm fixes with previews before finalisation.',
+    ],
+  },
+] as const;
+
 function normalizeOp(raw: RawOp): { command: string; params: Record<string, unknown>; label?: string } {
   const hasCommand = typeof raw.command === 'string' && raw.command.length > 0;
   const name = hasCommand ? (raw.command as string) : raw.name;
@@ -2062,6 +2549,85 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
 
   addTool(
     server,
+    'create_sprite_spec',
+    {
+      title: 'Create a declarative sprite scaffold',
+      description:
+        'Create a document from one structural spec and optionally configure tags, semantic palette roles and a persistent character rig. This creates no artwork and makes no art-direction decisions beyond the supplied structure.',
+      inputSchema: z.object({
+        width: z.number().int().min(1).max(4096),
+        height: z.number().int().min(1).max(4096),
+        name: z.string().optional(),
+        layers: z.array(z.string()).min(1),
+        frames: z.number().int().min(1).max(1024).optional(),
+        frameDurationMs: z.number().int().min(1).optional(),
+        palette: z.union([z.array(z.string()), z.string()]).optional(),
+        paletteLocked: z.boolean().optional(),
+        tags: z.array(z.object({
+          name: z.string().min(1),
+          from: z.number().int().min(0),
+          to: z.number().int().min(0),
+          direction: z.enum(['forward', 'reverse', 'pingpong']).optional(),
+          repeat: z.number().int().min(0).optional(),
+        }).strict()).max(64).optional(),
+        paletteRoles: z.array(z.object({
+          role: z.string().min(1),
+          colors: z.array(z.string()).min(2).optional(),
+          from: z.string().optional(),
+          to: z.string().optional(),
+          steps: z.number().int().min(2).max(32).optional(),
+          hueShift: z.number().min(0).max(90).optional(),
+        }).strict()).max(32).optional(),
+        rig: z.object({
+          restFrame: z.union([z.string(), z.number().int()]).optional(),
+          parts: z.array(z.object({
+            name: z.string().min(1),
+            pivot: spritePointSchema,
+            layers: z.array(z.union([z.string(), z.number().int()])).min(1).optional(),
+            parent: z.string().optional(),
+          }).strict()).min(1).max(64),
+        }).strict().optional(),
+        select: z.boolean().optional(),
+      }),
+      annotations: { destructiveHint: false },
+    },
+    (args) => {
+      const previousActive = store.activeDocumentId;
+      let doc: PixelDocument | undefined;
+      try {
+        doc = store.create({
+          width: args.width as number,
+          height: args.height as number,
+          name: args.name as string | undefined,
+          layers: args.layers as string[],
+          frames: args.frames as number | undefined,
+          frameDurationMs: args.frameDurationMs as number | undefined,
+          palette: args.palette as string | string[] | undefined,
+          paletteLocked: args.paletteLocked as boolean | undefined,
+          select: args.select as boolean | undefined,
+        });
+        const tags = args.tags ? doc.editor.execute('upsert_tags', { tags: args.tags }) : null;
+        const roles = args.paletteRoles
+          ? (args.paletteRoles as Array<Record<string, unknown>>).map((role) => doc!.editor.execute('ensure_palette_role', role))
+          : null;
+        const rig = args.rig ? doc.editor.execute('create_rig', args.rig) : null;
+        if (tags || roles || rig) store.touch(doc);
+        return ok({
+          ok: true,
+          document: store.summary(doc),
+          ...describeSprite(doc.editor.sprite),
+          configured: { tags, paletteRoles: roles, rig },
+        });
+      } catch (error) {
+        if (doc) store.remove(doc.id);
+        if (previousActive && store.get(previousActive)) store.select(previousActive);
+        return fail((error as Error).message);
+      }
+    },
+  );
+
+  addTool(
+    server,
     'open_document',
     {
       title: 'Open a .pixel document',
@@ -2118,7 +2684,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Save and export an asset bundle',
       description:
-        'Save the editable `.pixel` source and render a validated multi-format export plan in one call. `outputs` supports PNG, all-frame PNGs, spritesheet+JSON, GIF, and animation contact sheets. Every output is rendered before writing; an optional manifest records source version, frame/tag metadata, paths, sizes, and SHA-256 hashes. The legacy `exports` PNG array remains supported.',
+        'Save the editable `.pixel` source and render a validated multi-format export plan in one call. `outputs` supports PNG, all-frame PNGs, spritesheet+JSON, GIF, rig poses, and animation contact sheets. Every output is rendered before writing; an optional hashed manifest can drive incremental updates. The legacy `exports` PNG array remains supported.',
       inputSchema: z.object({
         document: documentRef,
         path: z.string().optional().describe('Destination `.pixel` path. Defaults to the document\'s current path.'),
@@ -2165,10 +2731,40 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         }
 
         let manifestBytes: Uint8Array | undefined;
+        let sourceUnchanged = false;
+        let manifestUnchanged = false;
+        const skippedFiles: string[] = [];
         if (manifestSpec) {
           const includeHashes = manifestSpec.hashes !== false;
-          const hash = (bytes: Uint8Array): string | undefined =>
-            includeHashes ? createHash('sha256').update(bytes).digest('hex') : undefined;
+          if (manifestSpec.incremental && !includeHashes) throw new Error('Incremental export requires manifest hashes.');
+          const hash = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
+          const sourceHash = hash(sourceBytes);
+          const outputHashes = rendered.map((output) => hash(output.bytes));
+          let previousManifest: Record<string, any> | undefined;
+          if (manifestSpec.incremental && manifestPath && existsSync(manifestPath)) {
+            try {
+              previousManifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, any>;
+            } catch (error) {
+              throw new Error(`Cannot use incremental export: existing manifest is unreadable (${(error as Error).message}).`);
+            }
+          }
+          if (manifestSpec.incremental && previousManifest) {
+            sourceUnchanged = previousManifest.source?.sha256 === sourceHash && existsSync(path);
+            const previousOutputs = new Map<string, string>(
+              Array.isArray(previousManifest.outputs)
+                ? previousManifest.outputs.map((output: { path?: string; sha256?: string }) => [
+                    resolve(String(output.path)).toLowerCase(),
+                    String(output.sha256),
+                  ])
+                : [],
+            );
+            rendered.forEach((output, index) => {
+              if (previousOutputs.get(resolve(output.path).toLowerCase()) === outputHashes[index] && existsSync(output.path)) {
+                skippedFiles.push(output.path);
+              }
+            });
+            if (sourceUnchanged) skippedFiles.push(path);
+          }
           const manifest = {
             format: 'dotloom-mcp/export-manifest',
             version: 1,
@@ -2179,7 +2775,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
               height: doc.editor.sprite.height,
               documentVersion: doc.editor.version,
               bytes: sourceBytes.byteLength,
-              sha256: hash(sourceBytes),
+              sha256: includeHashes ? sourceHash : null,
             },
             frames: doc.editor.sprite.frames.map((frame, index) => ({
               index,
@@ -2187,24 +2783,27 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
               durationMs: frame.durationMs,
             })),
             tags: doc.editor.sprite.tags,
-            outputs: rendered.map((output) => ({
+            outputs: rendered.map((output, index) => ({
               type: output.type,
               path: output.path,
               bytes: output.bytes.byteLength,
               width: output.width,
               height: output.height,
-              sha256: hash(output.bytes),
+              sha256: includeHashes ? outputHashes[index] : null,
               details: output.details,
             })),
           };
           manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+          manifestUnchanged = Boolean(manifestPath && existsSync(manifestPath) && Buffer.from(readFileSync(manifestPath)).equals(Buffer.from(manifestBytes)));
         }
 
         // Write derived files first and the source last, so a successful response is
         // the completion signal. Session dirty state is cleared only after every write.
-        for (const output of rendered) writeFile(output.path, output.bytes);
-        if (manifestPath && manifestBytes) writeFile(manifestPath, manifestBytes);
-        writeFile(path, sourceBytes);
+        for (const output of rendered) {
+          if (!skippedFiles.includes(output.path)) writeFile(output.path, output.bytes);
+        }
+        if (manifestPath && manifestBytes && !manifestUnchanged) writeFile(manifestPath, manifestBytes);
+        if (!sourceUnchanged) writeFile(path, sourceBytes);
         doc.path = path;
         store.markSaved(doc);
 
@@ -2221,6 +2820,8 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
                 absolute: absPath(manifestPath),
                 bytes: manifestBytes!.byteLength,
                 hashes: manifestSpec!.hashes !== false,
+                incremental: manifestSpec!.incremental === true,
+                unchanged: manifestUnchanged,
               }
             : null,
           outputs: rendered.map((output) => ({
@@ -2236,6 +2837,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
             .filter((output) => output.type !== 'json')
             .map((output) => ({ path: output.path, width: output.width, height: output.height, bytes: output.bytes.byteLength, ...output.details })),
           files,
+          skippedFiles,
           absoluteFiles: files.map(absPath),
           version: doc.editor.version,
           document: store.summary(doc),
@@ -2392,6 +2994,95 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           { ok: true, document: store.summary(doc), ...rendered.meta },
           rendered.blocks,
         );
+      } catch (error) {
+        return fail((error as Error).message);
+      }
+    },
+  );
+
+  addTool(
+    server,
+    'preview_pose',
+    {
+      title: 'Preview a character pose',
+      description:
+        'Render a saved rig pose, a pose at fractional progress, or a stored tween at progress as a PNG. Returns part bounds, clipped-part evidence, and world-space anchors/hitboxes without modifying the document.',
+      inputSchema: z.object({
+        document: documentRef,
+        pose: z.string().optional().describe('Pose ID/name. Required unless tween is provided.'),
+        tween: z.string().optional().describe('Stored tween ID/name. Overrides pose when supplied.'),
+        progress: z.number().min(0).max(1).optional().describe('Pose/tween progress. Defaults to 1.'),
+        scale: previewScaleSchema,
+        background: previewBackgroundSchema,
+        includeGeometry: z.boolean().optional().describe('Resolve anchor/hitbox world geometry. Defaults to true.'),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    (args) => {
+      try {
+        const doc = store.require(args.document as string | undefined);
+        const sprite = doc.editor.sprite;
+        const rig = requireRig(sprite);
+        const progress = (args.progress as number | undefined) ?? 1;
+        const poseRef = args.pose as string | undefined;
+        const tweenRef = args.tween as string | undefined;
+        let pose = poseRef ? findRigPose(rig, poseRef) : undefined;
+        let poseForGeometry = pose;
+        let rendered: RenderedPose;
+        let tweenName: string | null = null;
+        let easing = 'linear';
+
+        if (tweenRef !== undefined) {
+          const tween = findRigTween(rig, tweenRef);
+          const from = findRigPose(rig, tween.fromPoseId);
+          const to = findRigPose(rig, tween.toPoseId);
+          poseForGeometry = {
+            id: '__preview_tween__',
+            name: tween.name,
+            transforms: interpolatePose(rig, from, to, progress, tween.easing),
+          };
+          rendered = renderInterpolatedPose(sprite, from, to, progress, tween.easing);
+          tweenName = tween.name;
+          easing = tween.easing;
+        } else {
+          if (!pose) throw new Error('preview_pose requires `pose` or `tween`.');
+          if (progress < 1) {
+            const identity: RigPose = { id: '__identity__', name: 'identity', transforms: {} };
+            poseForGeometry = { id: '__preview_pose__', name: pose.name, transforms: interpolatePose(rig, identity, pose, progress) };
+            rendered = renderInterpolatedPose(sprite, identity, pose, progress);
+          } else {
+            rendered = renderPose(sprite, pose);
+          }
+        }
+
+        const background = args.background as string | null | undefined;
+        const visible = background == null ? rendered.buffer : flattenAlpha(rendered.buffer, background);
+        const factor = args.scale as number | undefined
+          ?? previewFactor(visible.width, visible.height, 256, 16);
+        assertPreviewOutputSize(visible.width, visible.height, factor);
+        const shown = factor > 1 ? scaleNearest(visible, factor) : visible;
+        const geometry = args.includeGeometry === false || !poseForGeometry
+          ? null
+          : resolveRigGeometry(sprite, poseForGeometry);
+        return ok({
+          ok: true,
+          document: store.summary(doc),
+          pose: poseForGeometry?.name ?? null,
+          tween: tweenName,
+          progress,
+          easing,
+          partBounds: rendered.partBounds,
+          partBoundsById: rendered.partBoundsById,
+          partPixels: rendered.partPixels,
+          clippedParts: rendered.clippedParts,
+          geometry,
+          preview: {
+            mode: 'pose-preview',
+            scale: factor,
+            imageWidth: shown.width,
+            imageHeight: shown.height,
+          },
+        }, [imageContent(shown)]);
       } catch (error) {
         return fail((error as Error).message);
       }
@@ -2709,7 +3400,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     'get_palette',
     {
       title: 'Read the palette',
-      description: 'Return the document palette as hex colours, with each colour\'s index.',
+      description: 'Return the document palette as hex colours with indices and optional semantic roles.',
       inputSchema: z.object({ document: documentRef }),
       annotations: { readOnlyHint: true },
     },
@@ -2725,6 +3416,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           colors: palette.colors.map((c, index) => ({
             index,
             hex: c.a === 255 ? `#${hex(c.r)}${hex(c.g)}${hex(c.b)}` : `#${hex(c.r)}${hex(c.g)}${hex(c.b)}${hex(c.a)}`,
+            role: palette.roles?.[String(index)] ?? null,
           })),
         });
       } catch (error) {
@@ -2737,12 +3429,25 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     server,
     'quality_report',
     {
-      title: 'Measure defect, presence and landscape quality',
+      title: 'Measure raster, character and landscape quality',
       description:
-        'Read-only report over an objective raster, in two halves. DEFECT half: isolated-pixel ratio, colour-outlier ratio, mean edge contrast, near-white highlight ratio, palette usage, and `defectScore` on 0-100 where HIGHER MEANS CLEANER - 99 means almost nothing measurable is wrong, which is necessary but not sufficient. PRESENCE half: `presence.valueRange` (healthy above 150, collapsed below 90), `darkShare` (over 75% reads as underexposed), `flatShare` (over 45% is a dead region), `planeSeparation` (below 6 means two depth planes have merged into one value) and `lightConcentration` (near 1 is a real source, below 0.3 is ambient). Driving defectScore to 100 flattens the piece, because intentional texture scores identically to noise - declare it with `textureRects` and re-read the presence half afterwards. Also reports `palette.unusedIndices`, `palette.crowded`, `structure.strongBands`, `structure.rhythm`, and `structure.landscape` (internal horizon/ridge/waterline candidates, regularity and vertical/diagonal guide evidence) for full-bleed scenes. Pass `tilemap` to analyse an unbaked tile grid directly: pixel texture warnings become informational and `structure.tilemap` reports invalid indices, variant distribution, repeated adjacency, runs, open edges and connected terrain without treating water ripples or crop rows as noise. Add `underlay` to measure alpha-masked bank/edge tiles over their base terrain.',
+        'Read-only quality report. `assetType: "character"` is the only mode that changes the analysis: it drops full-width-band and landscape warnings (a figure is not a horizon) and, unless you narrow it, runs a cross-frame pass over every frame reporting silhouette jumps, centroid drift, palette flicker, canvas-edge clipping and loop closure, each with a real warning entry. Every other `assetType` value runs the same single-frame defect/presence/structure diagnostics and is recorded in the result as a label (`assetTypeIsLabel: true`); pass `auto` to let the report infer one - a rig or multiple frames implies character. Use `tag` for real playback order or `frames` for timeline/range/list analysis. `intentionalDetailRects` exempts eyes, teeth, hair, fabric and weapon highlights from isolated/outlier/edge/highlight warnings only; it never suppresses the light-source probe.',
       inputSchema: z.object({
         document: documentRef,
+        assetType: z
+          .enum(['raster', 'character', 'landscape', 'prop', 'tile', 'auto'])
+          .optional()
+          .describe('Asset label. "character" changes the analysis (drops landscape/band warnings, adds cross-frame stability and defaults to all frames). "auto" infers character when the sprite has a rig or multiple frames. Other values label the same single-frame diagnostics and are echoed back with `assetTypeIsLabel: true`.'),
         frame: frameRefSchema.optional().describe('Frame id or 0-based index. Defaults to frame 0. Do not pass with `tilemap`.'),
+        frames: z
+          .union([
+            z.literal('all'),
+            z.object({ from: z.number().int().min(0), to: z.number().int().min(0) }).strict(),
+            z.array(frameRefSchema).min(1),
+          ])
+          .optional()
+          .describe('Additionally analyse all frames, an inclusive range, or explicit frame references.'),
+        tag: z.union([z.string(), z.number().int()]).optional().describe('Analyse the expanded playback sequence for this animation tag.'),
         tilemap: z
           .union([z.string(), z.number().int()])
           .optional()
@@ -2790,6 +3495,21 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
               'you textured rather than lowering `noiseThreshold`, which would hide real defects ' +
               'everywhere instead.',
           ),
+        intentionalDetailRects: z
+          .array(z.object({
+            x: z.number().int(),
+            y: z.number().int(),
+            w: z.number().int().min(1),
+            h: z.number().int().min(1),
+            kind: z.enum(['eye', 'teeth', 'weapon', 'hair', 'fabric', 'other']).optional(),
+          }).strict())
+          .max(64)
+          .optional()
+          .describe('Designed high-contrast details. These regions are exempt from isolated-pixel, colour-outlier, clipped-highlight and edge-contrast warnings.'),
+        maxChangedRatioWarning: z.number().min(0).max(1).optional().describe('Canvas-relative changed-pixel threshold, also used for loop closure. Defaults to 0.65.'),
+        minSilhouetteIouWarning: z.number().min(0).max(1).optional().describe('Silhouette-overlap floor below which a transition counts as a jump. Scale-invariant. Defaults to 0.5.'),
+        maxCentroidDriftWarning: z.number().min(0).optional().describe('Character centroid-drift warning threshold in pixels. Defaults to 3.'),
+        minPaletteJaccardWarning: z.number().min(0).max(1).optional().describe('Character palette-flicker warning threshold. Defaults to 0.65.'),
         grid: z
           .number()
           .int()
@@ -2809,6 +3529,12 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         if (args.tilemap !== undefined && args.frame !== undefined) {
           return fail('Pass either `tilemap` or `frame` to quality_report, not both.');
         }
+        if (args.tilemap !== undefined && (args.frames !== undefined || args.tag !== undefined || args.assetType === 'character')) {
+          return fail('`frames`, `tag`, and character mode cannot be combined with a tilemap quality report.');
+        }
+        if (args.frames !== undefined && args.tag !== undefined) {
+          return fail('Pass either `frames` or `tag` for animation analysis, not both.');
+        }
         if (args.tilemap !== undefined && !doc.editor.sprite.tileset) {
           return fail('Tilemap quality analysis needs a tileset. Run `create_tileset` first.');
         }
@@ -2818,19 +3544,94 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         const underlay = args.underlay === undefined
           ? undefined
           : resolveTilemap(doc.editor.sprite, args.underlay as string | number);
+        const assetType = args.assetType as QualityAssetType | undefined;
+        const resolvedAssetType = resolveQualityAssetType(
+          doc.editor.sprite,
+          assetType,
+          tilemap !== undefined,
+        );
+        const alphaThreshold = args.alphaThreshold as number | undefined;
+        let animation: Record<string, unknown> | undefined;
+        if (args.tag !== undefined) {
+          animation = analyzeCharacterAnimation(
+            doc.editor.sprite,
+            animationSequence(doc.editor.sprite, args.tag as string | number),
+            {
+              alphaThreshold,
+              maxChangedRatioWarning: args.maxChangedRatioWarning as number | undefined,
+              minSilhouetteIouWarning: args.minSilhouetteIouWarning as number | undefined,
+              minPaletteJaccardWarning: args.minPaletteJaccardWarning as number | undefined,
+              maxCentroidDriftWarning: args.maxCentroidDriftWarning as number | undefined,
+            },
+          );
+        } else if (args.frames !== undefined || resolvedAssetType === 'character') {
+          let sequence: ReturnType<typeof animationSequence>;
+          if (args.frames === undefined || args.frames === 'all') {
+            sequence = animationSequence(doc.editor.sprite);
+          } else if (Array.isArray(args.frames)) {
+            const frames = (args.frames as Array<string | number>).map((ref) => {
+              const frame = resolveFrame(doc.editor.sprite, ref);
+              return { index: doc.editor.sprite.frames.findIndex((candidate) => candidate.id === frame.id), frameId: frame.id, durationMs: frame.durationMs };
+            });
+            sequence = {
+              name: null,
+              frames,
+              loops: false,
+              durationMs: frames.reduce((sum, frame) => sum + frame.durationMs, 0),
+            };
+          } else {
+            const range = args.frames as { from: number; to: number };
+            const from = Math.min(range.from, range.to);
+            const to = Math.max(range.from, range.to);
+            if (to >= doc.editor.sprite.frames.length) return fail(`Frame range ${range.from}-${range.to} exceeds frame count.`);
+            const frames = doc.editor.sprite.frames.slice(from, to + 1).map((frame, offset) => ({
+              index: from + offset,
+              frameId: frame.id,
+              durationMs: frame.durationMs,
+            }));
+            sequence = { name: null, frames, loops: false, durationMs: frames.reduce((sum, frame) => sum + frame.durationMs, 0) };
+          }
+          animation = analyzeCharacterAnimation(doc.editor.sprite, sequence, {
+            alphaThreshold,
+            maxChangedRatioWarning: args.maxChangedRatioWarning as number | undefined,
+            minSilhouetteIouWarning: args.minSilhouetteIouWarning as number | undefined,
+            minPaletteJaccardWarning: args.minPaletteJaccardWarning as number | undefined,
+            maxCentroidDriftWarning: args.maxCentroidDriftWarning as number | undefined,
+          });
+        }
+        const rigDiagnostics = resolvedAssetType === 'character' ? analyzeRigQuality(doc.editor.sprite) : undefined;
+        const quality = analyzeQuality(doc.editor.sprite, args.frame as number | string | undefined, {
+          rect: args.rect as { x: number; y: number; w: number; h: number } | undefined,
+          noiseThreshold: args.noiseThreshold as number | undefined,
+          alphaThreshold,
+          grid: args.grid as number | undefined,
+          tilemap,
+          underlay,
+          replaceEmpty: args.replaceEmpty as number | undefined,
+          textureRects: args.textureRects as Array<{ x: number; y: number; w: number; h: number }> | undefined,
+          assetType,
+          intentionalDetailRects: args.intentionalDetailRects as Array<{
+            x: number;
+            y: number;
+            w: number;
+            h: number;
+            kind?: 'eye' | 'teeth' | 'weapon' | 'hair' | 'fabric' | 'other';
+          }> | undefined,
+        });
+        if (resolvedAssetType === 'character') {
+          const documentUsage = documentPaletteUsage(doc.editor.sprite);
+          quality.palette = {
+            ...(quality.palette as Record<string, unknown>),
+            ...(documentUsage ? { documentUsage } : { documentUsage: null }),
+            roles: doc.editor.sprite.palette.roles ?? {},
+          };
+        }
         return ok({
           ok: true,
           document: store.summary(doc),
-          ...analyzeQuality(doc.editor.sprite, args.frame as number | string | undefined, {
-            rect: args.rect as { x: number; y: number; w: number; h: number } | undefined,
-            noiseThreshold: args.noiseThreshold as number | undefined,
-            alphaThreshold: args.alphaThreshold as number | undefined,
-            grid: args.grid as number | undefined,
-            tilemap,
-            underlay,
-            replaceEmpty: args.replaceEmpty as number | undefined,
-            textureRects: args.textureRects as Array<{ x: number; y: number; w: number; h: number }> | undefined,
-          }),
+          ...quality,
+          ...(animation ? { animation } : {}),
+          ...(rigDiagnostics ? { rig: rigDiagnostics } : {}),
         });
       } catch (error) {
         return fail((error as Error).message);
@@ -3539,6 +4340,49 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         build,
         hint,
       });
+    },
+  );
+
+  addTool(
+    server,
+    'describe_command',
+    {
+      title: 'Describe one command',
+      description: 'Return the exact JSON Schema, description and read-only metadata for one registered core or plugin command.',
+      inputSchema: z.object({ name: z.string().min(1) }),
+      annotations: { readOnlyHint: true },
+    },
+    (args) => {
+      const name = args.name as string;
+      const command = store.registry.get(name);
+      if (!command) return fail(`Unknown command: ${name}`);
+      return ok({ ok: true, command: describeCommand(command) });
+    },
+  );
+
+  addTool(
+    server,
+    'find_workflow',
+    {
+      title: 'Find a task workflow',
+      description: 'Search task-level workflows that combine several commands, instead of returning only low-level primitives.',
+      inputSchema: z.object({
+        goal: z.string().min(1).describe('Natural-language task, e.g. "create an attack animation" or "export engine assets".'),
+        limit: z.number().int().min(1).max(8).optional().describe('Maximum workflows to return. Defaults to 3.'),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    (args) => {
+      const goal = (args.goal as string).toLowerCase();
+      const tokens = goal.split(/[^a-z0-9*]+/).filter(Boolean);
+      const scored = WORKFLOW_CATALOG.map((workflow) => {
+        const haystack = `${workflow.title} ${workflow.keywords.join(' ')} ${workflow.steps.join(' ')}`.toLowerCase();
+        const score = tokens.reduce((total, token) => total + (workflow.keywords.some((keyword) => keyword.includes(token) || token.includes(keyword)) ? 5 : haystack.includes(token) ? 1 : 0), 0);
+        return { ...workflow, score };
+      }).filter((workflow) => workflow.score > 0 || tokens.length === 0)
+        .sort((left, right) => right.score - left.score)
+        .slice(0, (args.limit as number | undefined) ?? 3);
+      return ok({ ok: true, goal: args.goal, count: scored.length, workflows: scored });
     },
   );
 

@@ -11,7 +11,14 @@ All notable changes to dotloom-mcp are documented in this file.
 - `list_commands` supports exact `name`, parameter-name `param`, result `limit`, and command `readOnly` metadata.
 - Added `set_frame_durations`, `upsert_tags`, and dry-run-by-default `prune_palette` core commands.
 - Added `preview_animation` contact sheets in raw timeline or tag-expanded playback order with sequence-aware onion skin.
-- `finalize_document` now accepts typed PNG/frame/sheet/GIF/contact output plans and can write a hashed bundle manifest while preserving the legacy PNG `exports` field.
+- `finalize_document` now accepts typed PNG/frame/sheet/GIF/pose/contact output plans and can write a hashed bundle manifest while preserving the legacy PNG `exports` field.
+- Added persistent character rigs with stable layer-bound parts, pivots, poses, stored tweens, anchors, hitboxes, fixed-canvas arbitrary-angle transforms, pose preview, and explicit-frame pose baking.
+- `.pixel` format v2 round-trips rig metadata; v1 files remain readable and rig-free documents continue to serialize as v1.
+- Added character-aware quality reports with intentional detail regions and cross-frame silhouette overlap, centroid, palette, canvas-clipping and loop-closure diagnostics. Only `assetType: "character"` changes the analysis; other values are labels and are reported as such, and `auto` infers from a rig or multiple frames.
+- Added `describe_command`, `find_workflow`, and `create_sprite_spec` for task-level discovery and declarative character scaffolds.
+- Added semantic palette roles, role-safe pruning/index remapping, and `replace_colors` for document/range/list recolouring. Ramp anchors are parsed literally rather than snapped by `paletteLocked`, so a locked palette can no longer tag unrelated swatches with a new role.
+- Rig metadata stays consistent with structural edits: deleting or merging a bound layer detaches it from its part, removing the rest frame re-points the rig, and `crop_canvas`/`resize_canvas`/`scale_sprite`/unscoped `flip`/`rotate` remap pivots, anchors and hitboxes along with the pixels. Pose baking and `transform_part` refuse to write the rig rest frame, and baking separates destination layers the rig does not own (`preservedLayers`) from part layers the pose empties (`clearedPartLayers`).
+- Export manifests can now drive hash-based incremental writes.
 
 ### Fixed
 
