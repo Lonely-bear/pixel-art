@@ -14,6 +14,40 @@ You are drawing with a tool that gives you exact control over every pixel. That 
 both the opportunity and the trap: nothing stops you from producing mud. Work in
 passes, and look at the result between passes.
 
+## 0. Hard rules
+
+These are the rules that separate a piece that reads as art from one that reads as a
+render. Break them and no amount of extra shading recovers the result.
+
+1. **Judge at 100% first.** Pixel art is a 1:1 medium. Always look at a 256x256 canvas
+   at \`scale: 1\` before you decide anything. A 2x-4x zoom turns \`cluster2\`'s 2x2 blocks
+   into an obvious dot grid and will make you delete dithering that is correct.
+   Zoom is for inspecting one detail, never for judging the whole piece.
+2. **Dither is for the 3-5px seam between two tones, and nothing else.** A seam under
+   about 8px reads as a transition; a low-coverage dither spread over a large area
+   reads as a mechanical lattice, not a tone. Most "my gradients look dirty" problems
+   are one dithered field that is three times too big.
+3. **Never build a glow out of dithered ellipses.** A large light-colour stipple always
+   reads as a dot cloud. A glow is the *shape of the gradient*: bulge the surrounding
+   bands toward the light source, or use two or three solid concentric steps of
+   adjacent palette entries.
+4. **Shade only where the pixels are visible.** A layer's visible band runs from its own
+   crest down to the crest of the layer above it. A tonal band placed below that line
+   is invisible, and invisible shading is a flat-looking sprite.
+5. **A perfect circle reads as a balloon.** Foliage, rocks, clouds and crowns need an
+   irregular outline: a 7-9 point polygon with radii varied by roughly +/-25%.
+6. **Break procedural rhythm deliberately.** Repeated shapes at even spacing and even
+   size read as wallpaper or a hedge. Vary spacing by about +/-30% and size by +/-40%,
+   and skip some positions outright.
+7. **Fewer than about three strong full-width edges, or the piece goes flat.** Horizontal
+   stripes are the default failure of environmentals. Many gentle steps are a gradient
+   and are fine; a run of *unrelated, strong* steps is the problem. Break them with one
+   vertical or diagonal element - a light path, a waterfall, a foreground silhouette.
+   \`quality_report\` reports \`structure.strongBands\` for exactly this.
+8. **If the preview contradicts your data, trust the data.** When an image looks wrong,
+   confirm with \`get_pixels\` or \`quality_report\` before you start "fixing" it. Inline
+   previews can be stale.
+
 ## 1. Plan the canvas before drawing
 
 - Ask for the sprite size the game needs (16x16, 32x32, 48x48...). Do not invent a
@@ -85,6 +119,24 @@ passes, and look at the result between passes.
 - On a large canvas, prefer \`pattern: "cluster2"\` or \`"cluster4"\`: the same coverage
   lands as 2x2/4x4 blocks, which reads as a softer tonal step instead of digital
   stipple. Use the 1px patterns for small transition bands, not whole skies.
+- **\`cluster2\` and \`cluster4\` quantise \`level\` to sixteenths.** \`0.08\` and \`0.10\`
+  are the same field (both resolve to 0.0625); the nearest 1/16 step is what you get.
+  \`bayer4\` quantises to sixteenths too, \`bayer8\` to sixty-fourths. \`level: 1\` is solid.
+  \`dither_fill\` echoes the resolved level so you never have to guess.
+- **Sizing a transition.** Aim for a 3-5px dithered seam between two tones. Under 3px the
+  step is a hard line; past about 8px the seam stops reading as a transition and starts
+  reading as texture. If one \`dither_fill\` covers more than roughly 1500 px at a level
+  under 0.5, the tool will warn: shrink the rect, switch to \`cluster4\`, or paint the
+  step solid and dither only its edge.
+- **Gradients.** Do not build one out of a stack of full-width dither rows. Use
+  \`banded_gradient\` (one batch command, vertical/horizontal/diagonal/radial,
+  \`banded: true\`) for the field, then hand-dither only the seams you want soft. A sky
+  is usually 6-10 solid bands plus one 4px seam each.
+- **Light sources and glows.** Put the light source on a third. Build its falloff by
+  shaping the gradient toward it - raise the band boundaries around it, or use
+  \`banded_gradient\` with \`direction: "radial"\`. Do **not** paint a halo as a dithered
+  ellipse; that is the single most common way this tool produces a dot cloud. Solid
+  concentric steps in adjacent palette entries are clean and read correctly.
 - \`dither_fill\` with \`pattern: "sparse"\` reads as texture (dirt, cloth, grain).
 - If a pass leaves isolated single pixels, run \`despeckle\` with \`mode: "both"\` under a
   \`rect\`. It removes lone speckles and pulls colour outliers toward their local
@@ -108,6 +160,23 @@ passes, and look at the result between passes.
   painting means the paint is hidden behind it. Shading the hair while painting on a
   shared \`shade\` layer *below* \`hair\` produces invisible pixels - paint on the hair
   layer itself (or above it). The tool returns a \`warning\` when it detects this.
+- **Shade inside the visible band.** When layers stack (a far ridge behind a near one,
+  hills behind a treeline), the only part of the lower layer you can see is the strip
+  between its own top edge and the top edge of the layer above it. Measure that strip
+  first - \`measure_region\` per layer, or the crest line of each silhouette - and place
+  every tonal band inside it. A shadow band placed below the occluding crest is spent
+  work, and the sprite reads flat no matter how many colours you used.
+- \`shade_band\` paints a tonal band that **follows a silhouette**. Give it the crest
+  polyline with \`offset\` and \`thickness\` for the common case - a lit band under a
+  ridge crest, a shadow band at its base - or \`top\`/\`bottom\` for a band between two
+  arbitrary curves. Its bottom edge is exclusive: \`thickness: 2\` starting at the crest
+  covers the crest row and the one below it. Solid lays down a tone; a \`pattern\` with
+  a \`level\` under 0.5 gives the 3-5px dithered seam that belongs between two tones.
+  Pair it with \`clip: {layer}\` to keep it inside the shape. This replaces the usual
+  workaround of hand-building an offset ribbon polygon in \`run_script\`.
+- For a band the polyline cannot express, \`dither_fill\` still takes
+  \`shape: {polygon: [...]}\` together with \`clip: {layer}\`, so a derived polygon works
+  too. \`run_script\` is the place to compute those points.
 - \`replace: true\` on \`draw_rect\`, \`draw_ellipse\`, \`draw_polygon\` and \`dither_fill\`
   erases the pixels the shape covers before painting them. Use it when redrawing over
   an earlier pass: without it, a second dithered band over the first stacks the stipple
@@ -118,6 +187,10 @@ passes, and look at the result between passes.
   The band is perpendicular and roughly centred, but it overshoots each endpoint by up
   to half the width and even widths bias +0.5px, so a tapered limb is better as a
   \`draw_polygon\`.
+- \`draw_polyline\` strokes a whole path in one call, stamping a square brush at every
+  vertex so a wide turn keeps its outer corner. Use it for shorelines, ridges,
+  branches, cracks, reeds and cables instead of one \`draw_line\` per segment; pass
+  \`close: true\` to join the last point back to the first.
 - A dithered transition band can follow a curve. \`dither_fill\` takes a \`shape\` -
   \`{ellipse: rect}\` or \`{polygon: [points]}\` - as well as a \`rect\`, so the band between
   two shades can trace the boundary instead of being a box. Omit both to stipple the
@@ -161,9 +234,12 @@ passes, and look at the result between passes.
 ## 8. Iterating
 
 - The fastest draw→look loop is one call: pass \`preview: true\` to \`run_script\` or
-  \`apply_ops\`, plus \`previewOptions: {scale: 4}\` (and optionally \`frame\`, \`rect\`,
-  \`layers\`, or \`background\`). The command result and a real PNG come back together,
-  so do not spend a second call on \`get_preview\` immediately afterwards.
+  \`apply_ops\`, plus \`previewOptions\` (and optionally \`frame\`, \`rect\`, \`layers\`, or
+  \`background\`). The command result and a real PNG come back together, so do not spend
+  a second call on \`get_preview\` immediately afterwards.
+- **Leave \`scale\` alone for the whole-canvas look.** The default is the right thing:
+  it renders the piece at the size it will actually be seen at. Set \`scale\` only when
+  you are cropping into one detail.
 - Look after the silhouette, after major lighting/material work, and once at the
   end. Two or three visual gates catch nearly all composition problems; a long chain
   of tiny speculative edits is slower and usually less coherent.
@@ -171,13 +247,22 @@ passes, and look at the result between passes.
 - \`get_preview\` renders the composited frame (or all frames) as a PNG you can
   actually see. Use it when no edit was made, or when a mutation did not request
   an inline preview. Never chain twenty edits blind.
-- By default \`get_preview\` shows the sprite at up to ~256px on its longest side, so a
-  large canvas (256x256 or more) comes back at 1:1 and fine detail is hard to judge.
-  Pass \`scale: 4\` (up to 32) to zoom in, and \`frame\`/\`layers\` to isolate what you are
-  working on. Pass \`rect: {x, y, w, h}\` to crop-zoom a detail - a face, a hand, a staff
-  head - at full scale instead of exporting a file. The same crop can ride along
-  in a mutation's \`previewOptions\`, so fixing and inspecting a detail is one call.
-- \`get_pixels\` returns a small region as text when you need exact coordinates.
+- \`get_preview\` defaults to the sprite at up to ~256px on its longest side, so a
+  canvas up to 256x256 comes back at 1:1 - that is the correct view for judging
+  composition, value structure and dither texture. Pass \`frame\`/\`layers\` to isolate
+  what you are working on. Pass \`scale\` (2-32) **together with** \`rect: {x, y, w, h}\`
+  to inspect one detail - a face, a hand, a waterline - at 4x. Never use a bare
+  \`scale\` to judge the whole piece: upscaling a large canvas exaggerates every
+  2x2 dither block into a visible dot grid, and the usual result is deleting dithering
+  that was correct. The same crop can ride along in a mutation's \`previewOptions\`, so
+  fixing and inspecting a detail is one call.
+- \`get_pixels\` returns a region as hex rows when you need exact coordinates. It is
+  capped at 32x32 per call, so use it for sampling, not for reading a whole canvas.
+  For "which colours does this actually contain", use \`histogram\`, which returns the
+  count per colour in one call.
+- When an image and your expectations disagree, believe the data first: \`get_pixels\`
+  a suspicious block, or run \`quality_report\`. Inline previews can be stale, and
+  "fixing" a rendering artefact just damages the artwork.
 - \`measure_region\` tells you where the opaque pixels actually are, which is how
   you centre a sprite without guessing.
 - \`get_document\` nests the counts under \`document\` (\`document.layerCount\` /
@@ -185,19 +270,33 @@ passes, and look at the result between passes.
   \`frames\` arrays are at the **top level**, in bottom-first paint order. Only layers
   with cels on a frame appear in \`frames[].layers\`.
 - If a pass makes things worse, \`undo\` it. Undo is cheap; guessing is not. \`undo\` /
-  \`redo\` take \`steps\` (alias \`count\`) to move several edits at once. A single
-  \`apply_ops\` batch is **not** one undo step - every op in it is its own history entry.
-  (A \`run_script\` script, by contrast, folds into one step.) \`get_history\` lists
-  recent commands with their summaries.
+  \`redo\` take \`steps\` (alias \`count\`) to move several edits at once. By default an
+  \`apply_ops\` batch is **not** one undo step - every op in it is its own history
+  entry. Pass \`singleUndoStep: true\` to collapse the whole batch into one entry, the
+  way a \`run_script\` script always folds. \`get_history\` lists recent commands with
+  their summaries.
+- \`apply_ops\` returns an \`advisories\` array when something it just did is legal but
+  a known way to go wrong - currently oversized or over-quantised \`dither_fill\` fields,
+  with the op index. Read it. These are the mistakes that are invisible in a thumbnail
+  and ruinous in a finished piece.
 - Working on a scratch document? \`create_document\` accepts \`select: false\` so it does
   not steal focus from the document you are actually drawing. \`select_document\` takes a
   document id **or** its name.
 - \`export_png\` returns \`absolute\` as an **array** (one entry per written file), while
   \`save_document\` returns it as a **string**. \`get_preview\` echoes the zoom factor as
-  both \`scale\` and \`upscale\`.
+  both \`scale\` and \`upscale\`. \`export_png\` also takes \`rect\`, so a 1:1 crop can be
+  written straight to disk - the dependable fallback when an inline preview looks wrong
+  and you need a file you can open yourself.
 - Before finishing, run \`quality_report\`. It returns isolated-pixel ratio, colour
-  outlier ratio, edge contrast, highlight clipping, palette usage and a rough
-  softness score. Treat its warnings as a checklist: \`despeckle\` for speckle,
+  outlier ratio, edge contrast, highlight clipping, palette usage, a rough softness
+  score, and several composition diagnostics: \`palette.unusedIndices\` (the exact slot
+  numbers, so you can drop them), \`palette.crowded\` (used pairs too close in distance
+  to read as separate tones), \`structure.strongBands\` (full-width tonal edges big
+  enough to flatten a composition - keep it near three; a smooth gradient legitimately
+  has many gentler steps and is not flagged), and \`structure.rhythm\` (how regular the
+  silhouette peaks are - \`uniform: true\` means hedge/wallpaper spacing). Check
+  \`rhythm.measurable\` first: a frame with no silhouette has nothing to measure, and
+  \`rhythm.note\` says so. Treat the warnings as a checklist: \`despeckle\` for speckle,
   \`antialias\` for harsh edges, less glow for clipped highlights.
 - At the end, \`finalize_document\` saves the \`.pixel\` source and writes one or more
   PNG exports in a single call. A usual static asset is a scale-1 original plus a
@@ -254,11 +353,74 @@ passes, and look at the result between passes.
 - A closed pure-black outline around everything.
 - Dithering everywhere instead of in a few transition bands.
 - Too many shades of the same colour with no hue shift.
-- Jagged curves: pixel art curves should be smooth when viewed at 100%. Step
-  lengths on a curve should change gradually, e.g. 2,1,1,2,1,1 - never 4,1,4.
+- **A halo of dots around a light source.** The most recognisable tell that dither was
+  used as a glow. Shape the gradient toward the light instead.
+- **A dither field whose visible structure is its own pattern** - a regular dot lattice
+  you can trace with your eye. The pattern should disappear into a tone.
+- **A straight bright wedge where a sun path should be.** Glints, not a triangle.
+- **A tonal band that never shows up**, because a layer above covers it. Check the
+  visible extent before placing shading.
+- **Evenly spaced identical shapes**, which read as a fence or a hedge.
+- **A perfect circle as foliage or a rock**, which reads as a balloon.
+- **A big empty dark corner** where a foreground silhouette should carry detail.
 - Redrawing everything each frame when \`translate\` or \`squash\` would move it in one operation.
 
-## 12. Tilemaps and auto-tiling
+## 12. Environments and landscapes
+
+The rules that separate a scene from a set of stacked stripes.
+
+**Depth and value**
+
+- Separate depth planes by **value first, hue second**. The far plane is lighter and
+  cooler, the near plane darker and warmer. If two adjacent planes sit at the same
+  value, no amount of hue difference will separate them.
+- Give the piece one vertical or diagonal element. A light path down water, a waterfall,
+  a road, a foreground tree - one of these is what stops an otherwise horizontal
+  composition from reading as bands.
+
+**Water and reflections**
+
+- A reflection is geometry, not a texture: a point \`h\` above the waterline reflects
+  \`h\` below it. \`mirror {axis: "vertical", about: <waterline row>, copyTo: "reflection"}\`
+  does the whole thing in one call - it mirrors about an arbitrary line rather than the
+  canvas centre, and \`copyTo\` leaves the source untouched. Give the reflection its own
+  layer *below* the water layer, and draw the water plane **far to near** so the nearer
+  ridge correctly occludes the one behind it.
+- \`flip\` mirrors about the canvas centre only; use \`mirror\` when the axis is not the
+  centre. Artwork that would land off the canvas is dropped, not wrapped.
+- **Break the reflection with horizontal ripple segments, not with a dithered fade.**
+  A dither dissolve turns the reflection into a field of speckle. Instead draw the
+  reflection solid, then lay solid, slightly longer horizontal bars of the water colour
+  across it, increasing in thickness and spacing with depth.
+- Sun glints read as broken light, not a solid wedge. Place short horizontal dashes on
+  roughly a 3px row rhythm, with the horizontal spread widening as they come toward
+  the viewer. If the dashes merge into a continuous bright triangle, there are too many
+  or they are too long.
+- The near waterline is a hard edge; soften it with a value step, not a blur.
+
+**Silhouettes and repetition**
+
+- Terrain skylines want **two noise scales**: a large one for the massing and a small
+  one (about a quarter the amplitude) for the detail, or the result looks like smooth
+  hills rather than rock. Break-jagged is not the goal - the step lengths along a curve
+  should change gradually, 2,1,1,2,1,1, never 4,1,4.
+- Trees, rocks and shrubs: vary size about +/-40%, vary spacing about +/-30%, and leave
+  gaps. A row of identical triangles at even intervals is a hedge.
+- Give masses an irregular outline. A tree canopy drawn as \`draw_ellipse\` reads as a
+  balloon; 7-9 polygon points with the radius jittered by about +/-25% reads as
+  foliage. Add a trunk and a lit side, and keep the highlight small.
+- A foreground silhouette anchored in a corner creates the strongest cheap depth cue
+  there is - but give it information. A large flat dark wedge is a hole, not a
+  foreground.
+
+**Light**
+
+- One light source, on a third, and every shadow agrees with it. Rim-light the lit
+  side; keep the shadow side one or two ramp steps down, not black.
+- Keep pure white and pure black for a specular core and an outline respectively, and
+  use near-white/near-black everywhere else.
+
+## 13. Tilemaps and auto-tiling
 
 A tilemap is a grid of tile indices, separate from the sprite's pixel layers. It is the
 right structure for terrain, walls and floors: cheaper to edit, and it exports straight
@@ -301,10 +463,12 @@ into a game engine.
 /** Short, always-included preamble for prompts that do not need the full guide. */
 export const SKILL_SUMMARY =
   'Pixel art workflow: block the silhouette in one flat colour on a base layer, ' +
-  'return a 4x inline preview from the same run_script/apply_ops call, then shade with ' +
-  'add_palette_ramp hue-shifted ramps and outline selectively. Prefer cluster2/cluster4 over full-field 1px ' +
-  'dither, run quality_report before finalising, and finish with one finalize_document call. ' +
-  'Read pixel://skill before drawing anything non-trivial.';
+  'return an inline preview at the default 1:1 scale from the same run_script/apply_ops call, ' +
+  'then shade with add_palette_ramp hue-shifted ramps and outline selectively. ' +
+  'Judge the whole piece at 100% before zooming; keep dither to 3-5px seams only ' +
+  '(cluster levels quantise to sixteenths); place shading inside the layer-visible band; ' +
+  'and break up repeated shapes. Run quality_report before finalising and finish with one ' +
+  'finalize_document call. Read pixel://skill before drawing anything non-trivial.';
 
 /** URI of the scripting/plugin guide resource. */
 export const SCRIPT_GUIDE_URI = 'pixel://script-guide';
@@ -323,8 +487,10 @@ export const SCRIPT_GUIDE = `# Scripting and plugins
 not cover: procedural patterns, maths-heavy placement, reading many pixels at once,
 or looping an edit over every frame.
 
-For a visual iteration, pass \`preview: true\` and \`previewOptions: {scale: 4}\`; the
-PNG is returned with the script result, so no follow-up \`get_preview\` call is needed.
+For a visual iteration, pass \`preview: true\` and leave \`previewOptions\` at its default;
+the PNG is returned with the script result, so no follow-up \`get_preview\` call is needed.
+The default scale is 1:1, which is the only correct view for judging the piece as a
+whole - pass \`previewOptions: {rect, scale}\` when you want to inspect one detail at 4x.
 Use \`expectedVersion\` when another editor may have changed the document since your
 last read. \`finalize_document\` saves the source and writes PNG exports in one call.
 
@@ -350,6 +516,9 @@ last read. \`finalize_document\` saves the source and writes PNG exports in one 
   For a layer-specific sample, call \`sample(x, y, { layer, frame })\`; the default
   composite sample can hit an opaque water/sky layer and hide a nearby silhouette.
   \`getPixel\` is already layer-specific.
+- **An unpainted pixel reads as \`null\`, not a zeroed colour.** Both readers return
+  \`null\` for a fully transparent pixel, so \`if (getPixel(x, y))\` is a valid emptiness
+  test. Do not test \`a === 0\`; that branch is unreachable by design.
 - \`log(...)\` records output; everything logged is returned in the tool result's \`logs\`.
 - The script's return value is JSON-serialised into \`result\`. Return a plain object
   or array; functions and class instances are not preserved.
@@ -359,8 +528,10 @@ last read. \`finalize_document\` saves the source and writes PNG exports in one 
 - No \`require\`, \`process\`, \`module\`, filesystem or network access.
 - No \`eval\` or \`new Function\` - dynamic code generation is disabled at the context
   level, so the usual sandbox-escape tricks do not even start.
-- A wall-clock timeout (default 2000 ms, override with \`timeoutMs\`). An infinite
-  loop is killed and reported as \`Script timed out after Nms\`.
+- A wall-clock timeout (default 15000 ms over MCP, override with \`timeoutMs\`). An infinite
+  loop is killed and reported as \`Script timed out after Nms\`. A script that generates
+  a whole 256x256 scene is a few hundred command calls, so raise \`timeoutMs\` rather than
+  splitting the work across scripts.
 
 ## Undo
 

@@ -102,7 +102,13 @@ describe('tool surface', () => {
   it('lists commands compactly by default and in full on request', async () => {
     const compact = (await client.callTool({ name: 'list_commands', arguments: {} })) as ToolResult;
     const body = payload(compact);
-    expect(body.count).toBe(57);
+    // Baseline plus the landscape primitives: draw_polyline, mirror and shade_band.
+    expect(body.count).toBe(
+      (body.commands as unknown[]).length,
+    );
+    expect((body.commands as Array<{ name: string }>).map((c) => c.name)).toEqual(
+      expect.arrayContaining(['draw_polyline', 'mirror', 'shade_band']),
+    );
 
     const entry = (body.commands as Array<Record<string, unknown>>).find((c) => c.name === 'draw_rect');
     expect(entry?.required).toContain('rect');
@@ -111,10 +117,15 @@ describe('tool surface', () => {
 
     // This used to be ~188 kB of JSON Schema, which an agent had to script around.
     // It now also carries the hand-registered session tools (undo/redo/history,
-    // perception, export, quality), the bulk/generative commands, and a richer
-    // palette-ramp command. Keep the default response comfortably below the
-    // previous full-schema scale while leaving room for their parameter hints.
-    expect(JSON.stringify(body).length).toBeLessThan(30_000);
+    // perception, export, quality), the bulk/generative commands, a richer
+    // palette-ramp command and the landscape primitives. The guard is relative, not an
+    // absolute byte count: the point is that the compact form stays orders of magnitude
+    // below the full-schema response asserted below, so adding commands with good
+    // `.describe()` text does not require editing a magic number every time.
+    const compactBytes = JSON.stringify(body).length;
+    const verboseResponse = await client.callTool({ name: 'list_commands', arguments: { verbose: true } });
+    const verboseBytes = JSON.stringify(payload(verboseResponse as ToolResult)).length;
+    expect(compactBytes).toBeLessThan(verboseBytes / 2);
 
     const verbose = (await client.callTool({
       name: 'list_commands',
@@ -123,6 +134,29 @@ describe('tool surface', () => {
     const full = (payload(verbose).commands as Array<{ params: Record<string, unknown> }>)[0];
     expect(full.params.type).toBe('object');
     expect(full.params.additionalProperties).toBe(false);
+  });
+
+  it('documents the landscape primitives well enough to call without reading the source', async () => {
+    const body = payload((await client.callTool({ name: 'list_commands', arguments: {} })) as ToolResult);
+    const commands = body.commands as Array<{ name: string; description: string; params: Record<string, string> }>;
+
+    // The three primitives that replaced hand-rolled helpers during landscape work.
+    // The `?` suffix is how `list_commands` marks an optional parameter, so `points`
+    // being optional is correct here: `shade_band` accepts `points` *or* `top`.
+    const shadeBand = commands.find((c) => c.name === 'shade_band');
+    expect(shadeBand?.description).toMatch(/follows a silhouette/i);
+    expect(shadeBand?.params.points).toBe('object[]?');
+    expect(shadeBand?.params.thickness).toBe('integer?');
+
+    const mirror = commands.find((c) => c.name === 'mirror');
+    expect(mirror?.description).toMatch(/waterline|arbitrary line/i);
+    // `about` is the whole point: without it this is just `flip`.
+    expect(mirror?.params.about).toBe('integer?');
+    expect(mirror?.params.copyTo).toBeDefined();
+
+    const polyline = commands.find((c) => c.name === 'draw_polyline');
+    expect(polyline?.params.points).toBe('object[]');
+    expect(polyline?.params.close).toBe('boolean?');
   });
 });
 

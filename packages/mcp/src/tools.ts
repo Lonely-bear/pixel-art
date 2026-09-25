@@ -120,6 +120,7 @@ const READ_ONLY_TOOLS = new Set([
   'get_history',
   'get_preview',
   'get_pixels',
+  'histogram',
   'quality_report',
   'list_commands',
   'list_documents',
@@ -139,7 +140,8 @@ const SESSION_TOOLS: Array<{ name: string; description: string }> = [
   { name: 'get_history', description: 'Recent commands with labels and summaries.' },
   { name: 'get_preview', description: 'Render the sprite (or a rect) as a PNG to look at.' },
   { name: 'get_pixels', description: 'Exact pixel colours in a small region.' },
-  { name: 'quality_report', description: 'Objective softness/noise report and fix warnings.' },
+  { name: 'histogram', description: 'Per-colour pixel counts and unused palette slots for a region.' },
+  { name: 'quality_report', description: 'Objective softness/noise report, composition diagnostics and fix warnings.' },
   { name: 'get_document', description: 'Layers, frames, tags, palette.' },
   { name: 'get_palette', description: 'Palette as hex colours with indices.' },
   { name: 'list_documents', description: 'List open documents.' },
@@ -410,6 +412,248 @@ interface QualityAnalysisOptions {
   grid?: number;
 }
 
+type PixelAt = (x: number, y: number) => { r: number; g: number; b: number; a: number } | null;
+
+function luminanceOf(c: { r: number; g: number; b: number }): number {
+  return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+}
+
+/**
+ * Palette slots that never reach the canvas, plus the used pairs that sit closer
+ * together than the eye resolves as separate tones.
+ *
+ * Reporting the *indices* matters: "5 colours are unused" is not actionable, but
+ * "remove slots 17 and 18" is.
+ */
+function analyzePaletteUsage(
+  paletteColors: readonly { r: number; g: number; b: number; a: number }[],
+  unique: Set<number>,
+  crowdedDelta: number,
+): { unusedIndices: number[]; crowded: Array<{ a: number; b: number; delta: number }> } {
+  const packed = (c: { r: number; g: number; b: number; a: number }): number =>
+    ((c.r & 255) << 24) | ((c.g & 255) << 16) | ((c.b & 255) << 8) | (c.a & 255);
+  const unusedIndices: number[] = [];
+  const present: Array<{ index: number; color: { r: number; g: number; b: number } }> = [];
+  paletteColors.forEach((color, index) => {
+    if (unique.has(packed(color))) present.push({ index, color });
+    else unusedIndices.push(index);
+  });
+  const crowded: Array<{ a: number; b: number; delta: number }> = [];
+  for (let i = 0; i < present.length; i++) {
+    for (let j = i + 1; j < present.length; j++) {
+      const a = present[i];
+      const b = present[j];
+      const delta = Math.max(
+        Math.abs(a.color.r - b.color.r),
+        Math.abs(a.color.g - b.color.g),
+        Math.abs(a.color.b - b.color.b),
+      );
+      if (delta > 0 && delta < crowdedDelta) crowded.push({ a: a.index, b: b.index, delta });
+    }
+  }
+  crowded.sort((left, right) => left.delta - right.delta);
+  return { unusedIndices, crowded: crowded.slice(0, 12) };
+}
+
+/**
+ * Count full-width tonal edges, split by how hard the step is.
+ *
+ * A dithered seam only perturbs alternate pixels, so its mean delta stays around half
+ * the step and is filtered out. But a legitimate 10-band sky gradient also produces
+ * nine edges, so counting them all would condemn every well-formed gradient. What
+ * actually flattens a composition is a run of *strong* unrelated steps, so the strong
+ * count is what the warning keys on and the total is kept as context.
+ */
+function countHorizontalBands(
+  at: PixelAt,
+  width: number,
+  height: number,
+  alphaThreshold: number,
+  deltaThreshold: number,
+  strongThreshold: number,
+): { horizontalBands: number; strongBands: number } {
+  let bands = 0;
+  let strongBands = 0;
+  for (let y = 1; y < height; y++) {
+    let sum = 0;
+    let count = 0;
+    for (let x = 0; x < width; x++) {
+      const above = at(x, y - 1);
+      const below = at(x, y);
+      if (!above || !below || above.a < alphaThreshold || below.a < alphaThreshold) continue;
+      sum += Math.abs(luminanceOf(below) - luminanceOf(above));
+      count++;
+    }
+    if (count < width * 0.6) continue;
+    const mean = sum / count;
+    if (mean < deltaThreshold) continue;
+    bands++;
+    if (mean >= strongThreshold) strongBands++;
+  }
+  return { horizontalBands: bands, strongBands };
+}
+
+function coefficientOfVariation(values: number[]): number {
+  if (values.length < 2) return 0;
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  if (mean === 0) return 0;
+  const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
+  return Math.sqrt(variance) / Math.abs(mean);
+}
+
+/**
+ * Regularity of the silhouette's skyline.
+ *
+ * Take the topmost solid pixel per column, find the peaks in that profile, and measure
+ * how evenly they are spaced and how uniform their height is. Near-zero variation over
+ * five or more peaks is the signature of a hedge, a picket fence or a row of identical
+ * props - the procedural-repetition failure that no existing metric catches.
+ */
+function analyzeSkylineRhythm(
+  at: PixelAt,
+  width: number,
+  height: number,
+  alphaThreshold: number,
+): { peaks: number; spacingCV: number; heightCV: number; uniform: boolean; measurable: boolean; note: string } {
+  const skyline: Array<{ x: number; y: number }> = [];
+  let offTopEdge = 0;
+  for (let x = 0; x < width; x++) {
+    for (let y = 0; y < height; y++) {
+      const c = at(x, y);
+      if (c && c.a >= alphaThreshold) {
+        skyline.push({ x, y });
+        if (y > 0) offTopEdge++;
+        break;
+      }
+    }
+  }
+  const unmeasurable = (note: string) => ({
+    peaks: 0, spacingCV: 0, heightCV: 0, uniform: false, measurable: false, note,
+  });
+  // A canvas that is opaque right down to the top edge has no silhouette at all - a
+  // full-bleed background or a landscape whose sky fills the frame. Say so rather than
+  // returning `peaks: 0`, which reads like "checked, nothing wrong".
+  if (skyline.length >= width * 0.9 && offTopEdge === 0) {
+    return unmeasurable('opaque from the top edge: the frame has no silhouette to measure');
+  }
+  if (skyline.length < 9) return unmeasurable('too few columns contain artwork');
+
+  const peaks: Array<{ x: number; y: number }> = [];
+  for (let i = 1; i < skyline.length - 1; i++) {
+    const y = skyline[i].y;
+    const left = skyline[i - 1].y;
+    const right = skyline[i + 1].y;
+    // Require a real rise so a flat top edge does not manufacture hundreds of peaks.
+    if (y <= left && y <= right && (left - y >= 2 || right - y >= 2)) {
+      peaks.push({ x: skyline[i].x, y });
+    }
+  }
+  if (peaks.length < 3) {
+    return {
+      peaks: peaks.length, spacingCV: 0, heightCV: 0, uniform: false, measurable: true,
+      note: `only ${peaks.length} peak(s) in the silhouette - too few to judge repetition`,
+    };
+  }
+
+  const spacings: number[] = [];
+  for (let i = 1; i < peaks.length; i++) spacings.push(peaks[i].x - peaks[i - 1].x);
+  const spacingCV = coefficientOfVariation(spacings);
+  const heightCV = coefficientOfVariation(peaks.map((peak) => peak.y));
+  return {
+    peaks: peaks.length,
+    spacingCV,
+    heightCV,
+    uniform: peaks.length >= 5 && spacingCV < 0.18 && heightCV < 0.2,
+    measurable: true,
+    note: 'spacing and height variation measured across the silhouette peaks',
+  };
+}
+
+/**
+ * How many distinct coverage levels a pattern can actually produce.
+ *
+ * The ordered patterns decide per pixel by comparing a threshold matrix against
+ * `level`, so the requested value is silently floored to the next available step:
+ * `cluster2`/`cluster4`/`bayer4` have 16, `bayer8` has 64, and the binary patterns
+ * (checker, dots, sparse, lines) have two. Asking for 0.08 and 0.10 therefore
+ * produces the identical field. Report the resolved value rather than making the
+ * caller read the rasteriser to discover it.
+ */
+function ditherLevelResolution(pattern: string): number {
+  if (pattern === 'bayer8') return 64;
+  if (pattern === 'bayer4' || pattern === 'cluster2' || pattern === 'cluster4') return 16;
+  return 2;
+}
+
+function resolveDitherLevel(pattern: string, level: number): number {
+  const steps = ditherLevelResolution(pattern);
+  const clamped = Math.max(0, Math.min(1, level));
+  if (steps <= 2) return clamped >= 1 ? 1 : 0;
+  return Math.floor(clamped * steps) / steps;
+}
+
+/** Area a dither op will cover, or 0 when it targets the whole cel. */
+function ditherRegionArea(params: Record<string, unknown>): number {
+  const areaOf = (rect: unknown): number => {
+    if (!rect || typeof rect !== 'object') return 0;
+    const r = rect as { w?: unknown; h?: unknown };
+    const w = typeof r.w === 'number' ? r.w : 0;
+    const h = typeof r.h === 'number' ? r.h : 0;
+    return w > 0 && h > 0 ? w * h : 0;
+  };
+  const rect = params.rect as unknown;
+  if (rect) return areaOf(rect);
+  const shape = params.shape as Record<string, unknown> | undefined;
+  if (shape) {
+    if (shape.rect) return areaOf(shape.rect);
+    if (shape.ellipse) return areaOf(shape.ellipse);
+    if (Array.isArray(shape.polygon) && shape.polygon.length >= 3) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const point of shape.polygon as Array<{ x?: unknown; y?: unknown }>) {
+        const x = typeof point?.x === 'number' ? point.x : 0;
+        const y = typeof point?.y === 'number' ? point.y : 0;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+      const w = maxX - minX + 1;
+      const h = maxY - minY + 1;
+      return w > 0 && h > 0 ? w * h : 0;
+    }
+  }
+  return 0;
+}
+
+/** A dither field bigger than this reads as texture, not as a tone. */
+const DITHER_FIELD_AREA_LIMIT = 1500;
+
+/**
+ * Advisory checks for one `dither_fill` op, returned as human-readable strings.
+ *
+ * The failure this catches is the most common way a large canvas turns to mud: one
+ * low-coverage stipple spread across a whole region. A 3-5px seam between two tones
+ * is correct; the same level across 40x40 pixels is a lattice you can trace.
+ */
+function ditherAdvisories(params: Record<string, unknown>): string[] {
+  const notes: string[] = [];
+  const pattern = typeof params.pattern === 'string' ? params.pattern : 'bayer4';
+  const requested = typeof params.level === 'number' ? params.level : 0.5;
+  const resolved = resolveDitherLevel(pattern, requested);
+  if (Math.abs(resolved - requested) > 0.01) {
+    notes.push(
+      `level ${requested} resolves to ${resolved} for pattern "${pattern}"; it quantises to ${1 / ditherLevelResolution(pattern)}.`,
+    );
+  }
+  const area = ditherRegionArea(params);
+  if (area > DITHER_FIELD_AREA_LIMIT && resolved > 0 && resolved < 0.5) {
+    notes.push(
+      `This dithers ${area}px at level ${resolved}. Past about ${DITHER_FIELD_AREA_LIMIT}px a low-coverage field stops reading as a tone and reads as a visible lattice. Shrink it to a 3-5px seam, raise the level, or use "cluster4".`,
+    );
+  }
+  return notes;
+}
+
 /**
  * Objective heuristic report for the perceptual problems agents cannot see in a
  * thumbnail: isolated dither speckles, high-frequency outliers, clipped highlights
@@ -512,6 +756,9 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
     return unique.has(key);
   }).length;
   const outsidePaletteRatio = opaque > 0 ? Math.max(0, 1 - palettePixels / opaque) : 0;
+  const paletteUsage = analyzePaletteUsage(paletteColors, unique, 6);
+  const bands = countHorizontalBands(at, width, height, alphaThreshold, 20, 32);
+  const rhythm = analyzeSkylineRhythm(at, width, height, alphaThreshold);
   const softnessScore = Math.max(
     0,
     Math.min(
@@ -553,15 +800,36 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
       message: `${(overexposedRatio * 100).toFixed(2)}% of solid pixels are near-white. Reduce glow/bloom coverage; a soft pixel piece keeps a value ceiling, not a white-out.`,
     });
   }
-  if (paletteColors.length > 0 && paletteUsed < paletteColors.length) {
-    const unused = paletteColors.length - paletteUsed;
-    if (unused > Math.max(2, paletteColors.length * 0.1)) {
-      warnings.push({
-        code: 'unused_palette_slots',
-        severity: 'info',
-        message: `${unused} of ${paletteColors.length} palette colours are unused. Tighten the palette or use the idle slots deliberately.`,
-      });
-    }
+  if (paletteUsage.unusedIndices.length > 0) {
+    const slots = paletteUsage.unusedIndices;
+    const preview = slots.slice(0, 12).join(', ');
+    warnings.push({
+      code: 'unused_palette_slots',
+      severity: 'info',
+      message: `${slots.length} of ${paletteColors.length} palette slots are unused: indices ${preview}${slots.length > 12 ? ', ...' : ''}. Use them deliberately or drop them; \`palette.unusedIndices\` lists them all.`,
+    });
+  }
+  if (paletteUsage.crowded.length > 0) {
+    const worst = paletteUsage.crowded[0];
+    warnings.push({
+      code: 'palette_crowding',
+      severity: 'info',
+      message: `${paletteUsage.crowded.length} in-use palette pair(s) sit closer than 6/255 on the max channel and will read as the same tone (closest: slots ${worst.a} and ${worst.b}, delta ${worst.delta}). Widen the ramp or drop one of the pair.`,
+    });
+  }
+  if (bands.strongBands > 3) {
+    warnings.push({
+      code: 'horizontal_banding',
+      severity: 'warning',
+      message: `${bands.strongBands} strong full-width tonal edges (${bands.horizontalBands} edges in total). Past about three strong ones the composition reads as stacked stripes rather than depth. Break them with a vertical or diagonal element - a light path, a foreground silhouette, a waterfall.`,
+    });
+  }
+  if (rhythm.uniform) {
+    warnings.push({
+      code: 'uniform_rhythm',
+      severity: 'warning',
+      message: `The silhouette resolves into ${rhythm.peaks} peaks with very even spacing (CV ${rhythm.spacingCV.toFixed(2)}) and height (CV ${rhythm.heightCV.toFixed(2)}), which reads as a hedge or wallpaper. Vary spacing and size, and leave gaps.`,
+    });
   }
   if (sprite.paletteLocked && outsidePaletteRatio > 0.1) {
     warnings.push({
@@ -650,8 +918,15 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
       size: paletteColors.length,
       used: paletteUsed,
       unused: paletteColors.length - paletteUsed,
+      unusedIndices: paletteUsage.unusedIndices,
+      crowded: paletteUsage.crowded,
       locked: sprite.paletteLocked ?? false,
       outsideRatio: outsidePaletteRatio,
+    },
+    structure: {
+      horizontalBands: bands.horizontalBands,
+      strongBands: bands.strongBands,
+      rhythm,
     },
     luminance: {
       mean: meanLuminance,
@@ -1240,6 +1515,93 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
 
   addTool(
     server,
+    'histogram',
+    {
+      title: 'Count the colours actually on the canvas',
+      description:
+        'Return the pixel count per colour in a region in one call, each matched to its palette slot index. This is the cheap way to answer "which colours does this really contain": `get_pixels` is capped at 32x32 per call, so tallying a large canvas that way needs dozens of round trips. Also reports unused palette slots so the palette can be tightened.',
+      inputSchema: z.object({
+        document: documentRef,
+        frame: frameRefSchema.optional().describe('Frame id or 0-based index. Defaults to frame 0.'),
+        rect: z
+          .object({ x: z.number().int(), y: z.number().int(), w: z.number().int().min(1), h: z.number().int().min(1) })
+          .optional()
+          .describe('Region to tally, `{x, y, w, h}`. Defaults to the whole canvas.'),
+        alphaThreshold: z.number().int().min(1).max(255).optional().describe('Alpha at or above this counts as solid. Defaults to 1.'),
+        limit: z.number().int().min(1).max(512).optional().describe('Maximum colours listed, most frequent first. Defaults to 64.'),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    (args) => {
+      try {
+        const doc = store.require(args.document as string | undefined);
+        const sprite = doc.editor.sprite;
+        const frame = resolveFrame(sprite, (args.frame as number | string | undefined) ?? 0);
+        const buffer = compositeFrame(sprite, frame.id);
+        const rect = (args.rect as { x: number; y: number; w: number; h: number } | undefined) ?? {
+          x: 0, y: 0, w: sprite.width, h: sprite.height,
+        };
+        const alphaThreshold = Math.max(1, Math.min(255, Math.floor((args.alphaThreshold as number | undefined) ?? 1)));
+        const limit = Math.max(1, Math.min(512, Math.floor((args.limit as number | undefined) ?? 64)));
+
+        const counts = new Map<number, { count: number; r: number; g: number; b: number; a: number }>();
+        let solid = 0;
+        let transparent = 0;
+        for (let y = rect.y; y < rect.y + rect.h; y++) {
+          for (let x = rect.x; x < rect.x + rect.w; x++) {
+            if (!buffer.contains(x, y)) continue;
+            const c = buffer.getColor(x, y);
+            if (c.a < alphaThreshold) {
+              if (c.a === 0) transparent++;
+              continue;
+            }
+            solid++;
+            const key = ((c.r & 255) << 24) | ((c.g & 255) << 16) | ((c.b & 255) << 8) | (c.a & 255);
+            const existing = counts.get(key);
+            if (existing) existing.count++;
+            else counts.set(key, { count: 1, r: c.r, g: c.g, b: c.b, a: c.a });
+          }
+        }
+
+        const hex = (n: number): string => n.toString(16).padStart(2, '0');
+        const keyOf = (c: { r: number; g: number; b: number; a: number }): number =>
+          ((c.r & 255) << 24) | ((c.g & 255) << 16) | ((c.b & 255) << 8) | (c.a & 255);
+        const slotOf = new Map<number, number>();
+        sprite.palette.colors.forEach((color, index) => slotOf.set(keyOf(color), index));
+
+        const ranked = [...counts.entries()].sort((a, b) => b[1].count - a[1].count);
+        const colors = ranked.slice(0, limit).map(([key, entry]) => ({
+          hex: entry.a === 255
+            ? `#${hex(entry.r)}${hex(entry.g)}${hex(entry.b)}`
+            : `#${hex(entry.r)}${hex(entry.g)}${hex(entry.b)}${hex(entry.a)}`,
+          count: entry.count,
+          ratio: solid > 0 ? entry.count / solid : 0,
+          paletteIndex: slotOf.has(key) ? (slotOf.get(key) as number) : null,
+        }));
+        const unusedPaletteIndices: number[] = [];
+        sprite.palette.colors.forEach((color, index) => {
+          if (!counts.has(keyOf(color))) unusedPaletteIndices.push(index);
+        });
+
+        return ok({
+          ok: true,
+          frame: sprite.frames.findIndex((f) => f.id === frame.id),
+          rect,
+          solid,
+          transparent,
+          distinctColors: counts.size,
+          truncated: ranked.length > colors.length,
+          colors,
+          unusedPaletteIndices,
+        });
+      } catch (error) {
+        return fail((error as Error).message);
+      }
+    },
+  );
+
+  addTool(
+    server,
     'get_palette',
     {
       title: 'Read the palette',
@@ -1273,7 +1635,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Measure softness and noise quality',
       description:
-        'Read-only heuristic report over an objective raster: isolated-pixel ratio, colour-outlier ratio, mean edge contrast, near-white highlight ratio, palette usage and a rough 0-100 softness score, plus actionable warnings. Use it before finalising a detailed canvas, then fix the flagged layers with `despeckle` and `antialias`. Pass `rect` to inspect only the region you just drew.',
+        'Read-only heuristic report over an objective raster: isolated-pixel ratio, colour-outlier ratio, mean edge contrast, near-white highlight ratio, palette usage and a rough 0-100 softness score, plus actionable warnings. Also reports composition diagnostics: `palette.unusedIndices` (exact slot numbers to drop), `palette.crowded` (used pairs closer than 6/255, i.e. steps that will not read as separate tones), `structure.strongBands` (full-width tonal edges large enough to flatten a composition; many gentle gradient steps are deliberately not counted) and `structure.rhythm` (evenness of the silhouette skyline, which flags hedge/wallpaper repetition - check `measurable` first, a frame with no silhouette has nothing to judge). Use it before finalising a detailed canvas, then fix the flagged layers with `despeckle` and `antialias`. Pass `rect` to inspect only the region you just drew.',
       inputSchema: z.object({
         document: documentRef,
         frame: frameRefSchema.optional().describe('Frame id or 0-based index. Defaults to frame 0.'),
@@ -1438,6 +1800,10 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           .boolean()
           .optional()
           .describe('Return only the counts and the failures, without per-op summaries. Use it for long batches where you only care that nothing broke.'),
+        singleUndoStep: z
+          .boolean()
+          .optional()
+          .describe('Collapse the whole batch into one undo entry, the way `run_script` already does. Defaults to false, where every op is its own history entry.'),
         preview: z
           .boolean()
           .optional()
@@ -1491,52 +1857,68 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
 
       const results: Array<Record<string, unknown>> = [];
       const failures: Array<Record<string, unknown>> = [];
+      const advisories: Array<{ index: number; command: string; message: string }> = [];
       let applied = 0;
       let failed = 0;
       let stoppedAt: number | null = null;
+      const singleStep = args.singleUndoStep === true;
 
-      for (let i = 0; i < rawOps.length; i++) {
-        let op: { command: string; params: Record<string, unknown>; label?: string };
-        try {
-          op = normalizeOp(rawOps[i] ?? {});
-        } catch (error) {
-          failed++;
-          results.push({ index: i, ok: false, error: briefError(error) });
-          if (stopOnError) {
-            stoppedAt = i;
-            break;
+      const runOps = (): void => {
+        for (let i = 0; i < rawOps.length; i++) {
+          let op: { command: string; params: Record<string, unknown>; label?: string };
+          try {
+            op = normalizeOp(rawOps[i] ?? {});
+          } catch (error) {
+            failed++;
+            results.push({ index: i, ok: false, error: briefError(error) });
+            if (stopOnError) {
+              stoppedAt = i;
+              break;
+            }
+            continue;
           }
-          continue;
-        }
 
-        const command = store.registry.get(op.command);
-        if (command) {
-          // An explicit default beats the implicit one, which beats nothing.
-          const required = requiredArgsOf(command);
-          if (required.has('layer') && op.params.layer === undefined && defaults.layer !== undefined) {
-            op.params.layer = defaults.layer;
+          const command = store.registry.get(op.command);
+          if (command) {
+            // An explicit default beats the implicit one, which beats nothing.
+            const required = requiredArgsOf(command);
+            if (required.has('layer') && op.params.layer === undefined && defaults.layer !== undefined) {
+              op.params.layer = defaults.layer;
+            }
+            if (required.has('frame') && op.params.frame === undefined && defaults.frame !== undefined) {
+              op.params.frame = defaults.frame;
+            }
+            fillDefaults(doc.editor.sprite, command, op.params);
           }
-          if (required.has('frame') && op.params.frame === undefined && defaults.frame !== undefined) {
-            op.params.frame = defaults.frame;
-          }
-          fillDefaults(doc.editor.sprite, command, op.params);
-        }
 
-        const result = doc.editor.tryExecute(op.command, op.params, { label: op.label });
-        if (result.ok) {
-          applied++;
-          results.push({ index: i, command: op.command, ok: true, summary: result.summary });
-        } else {
-          failed++;
-          const error = briefError(result.error);
-          results.push({ index: i, command: op.command, ok: false, code: result.code, error });
-          failures.push({ index: i, command: op.command, code: result.code, error });
-          if (stopOnError) {
-            stoppedAt = i;
-            break;
+          // Dither is the one command whose misuse is invisible until the whole piece
+          // is judged, so say something at the moment it is issued rather than leaving
+          // it to `quality_report` - which can no longer tell a seam from a field.
+          if (op.command === 'dither_fill') {
+            for (const message of ditherAdvisories(op.params)) {
+              advisories.push({ index: i, command: op.command, message });
+            }
+          }
+
+          const result = doc.editor.tryExecute(op.command, op.params, { label: op.label });
+          if (result.ok) {
+            applied++;
+            results.push({ index: i, command: op.command, ok: true, summary: result.summary });
+          } else {
+            failed++;
+            const error = briefError(result.error);
+            results.push({ index: i, command: op.command, ok: false, code: result.code, error });
+            failures.push({ index: i, command: op.command, code: result.code, error });
+            if (stopOnError) {
+              stoppedAt = i;
+              break;
+            }
           }
         }
-      }
+      };
+
+      if (singleStep) doc.editor.transaction('apply_ops', runOps);
+      else runOps();
 
       // A skipped tail is the one thing an agent cannot infer from the results, so say
       // it out loud: ops after `stoppedAt` never ran.
@@ -1545,7 +1927,10 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
       if (applied > 0) store.touch(doc);
 
       if (atomic && failed > 0) {
-        for (let i = 0; i < applied; i++) doc.editor.undo();
+        // One undo unwinds the whole collapsed transaction; otherwise there is one
+        // history entry per successful op.
+        const undoSteps = singleStep ? Math.min(1, applied) : applied;
+        for (let i = 0; i < undoSteps; i++) doc.editor.undo();
         return ok({
           ok: false,
           rolledBack: true,
@@ -1554,6 +1939,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           skipped,
           version: doc.editor.version,
           failures,
+          advisories,
         });
       }
 
@@ -1582,6 +1968,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           // The failure list is small and always worth having; the per-op results
           // are the bulky part, so `quiet` drops those instead.
           ...(failed > 0 ? { failures } : {}),
+          ...(advisories.length > 0 ? { advisories } : {}),
           ...(quiet ? {} : { results }),
           ...(previewMeta ? { preview: previewMeta } : {}),
           ...(previewError
@@ -1601,7 +1988,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Export a PNG',
       description:
-        'Write the composited sprite to a PNG file. One frame by default; pass `frames: "all"` to write one file per frame (`name_0.png`, `name_1.png`, ...). Use `scale` to write a larger preview.',
+        'Write the composited sprite to a PNG file. One frame by default; pass `frames: "all"` to write one file per frame (`name_0.png`, `name_1.png`, ...). Use `scale` to write a larger preview, and `rect` to crop first - writing a 1:1 crop to disk is the reliable fallback when an inline preview cannot be trusted.',
       inputSchema: z.object({
         document: documentRef,
         out: z.string().optional().describe('Destination PNG path.'),
@@ -1609,6 +1996,10 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         frame: frameRefSchema.optional().describe('Frame id or 0-based index. Defaults to frame 0.'),
         frames: z.enum(['one', 'all']).optional().describe('"one" (default) or "all" for one file per frame.'),
         scale: z.number().int().min(1).max(32).optional().describe('Integer upscale factor. Defaults to 1 (pixel-exact).'),
+        rect: z
+          .object({ x: z.number().int(), y: z.number().int(), w: z.number().int().min(1), h: z.number().int().min(1) })
+          .optional()
+          .describe('Crop to this region before writing, `{x, y, w, h}`. Lets a caller save a detail or a 1:1 crop to disk when the inline preview is not trustworthy.'),
         background: z.string().nullable().optional().describe('Composite over this colour instead of transparency.'),
       }),
       annotations: { destructiveHint: false },
@@ -1625,22 +2016,31 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         if (!out) return fail('`out` (or `path`) is required: where should the PNG be written?');
 
         const written: string[] = [];
+        const crop = args.rect as { x: number; y: number; w: number; h: number } | undefined;
+        const render = (frameId: string): PixelBuffer => {
+          let buffer = compositeFrame(sprite, frameId, { background });
+          if (crop) buffer = extractRegion(buffer, crop);
+          if (scale > 1) buffer = scaleNearest(buffer, scale);
+          return buffer;
+        };
+        let outWidth = sprite.width;
+        let outHeight = sprite.height;
+        if (crop) {
+          outWidth = crop.w;
+          outHeight = crop.h;
+        }
         if (args.frames === 'all' && sprite.frames.length > 1) {
           const dot = out.lastIndexOf('.');
           const base = dot > 0 ? out.slice(0, dot) : out;
           const ext = dot > 0 ? out.slice(dot) : '';
           sprite.frames.forEach((frame, index) => {
-            let buffer = compositeFrame(sprite, frame.id, { background });
-            if (scale > 1) buffer = scaleNearest(buffer, scale);
             const path = `${base}_${index}${ext}`;
-            writeFile(path, encodePNG(buffer));
+            writeFile(path, encodePNG(render(frame.id)));
             written.push(path);
           });
         } else {
           const frame = resolveFrame(sprite, (args.frame as number | string | undefined) ?? 0);
-          let buffer = compositeFrame(sprite, frame.id, { background });
-          if (scale > 1) buffer = scaleNearest(buffer, scale);
-          writeFile(out, encodePNG(buffer));
+          writeFile(out, encodePNG(render(frame.id)));
           written.push(out);
         }
 
@@ -1648,8 +2048,8 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           ok: true,
           files: written,
           absolute: written.map(absPath),
-          width: sprite.width * scale,
-          height: sprite.height * scale,
+          width: outWidth * scale,
+          height: outHeight * scale,
           scale,
         });
       } catch (error) {
@@ -1912,7 +2312,9 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           .positive()
           .max(60000)
           .optional()
-          .describe('Execution budget in milliseconds. Defaults to 2000.'),
+          .describe(
+            'Execution budget in milliseconds. Defaults to 15000. Raise it for a script that generates a large field procedurally; a 256x256 scene can be a few hundred command calls inside one script.',
+          ),
         preview: z
           .boolean()
           .optional()
@@ -1943,7 +2345,10 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
       }
 
       const timeoutMs = args.timeoutMs as number | undefined;
-      const runtime = timeoutMs ? new ScriptRuntime({ timeoutMs }) : scriptRuntime;
+      // A procedural script that lays down a whole 256x256 scene is a few hundred
+      // command calls; the core default of 2s kills it mid-run. Give the MCP path a
+      // budget that matches the work agents actually submit.
+      const runtime = new ScriptRuntime({ timeoutMs: timeoutMs ?? 15_000 });
       const before = doc.editor.version;
       const outcome = runtime.run(args.source as string, doc.editor);
       if (doc.editor.version !== before) store.touch(doc);

@@ -1,9 +1,9 @@
 import { z } from 'zod';
 import { buildHueRamp } from '../ramp.js';
 import { clipRect } from '../geometry.js';
-import { drawPixels, putPixels, type PixelSpec } from '../raster.js';
+import { drawPixels, fillShape, putPixels, type PixelSpec } from '../raster.js';
 import type { Sprite } from '../document.js';
-import type { Color, ColorInput, Rect } from '../types.js';
+import type { Color, ColorInput, Point, Rect } from '../types.js';
 import {
   blendOptionsShape,
   celOf,
@@ -12,10 +12,13 @@ import {
   clipWarning,
   colorSchema,
   defineCommand,
+  ditherOptionsShape,
   frameRefSchema,
   frameIdOf,
   layerIdOf,
   layerRefSchema,
+  nullableColorSchema,
+  pointSchema,
   positiveRectSchema,
   resolveColor,
 } from './types.js';
@@ -425,4 +428,72 @@ export const scatterCommand = defineCommand({
   },
 });
 
-export const generativeCommands = [bandedGradientCommand, noiseFillCommand, scatterCommand];
+export const shadeBandCommand = defineCommand({
+  name: 'shade_band',
+  description:
+    'Paint a tonal band that follows a silhouette instead of a box. Give the crest polyline plus `offset` and `thickness` for the common case - a lit band under a ridge crest, a shadow band at its base - or `top`/`bottom` for a band between two arbitrary polylines. This is how shading stays attached to a shape: a rectangular band drifts off a curve and leaves a stripe hanging in the air. Lay it down solid for a tone, or give it a `pattern` and a `level` under 0.5 for the 3-5px dithered seam that belongs between two tones. Pair with `clip: {layer}` to keep it inside the silhouette.',
+  params: z.object({
+    layer: layerRefSchema,
+    frame: frameRefSchema,
+    points: z
+      .array(pointSchema)
+      .min(2)
+      .optional()
+      .describe('Crest polyline, left to right. Provide this or `top`; `offset` and `thickness` are measured from it.'),
+    offset: z
+      .number()
+      .int()
+      .min(-4096)
+      .max(4096)
+      .optional()
+      .describe('Pixels below the crest where the band starts. Defaults to 0.'),
+    thickness: z.number().int().min(1).max(4096).optional().describe('Band height in pixels. Defaults to 1.'),
+    top: z.array(pointSchema).min(2).optional().describe('Explicit top polyline, left to right. Use with `bottom`.'),
+    bottom: z.array(pointSchema).min(2).optional().describe('Explicit bottom polyline, in the same order as `top`.'),
+    color: nullableColorSchema,
+    ...ditherOptionsShape,
+    clip: clipSchema,
+    ...blendOptionsShape,
+  }),
+  apply(ctx, p) {
+    // Check the half-specified case first: `bottom` alone is a much more likely
+    // mistake than omitting everything, and it deserves its own message.
+    if (p.bottom && !p.top) {
+      throw new Error('shade_band: `bottom` needs `top` to pair with');
+    }
+    let top: Point[];
+    let bottom: Point[];
+    if (p.top) {
+      top = p.top;
+      bottom = p.bottom ?? p.top.map((pt) => ({ x: pt.x, y: pt.y + (p.thickness ?? 1) }));
+    } else if (p.points) {
+      const offset = p.offset ?? 0;
+      const thickness = p.thickness ?? 1;
+      top = p.points.map((pt) => ({ x: pt.x, y: pt.y + offset }));
+      bottom = p.points.map((pt) => ({ x: pt.x, y: pt.y + offset + thickness }));
+    } else {
+      throw new Error('shade_band needs `points` (a crest to measure from) or `top`/`bottom`');
+    }
+
+    // Walk the top edge left to right, then the bottom edge right to left, so the
+    // ribbon closes on itself however jagged the crest is.
+    const polygon = [...top, ...[...bottom].reverse()];
+    const buf = celOf(ctx, p.layer, p.frame);
+    const painted = fillShape(buf, { kind: 'polygon', points: polygon }, resolveColor(ctx.sprite, p.color), {
+      blend: p.blend,
+      opacity: p.opacity,
+      pattern: p.pattern as never,
+      level: p.level,
+      mask: clipMask(ctx, p.clip, p.layer, p.frame),
+    });
+    return {
+      painted,
+      top: top.length,
+      bottom: bottom.length,
+      thickness: p.thickness ?? 1,
+      ...clipWarning(ctx, p.clip, p.layer),
+    };
+  },
+});
+
+export const generativeCommands = [bandedGradientCommand, noiseFillCommand, scatterCommand, shadeBandCommand];

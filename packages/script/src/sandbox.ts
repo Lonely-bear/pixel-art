@@ -424,7 +424,10 @@ export class ScriptRuntime {
         const frame = safeResolve(() => resolveFrame(sprite, (payload?.frame as string | number) ?? 0));
         if (!layer || !frame) return null;
         const color = frame.cels.get(layer.id)?.getColor(Number(payload?.x), Number(payload?.y));
-        return color ? { ...color } : null;
+        // Fully transparent reads as "nothing there". Returning the zeroed colour
+        // instead would be a truthy object, so every `if (getPixel(...))` emptiness
+        // test in a script would silently be wrong.
+        return color && color.a > 0 ? { ...color } : null;
       }
       case 'sample': {
         if (!sprite) return null;
@@ -436,11 +439,11 @@ export class ScriptRuntime {
           const layer = safeResolve(() => resolveLayer(sprite, payload.layer as string | number));
           if (!layer) return null;
           const color = frame.cels.get(layer.id)?.getColor(x, y);
-          return color ? { ...color } : null;
+          return color && color.a > 0 ? { ...color } : null;
         }
         const buffer = compositeFrame(sprite, frame.id, { background: null });
         const color = buffer.getColor(x, y);
-        return color ? { ...color } : null;
+        return color && color.a > 0 ? { ...color } : null;
       }
       default:
         return { error: `Unknown bridge method: ${method}` };

@@ -77,6 +77,64 @@ export const flipCommand = defineCommand({
   },
 });
 
+export const mirrorCommand = defineCommand({
+  name: 'mirror',
+  description:
+    'Mirror a cel about an arbitrary line instead of the canvas centre. `axis: "horizontal"` mirrors left/right about a vertical line, `"vertical"` mirrors top/bottom about a horizontal one. `about` is the line position in pixels and defaults to the canvas centre; pass the waterline row to build a lake reflection in one call. `copyTo` writes the mirrored copy into another layer and leaves the source untouched - which is what a reflection needs - and otherwise merges into it. Omit `copyTo` to mirror in place.',
+  params: z.object({
+    layer: layerRefSchema.optional().describe('Layer to mirror. Omit for every layer.'),
+    frame: frameRefSchema.optional().describe('Frame to mirror. Omit for every frame.'),
+    axis: z.enum(['horizontal', 'vertical']).describe('`horizontal` mirrors left/right, `vertical` mirrors top/bottom.'),
+    about: z.number().int().optional().describe('Position of the mirror line in pixels. Defaults to the canvas centre on that axis.'),
+    copyTo: layerRefSchema.optional().describe('Write the mirrored copy into this layer and leave the source untouched. Omit to mirror in place.'),
+  }),
+  apply(ctx, p) {
+    const targets = selectCels(ctx, p.layer, p.frame);
+    if (targets.length === 0) return { cels: 0, axis: p.axis };
+    const { width, height } = ctx.sprite;
+    const about = p.about ?? (p.axis === 'horizontal' ? (width - 1) / 2 : (height - 1) / 2);
+
+    const mirrorBuffer = (buffer: PixelBuffer): PixelBuffer => {
+      const out = PixelBuffer.empty(buffer.width, buffer.height);
+      for (let y = 0; y < buffer.height; y++) {
+        for (let x = 0; x < buffer.width; x++) {
+          const c = buffer.getColor(x, y);
+          if (c.a === 0) continue;
+          const tx = p.axis === 'horizontal' ? Math.round(2 * about - x) : x;
+          const ty = p.axis === 'vertical' ? Math.round(2 * about - y) : y;
+          // Artwork mirrored past the edge is dropped, not wrapped.
+          if (tx < 0 || ty < 0 || tx >= buffer.width || ty >= buffer.height) continue;
+          out.setColor(tx, ty, c);
+        }
+      }
+      return out;
+    };
+
+    if (p.copyTo !== undefined) {
+      const destId = layerIdOf(ctx.sprite, p.copyTo);
+      for (const t of targets) {
+        const mirrored = mirrorBuffer(t.buffer);
+        const existing = t.frame.cels.get(destId);
+        if (!existing) {
+          t.frame.cels.set(destId, mirrored);
+          continue;
+        }
+        // Merge, so several source layers can each contribute to one reflection.
+        for (let y = 0; y < mirrored.height; y++) {
+          for (let x = 0; x < mirrored.width; x++) {
+            const c = mirrored.getColor(x, y);
+            if (c.a !== 0) existing.setColor(x, y, c);
+          }
+        }
+      }
+      return { cels: targets.length, axis: p.axis, about, copiedTo: destId, sourceUntouched: true };
+    }
+
+    for (const t of targets) t.frame.cels.set(t.layerId, mirrorBuffer(t.buffer));
+    return { cels: targets.length, axis: p.axis, about };
+  },
+});
+
 export const rotateCommand = defineCommand({
   name: 'rotate',
   description:

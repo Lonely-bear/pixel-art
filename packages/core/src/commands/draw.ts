@@ -217,6 +217,62 @@ export const drawLineCommand = defineCommand({
   },
 });
 
+export const drawPolylineCommand = defineCommand({
+  name: 'draw_polyline',
+  description:
+    'Stroke a path through several points as one command. Cheaper and cleaner than one `draw_line` per segment, and every interior vertex is also stamped with a square brush so a sharp corner joins up instead of leaving a notch. Use it for shorelines, ridges, branches, cracks, reeds and cables. The path is open unless `close: true`.',
+  params: z.object({
+    layer: layerRefSchema,
+    frame: frameRefSchema,
+    points: z.array(pointSchema).min(2).describe('Path vertices in order, at least 2.'),
+    color: nullableColorSchema,
+    width: z.number().int().min(1).max(64).optional().describe('Stroke thickness in pixels. Defaults to 1.'),
+    close: z.boolean().optional().describe('Join the last point back to the first. Defaults to false.'),
+    clip: clipSchema,
+    ...ditherOptionsShape,
+    ...blendOptionsShape,
+  }),
+  apply(ctx, p) {
+    const buf = celOf(ctx, p.layer, p.frame);
+    const color = resolveColor(ctx.sprite, p.color);
+    const width = p.width ?? 1;
+    const opts: DrawOptions = {
+      width,
+      blend: p.blend,
+      opacity: p.opacity,
+      pattern: p.pattern as never,
+      level: p.level,
+      mask: clipMask(ctx, p.clip, p.layer, p.frame),
+    };
+    const path = p.close === true ? [...p.points, p.points[0]] : p.points;
+
+    // Bresenham alone leaves a wedge missing at any corner sharper than 90 degrees,
+    // because neither segment's pixels cover the outside of the turn. Stamping a
+    // square brush at each vertex closes the join without needing a miter calculation.
+    const half = Math.floor((width - 1) / 2);
+    let painted = 0;
+    for (const point of path) {
+      painted += fillShape(
+        buf,
+        { kind: 'rect', rect: { x: point.x - half, y: point.y - half, w: width, h: width } },
+        color,
+        opts,
+      );
+    }
+    for (let i = 1; i < path.length; i++) {
+      painted += drawLine(buf, path[i - 1].x, path[i - 1].y, path[i].x, path[i].y, color, opts);
+    }
+    return {
+      painted,
+      points: p.points.length,
+      segments: path.length - 1,
+      width,
+      closed: p.close === true,
+      ...clipWarning(ctx, p.clip, p.layer),
+    };
+  },
+});
+
 export const drawRectCommand = defineCommand({
   name: 'draw_rect',
   description:

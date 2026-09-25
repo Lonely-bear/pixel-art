@@ -75,6 +75,34 @@ describe('ScriptRuntime.run', () => {
     });
   });
 
+  it('reports an unpainted pixel as null, not a zeroed colour', () => {
+    // A zeroed `{r:0,g:0,b:0,a:0}` object is truthy, so returning it for empty space
+    // would make every `if (getPixel(x, y))` emptiness test in a script wrong.
+    const editor = createEditor(
+      createSprite({ width: 8, height: 8, layers: ['base'], palette: createPalette('test', ['#ff0000']) }),
+    );
+    const runtime = new ScriptRuntime();
+    const outcome = runtime.run(
+      `exec('draw_pixels', { layer: 0, frame: 0, pixels: [{ x: 1, y: 1, color: '#ff0000' }] });
+       return {
+         emptyPixel: getPixel(5, 5, 'base', 0),
+         emptyIsFalsy: !getPixel(5, 5, 'base', 0),
+         paintedIsTruthy: !!getPixel(1, 1, 'base', 0),
+         emptySample: sample(6, 6, 0),
+         emptyLayerSample: sample(6, 6, { layer: 'base' }),
+       };`,
+      editor,
+    );
+    expect(outcome.ok).toBe(true);
+    expect(outcome.result).toEqual({
+      emptyPixel: null,
+      emptyIsFalsy: true,
+      paintedIsTruthy: true,
+      emptySample: null,
+      emptyLayerSample: null,
+    });
+  });
+
   it('fills script command defaults and supports layer-specific sample()', () => {
     const editor = createEditor(
       createSprite({ width: 8, height: 8, layers: ['base', 'top'], palette: createPalette('test', ['#ff0000', '#00ff00']) }),
