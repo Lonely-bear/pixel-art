@@ -12,8 +12,10 @@ export * from './transform.js';
 export * from './tilemap.js';
 
 import {
+  antialiasCommand,
   clearRegionCommand,
   copyRegionCommand,
+  despeckleCommand,
   ditherFillCommand,
   drawEllipseCommand,
   drawLineCommand,
@@ -29,6 +31,7 @@ import {
   addFrameCommand,
   addLayerCommand,
   addPaletteColorCommand,
+  addPaletteRampCommand,
   addTagCommand,
   duplicateFrameCommand,
   duplicateLayerCommand,
@@ -78,6 +81,8 @@ export const allCommands: Command[] = [
   fillCommand,
   ditherFillCommand,
   outlineCommand,
+  antialiasCommand,
+  despeckleCommand,
   replaceColorCommand,
   clearRegionCommand,
   copyRegionCommand,
@@ -101,6 +106,7 @@ export const allCommands: Command[] = [
   setPaletteCommand,
   setPaletteColorCommand,
   addPaletteColorCommand,
+  addPaletteRampCommand,
   removePaletteColorCommand,
   quantizeToPaletteCommand,
   renameSpriteCommand,

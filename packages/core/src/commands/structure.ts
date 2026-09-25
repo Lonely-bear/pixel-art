@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { blendInto } from '../blend.js';
 import { PixelBuffer } from '../buffer.js';
-import { parseColor } from '../color.js';
+import { colorToHex, packColor, parseColor } from '../color.js';
 import {
   defaultLayerName,
   findLayerIndex,
@@ -13,6 +13,7 @@ import {
 } from '../document.js';
 import { makeId } from '../ids.js';
 import { quantizeBuffer } from '../palette.js';
+import { buildHueRamp } from '../ramp.js';
 import {
   blendSchema,
   colorSchema,
@@ -22,6 +23,7 @@ import {
   frameRefSchema,
   layerIdOf,
   layerRefSchema,
+  resolveColor,
 } from './types.js';
 
 /* ------------------------------------------------------------------ *
@@ -308,6 +310,89 @@ export const addPaletteColorCommand = defineCommand({
     const palette = ctx.draft.palette();
     palette.colors.push(parseColor(p.color));
     return { index: palette.colors.length - 1, size: palette.colors.length };
+  },
+});
+
+export const addPaletteRampCommand = defineCommand({
+  name: 'add_palette_ramp',
+  description:
+    'Generate a hue-shifted colour ramp between two anchors and add it to the palette (or replace the palette with it). `hueShift` pulls the dark end toward blue and the light end toward amber by that many degrees; `shadowHue`/`highlightHue` set absolute endpoint hues instead. `saturationBoost` adds richness in the middle. This is the fastest way to build a coherent 3-8 step ramp for a material without hand-picking every colour.',
+  params: z.object({
+    from: colorSchema.describe('Dark anchor colour.'),
+    to: colorSchema.describe('Light anchor colour.'),
+    steps: z.number().int().min(2).max(32).optional().describe('Number of ramp colours. Defaults to 5.'),
+    hueShift: z
+      .number()
+      .min(0)
+      .max(90)
+      .optional()
+      .describe('Degrees to pull shadows toward blue and highlights toward amber. Defaults to 20. Pass 0 to keep the anchor hues.'),
+    shadowHue: z
+      .number()
+      .min(0)
+      .max(360)
+      .optional()
+      .describe('Absolute hue (0-360) for the dark end, overriding `hueShift` there.'),
+    highlightHue: z
+      .number()
+      .min(0)
+      .max(360)
+      .optional()
+      .describe('Absolute hue (0-360) for the light end, overriding `hueShift` there.'),
+    saturationBoost: z
+      .number()
+      .min(-0.5)
+      .max(0.5)
+      .optional()
+      .describe('Extra saturation at the middle of the ramp. Defaults to 0.'),
+    mode: z
+      .enum(['append', 'replace'])
+      .optional()
+      .describe('`append` (default) adds the ramp to the existing palette; `replace` swaps the whole palette for it.'),
+    dedupe: z.boolean().optional().describe('Skip colours already present in the palette. Defaults to true.'),
+    name: z.string().optional().describe('Optional palette name, applied with either mode.'),
+  }),
+  apply(ctx, p) {
+    const palette = ctx.draft.palette();
+    const from = resolveColor(ctx.sprite, p.from);
+    const to = resolveColor(ctx.sprite, p.to);
+    const ramp = buildHueRamp(from, to, p.steps ?? 5, {
+      hueShift: p.hueShift ?? 20,
+      shadowHue: p.shadowHue,
+      highlightHue: p.highlightHue,
+      saturationBoost: p.saturationBoost,
+    });
+    const mode = p.mode ?? 'append';
+    const existing = new Set(palette.colors.map((color) => packColor(color)));
+    let added = 0;
+    let skipped = 0;
+    if (mode === 'replace') {
+      palette.colors = ramp.colors.slice();
+      added = ramp.colors.length;
+    } else {
+      for (const color of ramp.colors) {
+        const key = packColor(color);
+        if (p.dedupe !== false && existing.has(key)) {
+          skipped++;
+          continue;
+        }
+        palette.colors.push(color);
+        existing.add(key);
+        added++;
+      }
+    }
+    if (p.name !== undefined) palette.name = p.name;
+    return {
+      mode,
+      from: colorToHex(from),
+      to: colorToHex(to),
+      requested: p.steps ?? 5,
+      added,
+      skipped,
+      size: palette.colors.length,
+      colors: ramp.hex,
+      hue: ramp.hue,
+    };
   },
 });
 

@@ -1,6 +1,6 @@
 import { blendInto, type BlendOptions } from './blend.js';
 import { PixelBuffer } from './buffer.js';
-import { parseColor } from './color.js';
+import { clamp8, colorDistance, parseColor } from './color.js';
 import { ditherMask, type DitherPattern } from './dither.js';
 import { clipRect, expandRect, fullRect, normalizeRect, rectContains } from './geometry.js';
 import type { Color, ColorInput, Point, Rect } from './types.js';
@@ -640,6 +640,282 @@ export function outline(
     if (putPixel(buf, writes[i], writes[i + 1], c, opts)) painted++;
   }
   return painted;
+}
+
+function readColor(data: Uint8ClampedArray, i: number): Color {
+  return { r: data[i], g: data[i + 1], b: data[i + 2], a: data[i + 3] };
+}
+
+function mixColors(a: Color, b: Color, t: number): Color {
+  return {
+    r: clamp8(a.r + (b.r - a.r) * t),
+    g: clamp8(a.g + (b.g - a.g) * t),
+    b: clamp8(a.b + (b.b - a.b) * t),
+    a: clamp8(a.a + (b.a - a.a) * t),
+  };
+}
+
+function averageColors(colors: readonly Color[]): Color {
+  if (colors.length === 0) return { r: 0, g: 0, b: 0, a: 0 };
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let a = 0;
+  for (const c of colors) {
+    r += c.r;
+    g += c.g;
+    b += c.b;
+    a += c.a;
+  }
+  const n = colors.length;
+  return { r: clamp8(r / n), g: clamp8(g / n), b: clamp8(b / n), a: clamp8(a / n) };
+}
+
+export interface AntialiasOptions {
+  /** Which kind of edge to soften. Defaults to `both`. */
+  mode?: 'silhouette' | 'internal' | 'both';
+  /** Blend strength, 0-1. Defaults to 0.5. */
+  amount?: number;
+  /** Repeated passes, 1-4. Defaults to 1. More passes widen the transition. */
+  passes?: number;
+  /** Minimum colour distance for an internal edge to be softened. Defaults to 32. */
+  threshold?: number;
+  /** Alpha at or above this counts as solid. Defaults to 1. */
+  alphaThreshold?: number;
+  rect?: Rect;
+  /** Optional palette hook (e.g. `resolveColor`) so palette locking is preserved. */
+  snap?: (color: Color) => Color | null;
+}
+
+export interface AntialiasResult {
+  passes: number;
+  softened: number;
+  added: number;
+  changed: number;
+}
+
+/**
+ * Selective anti-aliasing for a single cel.
+ *
+ * Pixel art becomes harsh when a high-contrast diagonal edge is a pure staircase.
+ * This command softens two cases and leaves flat interiors alone:
+ *
+ *  - **silhouette** — an opaque corner (two transparent orthogonal neighbours) is
+ *    pulled toward its opaque neighbours and made partly transparent; a transparent
+ *    notch between two or more solid neighbours receives a blended AA pixel.
+ *  - **internal** — a pixel on a boundary between two solid colours is pulled toward
+ *    the average of the differing neighbours, which softens hard colour steps.
+ *
+ * `amount`, `passes`, `threshold` and `rect` keep the operation local and tunable.
+ * The optional `snap` hook lets the command layer keep `paletteLocked` semantics.
+ */
+export function antialias(buf: PixelBuffer, opts: AntialiasOptions = {}): AntialiasResult {
+  const mode = opts.mode ?? 'both';
+  const amount = Math.max(0, Math.min(1, opts.amount ?? 0.5));
+  const passes = Math.max(1, Math.min(4, Math.floor(opts.passes ?? 1)));
+  const threshold = Math.max(0, Math.min(255, opts.threshold ?? 32));
+  const alphaThreshold = Math.max(1, Math.min(255, Math.floor(opts.alphaThreshold ?? 1)));
+  const region = clipRect(opts.rect ?? fullRect(buf.width, buf.height), buf.width, buf.height);
+  if (region.w === 0 || region.h === 0 || amount === 0) {
+    return { passes, softened: 0, added: 0, changed: 0 };
+  }
+  const snap = opts.snap;
+
+  let softened = 0;
+  let added = 0;
+  let changed = 0;
+  const offsets: Array<[number, number]> = [
+    [0, -1], [1, -1], [1, 0], [1, 1],
+    [0, 1], [-1, 1], [-1, 0], [-1, -1],
+  ];
+
+  for (let pass = 0; pass < passes; pass++) {
+    const src = new Uint8ClampedArray(buf.data);
+    const solid = (x: number, y: number): Color | null => {
+      if (x < region.x || y < region.y || x >= region.x + region.w || y >= region.y + region.h) {
+        return null;
+      }
+      const c = readColor(src, buf.index(x, y));
+      return c.a >= alphaThreshold ? c : null;
+    };
+    const write = (i: number, color: Color | null): void => {
+      const out = color === null ? null : snap ? snap(color) : color;
+      const data = buf.data;
+      if (!out || out.a <= 0) {
+        data[i] = 0;
+        data[i + 1] = 0;
+        data[i + 2] = 0;
+        data[i + 3] = 0;
+        return;
+      }
+      data[i] = out.r;
+      data[i + 1] = out.g;
+      data[i + 2] = out.b;
+      data[i + 3] = out.a;
+    };
+
+    for (let y = region.y; y < region.y + region.h; y++) {
+      for (let x = region.x; x < region.x + region.w; x++) {
+        const i = buf.index(x, y);
+        const p = readColor(src, i);
+        const opaque = p.a >= alphaThreshold;
+        if (opaque) {
+          // Internal first: a hard colour step gets a mid-tone before the silhouette
+          // corner rule considers making the same pixel translucent.
+          if (mode !== 'silhouette') {
+            const varying: Color[] = [];
+            for (const [ox, oy] of offsets) {
+              const n = solid(x + ox, y + oy);
+              if (n && colorDistance(n, p) > threshold) varying.push(n);
+            }
+            if (varying.length > 0) {
+              const target = mixColors(p, averageColors(varying), amount * 0.5);
+              target.a = p.a;
+              if (colorDistance(target, p) > 0) {
+                write(i, target);
+                softened++;
+                changed++;
+                continue;
+              }
+            }
+          }
+
+          if (mode !== 'internal') {
+            // Convex silhouette corner: two adjacent transparent orthogonal neighbours.
+            const orthogonal = [
+              solid(x, y - 1), solid(x + 1, y), solid(x, y + 1), solid(x - 1, y),
+            ];
+            const transparent = orthogonal.filter((c) => c === null).length;
+            if (transparent >= 2) {
+              const neighbours = orthogonal.filter((c): c is Color => c !== null);
+              if (neighbours.length > 0) {
+                const target = mixColors(p, averageColors(neighbours), amount * 0.5);
+                target.a = clamp8(p.a * (1 - amount * 0.4));
+                if (target.a !== p.a || colorDistance(target, p) > 0) {
+                  write(i, target);
+                  softened++;
+                  changed++;
+                }
+              }
+            }
+          }
+        } else if (mode !== 'internal') {
+          // Concave silhouette notch: two or more solid orthogonal neighbours get one
+          // blended AA pixel. One solid neighbour is a straight edge and stays crisp.
+          const neighbours = [
+            solid(x, y - 1), solid(x + 1, y), solid(x, y + 1), solid(x - 1, y),
+          ].filter((c): c is Color => c !== null);
+          if (neighbours.length >= 2) {
+            const target = averageColors(neighbours);
+            target.a = clamp8(255 * amount * (neighbours.length / 4));
+            if (target.a > 0) {
+              write(i, target);
+              added++;
+              changed++;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return { passes, softened, added, changed };
+}
+
+export interface DespeckleOptions {
+  /**
+   * `remove-isolated` erases lone pixels, `merge-outliers` recolours a pixel whose
+   * colour differs from its neighbours, and `both` runs them in that order.
+   */
+  mode?: 'remove-isolated' | 'merge-outliers' | 'both';
+  /** Remove a solid pixel with fewer than this many solid 8-neighbours. Defaults to 1. */
+  minNeighbors?: number;
+  /** Colour distance above which a pixel is an outlier. Defaults to 32. */
+  threshold?: number;
+  /** Alpha at or above this counts as solid. Defaults to 1. */
+  alphaThreshold?: number;
+  rect?: Rect;
+  /** Optional palette hook (e.g. `resolveColor`) so palette locking is preserved. */
+  snap?: (color: Color) => Color | null;
+}
+
+export interface DespeckleResult {
+  removed: number;
+  merged: number;
+  changed: number;
+}
+
+/**
+ * Remove the high-frequency artefacts that read as noise: isolated single pixels
+ * (which ordered dithering and stippled glows leave behind), and lone pixels whose
+ * colour is far from the local neighbourhood.
+ */
+export function despeckle(buf: PixelBuffer, opts: DespeckleOptions = {}): DespeckleResult {
+  const mode = opts.mode ?? 'both';
+  const minNeighbors = Math.max(0, Math.floor(opts.minNeighbors ?? 1));
+  const threshold = Math.max(0, Math.min(255, opts.threshold ?? 32));
+  const alphaThreshold = Math.max(1, Math.min(255, Math.floor(opts.alphaThreshold ?? 1)));
+  const region = clipRect(opts.rect ?? fullRect(buf.width, buf.height), buf.width, buf.height);
+  if (region.w === 0 || region.h === 0) return { removed: 0, merged: 0, changed: 0 };
+  const snap = opts.snap;
+  const src = new Uint8ClampedArray(buf.data);
+  const offsets: Array<[number, number]> = [
+    [0, -1], [1, -1], [1, 0], [1, 1],
+    [0, 1], [-1, 1], [-1, 0], [-1, -1],
+  ];
+  const solid = (x: number, y: number): Color | null => {
+    if (x < region.x || y < region.y || x >= region.x + region.w || y >= region.y + region.h) {
+      return null;
+    }
+    const c = readColor(src, buf.index(x, y));
+    return c.a >= alphaThreshold ? c : null;
+  };
+  const write = (i: number, color: Color | null): void => {
+    const out = color === null ? null : snap ? snap(color) : color;
+    const data = buf.data;
+    if (!out || out.a <= 0) {
+      data[i] = 0;
+      data[i + 1] = 0;
+      data[i + 2] = 0;
+      data[i + 3] = 0;
+      return;
+    }
+    data[i] = out.r;
+    data[i + 1] = out.g;
+    data[i + 2] = out.b;
+    data[i + 3] = out.a;
+  };
+
+  let removed = 0;
+  let merged = 0;
+  let changed = 0;
+  for (let y = region.y; y < region.y + region.h; y++) {
+    for (let x = region.x; x < region.x + region.w; x++) {
+      const i = buf.index(x, y);
+      const p = readColor(src, i);
+      if (p.a < alphaThreshold) continue;
+      const neighbours: Color[] = [];
+      for (const [ox, oy] of offsets) {
+        const n = solid(x + ox, y + oy);
+        if (n) neighbours.push(n);
+      }
+      if ((mode === 'remove-isolated' || mode === 'both') && neighbours.length < minNeighbors) {
+        write(i, null);
+        removed++;
+        changed++;
+        continue;
+      }
+      if ((mode === 'merge-outliers' || mode === 'both') && neighbours.length > 0) {
+        const average = averageColors(neighbours);
+        if (colorDistance(p, average) > threshold) {
+          write(i, { ...average, a: p.a });
+          merged++;
+          changed++;
+        }
+      }
+    }
+  }
+  return { removed, merged, changed };
 }
 
 export interface ReplaceColorOptions extends DrawOptions {

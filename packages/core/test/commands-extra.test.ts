@@ -326,3 +326,97 @@ describe('outline alpha threshold', () => {
     expect(raised.painted).toBe(0);
   });
 });
+
+describe('cluster dithering', () => {
+  it('covers the same fraction as bayer but in 2x2 blocks', () => {
+    const editor = createEditor(createSprite({ width: 16, height: 16, name: 'Cluster' }));
+    const result = editor.execute('dither_fill', {
+      layer: 0,
+      frame: F,
+      color: '#ffffff',
+      pattern: 'cluster2',
+      level: 0.5,
+    }) as { painted: number };
+
+    expect(result.painted).toBe(128);
+    const buf = celOf(editor);
+    for (let by = 0; by < 8; by++) {
+      for (let bx = 0; bx < 8; bx++) {
+        const first = buf.getColor(bx * 2, by * 2).a;
+        for (let y = 0; y < 2; y++) {
+          for (let x = 0; x < 2; x++) {
+            expect(buf.getColor(bx * 2 + x, by * 2 + y).a).toBe(first);
+          }
+        }
+      }
+    }
+  });
+
+  it('still respects the requested coverage', () => {
+    const editor = createEditor(createSprite({ width: 16, height: 16, name: 'Cluster' }));
+    const low = editor.execute('dither_fill', {
+      layer: 0,
+      frame: F,
+      color: '#ffffff',
+      pattern: 'cluster4',
+      level: 0.25,
+    }) as { painted: number };
+    expect(low.painted).toBe(64);
+  });
+});
+
+describe('antialias and despeckle', () => {
+  it('adds a concave AA pixel without touching the rest of the cel', () => {
+    const editor = createEditor(createSprite({ width: 16, height: 16, name: 'AA' }));
+    // An L-shaped silhouette: (5,5) is the transparent notch between solid up/left.
+    editor.execute('draw_rect', { layer: 0, frame: F, rect: { x: 4, y: 4, w: 4, h: 1 }, color: '#000000', fill: true });
+    editor.execute('draw_rect', { layer: 0, frame: F, rect: { x: 4, y: 5, w: 1, h: 4 }, color: '#000000', fill: true });
+
+    const result = editor.execute('antialias', {
+      layer: 0,
+      frame: F,
+      mode: 'silhouette',
+      amount: 0.5,
+    }) as { added: number; changed: number };
+
+    expect(result.added).toBeGreaterThan(0);
+    const buf = celOf(editor);
+    expect(buf.getColor(5, 5).a).toBeGreaterThan(0);
+    expect(buf.getColor(5, 5).a).toBeLessThan(255);
+  });
+
+  it('softens an internal colour step', () => {
+    const editor = createEditor(createSprite({ width: 16, height: 16, name: 'AA' }));
+    editor.execute('draw_rect', { layer: 0, frame: F, rect: { x: 0, y: 0, w: 16, h: 8 }, color: '#ff0000', fill: true });
+    editor.execute('draw_rect', { layer: 0, frame: F, rect: { x: 0, y: 8, w: 16, h: 8 }, color: '#0000ff', fill: true });
+
+    const result = editor.execute('antialias', {
+      layer: 0,
+      frame: F,
+      mode: 'internal',
+      amount: 1,
+      threshold: 0,
+    }) as { softened: number };
+
+    expect(result.softened).toBeGreaterThan(0);
+    const boundary = celOf(editor).getColor(8, 7);
+    expect(boundary).not.toMatchObject({ r: 255, g: 0, b: 0 });
+    expect(boundary).not.toMatchObject({ r: 0, g: 0, b: 255 });
+  });
+
+  it('removes a truly isolated pixel and merges a lone outlier', () => {
+    const isolated = createEditor(createSprite({ width: 8, height: 8, name: 'Speck' }));
+    isolated.execute('draw_pixels', { layer: 0, frame: F, pixels: [{ x: 2, y: 2, color: '#ffffff' }] });
+    const removed = isolated.execute('despeckle', { layer: 0, frame: F }) as { removed: number };
+    expect(removed.removed).toBe(1);
+
+    const outlier = createEditor(createSprite({ width: 8, height: 8, name: 'Speck' }));
+    outlier.execute('draw_rect', { layer: 0, frame: F, rect: { x: 0, y: 0, w: 8, h: 8 }, color: '#800000', fill: true });
+    outlier.execute('draw_pixels', { layer: 0, frame: F, pixels: [{ x: 4, y: 4, color: '#ffffff' }] });
+    const merged = outlier.execute('despeckle', { layer: 0, frame: F, mode: 'merge-outliers' }) as {
+      merged: number;
+    };
+    expect(merged.merged).toBe(1);
+    expect(celOf(outlier).getColor(4, 4)).toMatchObject({ r: 128, g: 0, b: 0, a: 255 });
+  });
+});

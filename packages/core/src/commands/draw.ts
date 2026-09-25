@@ -3,8 +3,10 @@ import { blendInto } from '../blend.js';
 import { clipRect, fullRect } from '../geometry.js';
 import { frameMask, compositeFrame } from '../render.js';
 import {
+  antialias,
   clearRegion,
   countOpaque,
+  despeckle,
   drawEllipse,
   drawLine,
   drawPolygon,
@@ -362,6 +364,101 @@ export const outlineCommand = defineCommand({
       mask: clipMask(ctx, p.clip, p.layer, p.frame),
     });
     return { painted, scope: p.scope ?? 'cel', ...clipWarning(ctx, p.clip, p.layer) };
+  },
+});
+
+export const antialiasCommand = defineCommand({
+  name: 'antialias',
+  description:
+    'Soften the harsh staircase edges of a cel without blurring flat areas. `mode: "silhouette"` anti-aliases the outline against transparency, `"internal"` softens hard colour steps between solid regions, and `"both"` (default) does both. Use `amount` 0-1 (default 0.5), `passes` 1-4 for a wider transition, and `rect` to keep it local. Honours `paletteLocked`, so generated mid-tones snap back to the palette.',
+  params: z.object({
+    layer: layerRefSchema,
+    frame: frameRefSchema,
+    mode: z.enum(['silhouette', 'internal', 'both']).optional().describe('Defaults to `both`.'),
+    amount: z.number().min(0).max(1).optional().describe('Blend strength. Defaults to 0.5.'),
+    passes: z.number().int().min(1).max(4).optional().describe('Repeated softening passes. Defaults to 1.'),
+    threshold: z
+      .number()
+      .min(0)
+      .max(255)
+      .optional()
+      .describe('Minimum colour distance before an internal edge is softened. Defaults to 32.'),
+    alphaThreshold: z
+      .number()
+      .int()
+      .min(1)
+      .max(255)
+      .optional()
+      .describe('Alpha at or above this counts as solid. Defaults to 1.'),
+    rect: rectSchema.optional().describe('Limit softening to this rect.'),
+  }),
+  apply(ctx, p) {
+    const buf = celOf(ctx, p.layer, p.frame);
+    const result = antialias(buf, {
+      mode: p.mode,
+      amount: p.amount,
+      passes: p.passes,
+      threshold: p.threshold,
+      alphaThreshold: p.alphaThreshold,
+      rect: p.rect,
+      snap: (color) => resolveColor(ctx.sprite, color),
+    });
+    return {
+      layer: layerIdOf(ctx.sprite, p.layer),
+      frame: frameIdOf(ctx.sprite, p.frame),
+      ...result,
+    };
+  },
+});
+
+export const despeckleCommand = defineCommand({
+  name: 'despeckle',
+  description:
+    'Remove the single-pixel noise that makes pixel art look digital/harsh. `mode: "remove-isolated"` erases solid pixels with too few solid neighbours, `"merge-outliers"` recolours a lone pixel whose colour is far from its local neighbourhood, and `"both"` (default) does both. Pair it with `antialias` for a softer result; use `rect` to keep the cleanup local.',
+  params: z.object({
+    layer: layerRefSchema,
+    frame: frameRefSchema,
+    mode: z
+      .enum(['remove-isolated', 'merge-outliers', 'both'])
+      .optional()
+      .describe('Defaults to `both`.'),
+    minNeighbors: z
+      .number()
+      .int()
+      .min(0)
+      .max(8)
+      .optional()
+      .describe('Remove a solid pixel with fewer than this many solid 8-neighbours. Defaults to 1.'),
+    threshold: z
+      .number()
+      .min(0)
+      .max(255)
+      .optional()
+      .describe('Colour distance above which a pixel is an outlier. Defaults to 32.'),
+    alphaThreshold: z
+      .number()
+      .int()
+      .min(1)
+      .max(255)
+      .optional()
+      .describe('Alpha at or above this counts as solid. Defaults to 1.'),
+    rect: rectSchema.optional().describe('Limit cleanup to this rect.'),
+  }),
+  apply(ctx, p) {
+    const buf = celOf(ctx, p.layer, p.frame);
+    const result = despeckle(buf, {
+      mode: p.mode,
+      minNeighbors: p.minNeighbors,
+      threshold: p.threshold,
+      alphaThreshold: p.alphaThreshold,
+      rect: p.rect,
+      snap: (color) => resolveColor(ctx.sprite, color),
+    });
+    return {
+      layer: layerIdOf(ctx.sprite, p.layer),
+      frame: frameIdOf(ctx.sprite, p.frame),
+      ...result,
+    };
   },
 });
 
