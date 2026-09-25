@@ -14,10 +14,43 @@ import { DocumentStore, type CreateDocumentOptions } from './session.js';
 import { registerTools } from './tools.js';
 import { registerResources } from './resources.js';
 import { registerPrompts } from './prompts.js';
-import { SKILL_SUMMARY } from './skill.js';
+import { PIXEL_ART_SKILL, SKILL_SUMMARY } from './skill.js';
 
 export const SERVER_NAME = 'pixel-art';
 export const SERVER_VERSION = '0.1.0';
+
+/**
+ * A fingerprint of what this process actually loaded.
+ *
+ * The server is long-lived: it reads the built `dist/` once at startup, so
+ * rebuilding the packages does not put new code in front of a running session.
+ * That failure is silent - every call succeeds, the tool list looks right, and the
+ * agent is simply working against last week's guidance. It cost two sessions of
+ * changes once already, so the fingerprint is published in `list_commands`: a
+ * mismatch against a freshly built server means "restart the MCP server", not
+ * "that feature does not exist".
+ */
+export interface ServerBuild {
+  /** Short stable hash of the skill text this process is serving. */
+  skillHash: string;
+  /** Length of that text, which moves the moment the guide changes. */
+  skillLength: number;
+}
+
+function hashText(text: string): string {
+  // FNV-1a: short, dependency-free, and enough to notice a changed paragraph.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
+export const SKILL_FINGERPRINT: ServerBuild = {
+  skillHash: hashText(PIXEL_ART_SKILL),
+  skillLength: PIXEL_ART_SKILL.length,
+};
 
 export const SERVER_INSTRUCTIONS = `A pixel art editor for game assets: sprites, animation frames and spritesheets.
 

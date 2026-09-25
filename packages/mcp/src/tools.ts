@@ -18,6 +18,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult, ContentBlock, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
+import { SKILL_FINGERPRINT } from './server.js';
 import {
   animationSequence,
   buildSpritesheet,
@@ -2553,6 +2554,14 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         count: catalog.length,
         commands: catalog.map(compactCommand),
         sessionTools,
+        // The registry and the guide are both a snapshot of what this process loaded
+        // at startup. If either disagrees with a freshly built server, the MCP server
+        // is running a stale build and needs restarting - everything here still works,
+        // it is just last week's version.
+        build: {
+          ...SKILL_FINGERPRINT,
+          commandCount: store.registry.list().length,
+        },
         hint,
       });
     },

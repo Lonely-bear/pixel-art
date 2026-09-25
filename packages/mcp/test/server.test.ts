@@ -1514,6 +1514,26 @@ describe('scripting and plugins', () => {
     expect(payload(plugins).plugins).toContainEqual({ name: 'test', commands: ['test_border'] });
   });
 
+  it('publishes a build fingerprint so a stale server is detectable', async () => {
+    // The server is long-lived and loads dist once, so rebuilding does not reach a
+    // running session. Without a fingerprint that failure is silent: every call works,
+    // the tool list looks right, and the agent is just on last week's guidance.
+    const result = (await client.callTool({ name: 'list_commands', arguments: {} })) as ToolResult;
+    const build = payload(result).build as {
+      skillHash: string;
+      skillLength: number;
+      commandCount: number;
+    };
+    expect(build.skillHash).toMatch(/^[0-9a-f]{8}$/);
+    expect(build.skillLength).toBeGreaterThan(20_000);
+    expect(build.commandCount).toBe((payload(result).commands as unknown[]).length);
+
+    // The fingerprint must actually track the guide it describes.
+    const skill = payload((await client.callTool({ name: 'read_skill', arguments: {} })) as ToolResult)
+      .skill as string;
+    expect(skill.length).toBe(build.skillLength);
+  });
+
   it('serves the scripting guide as a resource', async () => {
     const guide = await client.readResource({ uri: 'pixel://script-guide' });
     expect((guide.contents[0] as { text: string }).text).toContain('run_script');
