@@ -10,9 +10,9 @@ import {
   compositeFrame,
   encodePNG,
   frameLayersWithCels,
+  PixelBuffer,
   resolveFrame,
   spriteDurationMs,
-  type PixelBuffer,
   type Sprite,
 } from '@pixel/core';
 import { DocumentStore, type PixelDocument } from '@pixel/mcp';
@@ -59,18 +59,37 @@ export function describeDocument(doc: PixelDocument): DocumentDetail {
   };
 }
 
+/**
+ * Resolve the frame a preview should show.
+ *
+ * A stale frame reference — the renderer asking for a frame that belonged to a
+ * document it has just switched away from — is a rendering hiccup, not a fatal
+ * error, so it falls back to the first frame instead of throwing out of the IPC
+ * handler. A preview is the one channel that is safe to degrade; every mutating
+ * channel still rejects a bad reference loudly.
+ */
+function previewFrameId(sprite: Sprite, request: PreviewRequest): string | undefined {
+  if (request.frame === undefined) return sprite.frames[0]?.id;
+  try {
+    return resolveFrame(sprite, request.frame).id;
+  } catch {
+    return sprite.frames[0]?.id;
+  }
+}
+
 export function renderBuffer(
   doc: PixelDocument,
   request: PreviewRequest = {},
 ): { image: PixelBuffer; version: number } {
   const sprite = doc.editor.sprite;
-  const frameId =
-    request.frame === undefined ? sprite.frames[0]?.id : resolveFrame(sprite, request.frame).id;
+  const frameId = previewFrameId(sprite, request);
   return {
-    image: compositeFrame(sprite, frameId, {
-      respectVisibility: request.flatten !== true,
-      background: request.background ?? null,
-    }),
+    image: frameId
+      ? compositeFrame(sprite, frameId, {
+          respectVisibility: request.flatten !== true,
+          background: request.background ?? null,
+        })
+      : new PixelBuffer(sprite.width, sprite.height),
     version: doc.editor.version,
   };
 }
