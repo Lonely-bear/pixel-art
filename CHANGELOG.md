@@ -4,6 +4,54 @@ All notable changes to dotloom-mcp are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-26
+
+### Added
+
+- **The tool finds the desktop app by itself.** `dotloom-mcp` with no arguments now looks for a
+  running app on the loopback interface and forwards to it when found, so the agent edits the
+  same documents the user's window shows. The endpoint is discovered rather than configured,
+  which is the point: the app only knows its port after its own retry loop picks one, so a URL
+  baked into an MCP client config is wrong the moment the app moves to the next port - and
+  wrong quietly, with the agent drawing into a store nobody is watching. A client config is now
+  just `{"command": ["dotloom-mcp"]}`.
+- **Two independent discovery mechanisms, because either alone has a failure mode.** The app
+  publishes a `host.json` record (url, port, pid) to a stable, app-name-independent location on
+  startup and removes it on quit; the tool falls back to a TCP sweep of 7331-7340 when the file
+  is missing or stale, which also covers an app build too old to write it. Every candidate must
+  complete a real MCP `initialize` before it is accepted - an open port only proves something is
+  listening, and on a shared machine 7331 can outlive the app as an unrelated process.
+- **`--json-status`** reports discovery as JSON and exits: whether an app was found, its url,
+  port, pid and which mechanism found it. For diagnosing "my agent edits go nowhere" without
+  reading a stack trace.
+- **`--standalone`** skips discovery entirely, and **`--host-wait <ms>`** tunes how long to keep
+  looking (default 1500ms, which covers the common race of the client starting the tool just
+  before the user opens the app).
+- **The agent is told when the app is absent.** With no app running the tool still runs
+  self-contained, and `createPixelServer { instructionsNote }` appends the reason to the server's
+  `instructions` - the one channel the model itself reads. The agent can now say "no window will
+  show these edits" instead of confidently reporting a sprite nobody can see. Headless and CI use
+  have no app and keep working, which is why this degrades rather than failing.
+- **`pixel://grid`** returns a document as one character per pixel, with `mask`, `value`, `index`
+  and `named` views, and a repeated read reports which rows changed. Cheap verification between
+  the visual gates: `get_preview` is how you approve, the grid is how you check.
+
+### Fixed
+
+- **Agent edits reached the document but never reached the window.** The store was already shared
+  between the GUI and the MCP server, so the pixels were correct, but nothing announced the
+  change: the renderer refreshed only from the `changed` IPC event, and that event was sent only
+  by the GUI's own handlers. An agent drawing produced a correct document and a stale canvas, and
+  the only way to see the work was to reopen the file. `DocumentStore` now announces its own
+  mutations (`onChange`, fired from `add`/`select`/`remove`/`touch`/`markSaved`/`clear`), and the
+  app subscribes once, which also makes a second window track an agent's edits.
+
+### Changed
+
+- `--attach <url>` still forces a specific endpoint and still fails loudly when it does not
+  answer, but the bare `TypeError: fetch failed` now names the URL and points at
+  `--json-status`.
+
 ## [0.3.1] - 2026-09-26
 
 ### Added
