@@ -62,7 +62,7 @@ node packages/cli/dist/index.js info hero.pixel
 node packages/cli/dist/index.js export hero.pixel --out hero.png --scale 4
 node packages/cli/dist/index.js export hero.pixel --out hero.png --all      # one PNG per frame
 node packages/cli/dist/index.js sheet hero.pixel --out hero-sheet.png      # Aseprite-style JSON alongside
-node packages/cli/dist/index.js tiled hero.pixel --out hero.tmj            # Tiled map from the tilemaps
+node packages/cli/dist/index.js tiled hero.pixel --out hero.tmj            # Tiled map + tileset.png
 node packages/cli/dist/index.js gif hero.pixel --out hero.gif --tag idle   # animated GIF, tag-driven order
 node packages/cli/dist/index.js import hero.png --out hero.pixel           # PNG or .ase -> document
 node packages/cli/dist/index.js apply hero.pixel --ops ops.json            # run commands (the AI entry point)
@@ -226,7 +226,7 @@ To connect to a running desktop app instead of the standalone server, append
 - **A generated tool catalog plus session tools.** Every core command is generated straight from its zod schema, alongside
   hand-written session and perception tools: `create_document`, `open_document`,
   `save_document`, `finalize_document`, `import_image` (PNG or Aseprite), `select_document`, `close_document`,
-  `list_documents`, `get_document`, `get_preview`, `get_pixels`, `quality_report`, `get_palette`, `get_history`,
+  `list_documents`, `get_document`, `get_preview`, `preview_tilemap`, `get_pixels`, `quality_report`, `get_palette`, `get_history`,
   `undo`, `redo`, `apply_ops`, `export_png`, `export_sheet`, `export_tiled`, `export_gif`,
   `list_commands`, `read_skill`, and the scripting tools `run_script`, `load_plugin`,
   `list_plugins`. Loading a plugin registers its commands as real tools on the fly.
@@ -327,15 +327,40 @@ structure for terrain, walls and floors, and it is what an agent uses to build a
 - `create_tileset` cuts a tile sheet out of a layer you have already drawn.
 - `add_tilemap` / `remove_tilemap` / `resize_tilemap` manage the grids;
   `set_tile` and `fill_tilemap` write cells (`-1` means empty); `get_tilemap` reads them back.
-- **`autotile` is the headline.** Lay the terrain down with one placeholder index, then let
-  it pick the transition tiles. `set: 16` uses the four edge neighbours (the classic cheap
-  set); `set: 47` uses all eight and counts a diagonal only when both of its adjacent edges
-  are solid — that rule is what makes 47 tiles cover every blob shape without chipped
-  corners. `offset` says where this terrain starts in the sheet, so one sheet can hold
-  several terrains, and the pass leaves the empty background alone.
-- `paint_tilemap` bakes the grid into a normal pixel layer, so it flows into `export_png`
-  and `export_sheet` unchanged.
-- `export_tiled` writes a Tiled `.tmj` map with one tile layer per tilemap.
+  Batch writes return `changed`, `unchanged`, exact `skippedCells` with reasons, and a
+  `changedRect`, so a partial edge write is diagnosable without manually comparing rows.
+- `stroke_tilemap` follows a Catmull-Rom or linear path of floating-point tile coordinates
+  with a round/square brush. Weighted variants, deterministic density/jitter and
+  neighbour-aware `avoidRepeats` stop water, fields and ground from becoming wallpaper.
+  Its optional `edge` object applies arbitrary-order 16/47 transition mappings in the same
+  command, including multiple weighted tiles for one mask.
+- `autotile` still supports the traditional `set: 16|47` plus `offset` sheet convention.
+  It also accepts a sparse `transitions: [{ mask, tile, weight? }]` list in any order, so a
+  hand-made edge set no longer has to occupy a rigidly sorted block in the tileset.
+- Tilemap writes (`set_tile`, `fill_tilemap`, `autotile`, `stroke_tilemap`) can include
+  `bake: { layer, frame?, blend: "over", opacity?, underlay? }`. Only actually changed
+  cells are cleared and redrawn. `underlay` stamps a ground/base tilemap first, so a
+  partially transparent bank/edge tile blends with real terrain rather than transparency
+  or an unrelated prop that happened to share the layer.
+- `paint_tilemap` bakes any region into a normal pixel layer. `copy` remains the default;
+  `blend: "over"`, `opacity` and `clear` support organic edge masks. `preview_tilemap`
+  renders an unbaked grid directly and can overlay tile boundaries, numeric indices,
+  invalid cells and the exact cells/rect changed by the previous mutation. `underlay`
+  composites a ground/base grid first, so partial-alpha bank masks can be judged without
+  baking either map.
+- `quality_report { tilemap, underlay? }` reports invalid indices, empty and dominant ratios, variant
+  entropy, same-tile adjacency/runs, connected terrain, singleton cells and open edges.
+  Pixel-noise and flat-band findings become informational in this mode because ripples,
+  crop rows and road texture are intentional.
+- Gameplay metadata lives beside the visual grid. `set_tile_properties` /
+  `remove_tile_properties` / `get_tile_properties` store collision, walkability and
+  movement values per tile index. `add_map_object`, `update_map_object`,
+  `remove_map_object` and `get_map_objects` keep spawns, triggers, bridges and interactive
+  props independent from tile cells, with their own JSON-safe custom properties.
+- `export_tiled` writes a Tiled `.tmj` plus the referenced tileset PNG by default and
+  rejects malformed data, mixed cell sizes and out-of-range tile indices before writing.
+  Tile custom properties become Tiled tile properties and map objects become a separate
+  object-group layer.
 
 ### Exporting an animation
 
@@ -359,8 +384,11 @@ A script runs inside a restricted `node:vm` context with no `require`, no `proce
 no `eval`/`new Function` and no string code generation, under a timeout (2 s by default). Node's
 `vm` API is not a security mechanism, so only run trusted scripts and plugins. It is
 handed a small **context-native** API — `exec`, `tryExec`, `putPixels`, `commands`, `command`,
-`document`, `layers`, `frames`, `tags`, `palette`, `getPixel`, `sample`, the explicit
-`sampleComposite`, and `log` — and its return
+`document`, `layers`, `frames`, `tags`, `palette`, `tilemaps`, `mapObjects`,
+`tileProperties`, `getPixel`, `sample`, the explicit `sampleComposite`, and `log`. Thin
+`draw.rect/line/ellipse/polygon/polyline/
+pixels/putPixels/tile/tilemap/bake` aliases plus `strokeTilemap`/`paintTilemap` keep map
+scripts readable while still using the same command schemas and one undo step. Its return
 value and logs come back as JSON:
 
 ```js

@@ -135,6 +135,32 @@ const BOOTSTRAP = `(function () {
     params.data = data;
     return exec("put_pixels", params);
   };
+
+  // High-level drawing helpers. These deliberately stay in the sandbox context and
+  // go through exec, so they inherit command defaults, schema validation, transactions,
+  // and the same undo/rollback behaviour as a script that spells out exec(...).
+  function drawCommand(name) {
+    return function (params) { return exec(name, params); };
+  }
+  var draw = {
+    rect: drawCommand("draw_rect"),
+    line: drawCommand("draw_line"),
+    ellipse: drawCommand("draw_ellipse"),
+    polygon: drawCommand("draw_polygon"),
+    polyline: drawCommand("draw_polyline"),
+    pixels: drawCommand("draw_pixels"),
+    putPixels: globalThis.putPixels,
+    tile: drawCommand("set_tile"),
+    tilemap: drawCommand("stroke_tilemap"),
+    bake: drawCommand("paint_tilemap"),
+  };
+  globalThis.draw = draw;
+  globalThis.strokeTilemap = function (params) { return draw.tilemap(params); };
+  globalThis.paintTilemap = function (params) { return draw.bake(params); };
+  globalThis.tilemaps = function () { return call("tilemaps", null); };
+  globalThis.mapObjects = function () { return exec("get_map_objects", {}).objects; };
+  globalThis.tileProperties = function (tile) { return exec("get_tile_properties", { tile: tile }).properties; };
+
   globalThis.commands = function () { return call("commands", null); };
   globalThis.command = function (name) { return call("command", { name: name }); };
   globalThis.document = function () { return call("document", null); };
@@ -169,6 +195,7 @@ const BOOTSTRAP = `(function () {
     log: log,
     exec: exec,
     tryExec: tryExec,
+    draw: draw,
     putPixels: globalThis.putPixels,
     commands: globalThis.commands,
     command: globalThis.command,
@@ -180,6 +207,11 @@ const BOOTSTRAP = `(function () {
     getPixel: globalThis.getPixel,
     sample: globalThis.sample,
     sampleComposite: globalThis.sampleComposite,
+    strokeTilemap: globalThis.strokeTilemap,
+    paintTilemap: globalThis.paintTilemap,
+    tilemaps: globalThis.tilemaps,
+    mapObjects: globalThis.mapObjects,
+    tileProperties: globalThis.tileProperties,
   };
 
   delete globalThis.__bridge;
@@ -426,6 +458,16 @@ export class ScriptRuntime {
           : [];
       case 'tags':
         return sprite ? sprite.tags.map((tag) => ({ ...tag })) : [];
+      // Keep the listing metadata-only; get_tilemap may return a large rows payload.
+      case 'tilemaps':
+        return sprite
+          ? (sprite.tilemaps ?? []).map((tilemap) => ({
+              id: tilemap.id,
+              name: tilemap.name,
+              width: tilemap.width,
+              height: tilemap.height,
+            }))
+          : [];
       case 'palette':
         return sprite
           ? {
@@ -491,6 +533,7 @@ export class ScriptRuntime {
             tileWidth: sprite.tileset.tileWidth,
             tileHeight: sprite.tileset.tileHeight,
             columns: sprite.tileset.columns,
+            tilePropertyCount: Object.keys(sprite.tileset.tileProperties ?? {}).length,
           }
         : null,
       tilemaps: (sprite.tilemaps ?? []).map((tilemap) => ({
@@ -498,6 +541,17 @@ export class ScriptRuntime {
         name: tilemap.name,
         width: tilemap.width,
         height: tilemap.height,
+      })),
+      mapObjects: (sprite.mapObjects ?? []).map((object) => ({
+        id: object.id,
+        name: object.name,
+        type: object.type,
+        x: object.x,
+        y: object.y,
+        width: object.width,
+        height: object.height,
+        tile: object.tile ?? null,
+        propertyCount: Object.keys(object.properties).length,
       })),
     };
   }

@@ -195,11 +195,12 @@ The tool catalog is generated from the same Zod schemas used to validate command
 | Capability | Why it matters |
 | --- | --- |
 | `get_preview` | Returns an actual PNG, optionally cropped, zoomed, layer-isolated, or onion-skinned. |
+| `preview_tilemap` | Renders an unbaked map with optional tile grid, numeric indices, invalid-cell and changed-area overlays. |
 | `apply_ops` | Batches edits, supports atomic rollback, and can return a preview in the same round trip. |
 | `expectedVersion` | Rejects stale writes with a version conflict instead of overwriting newer work. |
 | `clip` | Keeps shading, highlights, and dither bands inside a silhouette or selected layer. |
 | `add_palette_ramp` | Builds hue-shifted material ramps instead of flat interpolation. |
-| `quality_report` | Reports isolated pixels, edge contrast, clipped highlights, palette use, value structure, and landscape composition evidence. |
+| `quality_report` | Reports raster defects and composition evidence, or analyses a tilemap's variants, repetition, open edges and connected terrain. |
 | `finalize_document` | Saves the editable `.pixel` source and writes the requested PNG exports in one call. |
 | `run_script` | Runs a time-limited JavaScript batch as a single undo step. |
 | `load_plugin` | Registers plugin commands as live MCP tools. |
@@ -224,7 +225,7 @@ The attached GUI and agent then share documents and undo history: an agent edit 
 
 - **Drawing** — pencil, eraser, line, rectangle, ellipse, polygon, bucket fill, colour replacement, clipping, and replace-style redraws.
 - **Animation** — frames, durations, tags, playback, onion skinning, whole-layer translation, squash/stretch, GIF, and spritesheets.
-- **Tilemaps** — tilesets, editable grids, 16/47 auto-tiling, terrain offsets, pixel-layer baking, and Tiled `.tmj` export.
+- **Tilemaps** — tilesets, editable grids, curved weighted terrain brushes, sparse/weighted 16/47 transitions, alpha-edge local baking, grid/index previews, map-aware diagnostics, per-tile gameplay properties, independent map objects, and self-contained Tiled `.tmj` export.
 - **Pixel craft** — hue-shifted ramps, palette locking, Bayer and clustered dithering, selective outlines, despeckle, and corner-aware antialiasing.
 - **Landscape diagnostics** — horizon, ridge, waterline, value-plane, light-concentration, and guiding-line evidence for full-bleed scenes.
 - **Scripting** — a constrained `node:vm` context with commands, pixel buffers, document inspection, sampling, timeouts, and plugins. It limits the scripting API, but is not a security boundary for untrusted code.
@@ -235,7 +236,7 @@ The attached GUI and agent then share documents and undo history: an agent edit 
 ```js
 const base = layers()[0].id;
 
-exec('draw_rect', {
+draw.rect({
   layer: base,
   frame: 0,
   rect: { x: 0, y: 0, w: 8, h: 8 },
@@ -250,7 +251,7 @@ log('done', commands().length);
 return { base, reflected };
 ```
 
-A whole script is one undo step. The sandbox has no `require`, `process`, filesystem, network, `eval`, or `new Function`.
+Map scripts can call `strokeTilemap(...)`, `paintTilemap(...)`, and the matching `draw.tilemap` / `draw.bake` aliases; `tilemaps()`, `mapObjects()` and `tileProperties()` read map metadata without copying large tile arrays. A whole script is one undo step. The sandbox has no `require`, `process`, filesystem, network, `eval`, or `new Function`.
 
 </details>
 
@@ -263,7 +264,7 @@ A whole script is one undo step. The sandbox has no `require`, `process`, filesy
 | Aseprite `.ase` | ✓ | — | Import into a new editable document |
 | Spritesheet + JSON | — | ✓ | Aseprite-compatible `frameTags` |
 | Animated GIF | — | ✓ | Tag direction and repeat are honoured |
-| Tiled `.tmj` | — | ✓ | One tile layer per tilemap |
+| Tiled `.tmj` | — | ✓ | Self-contained map + tileset PNG, tile properties and object layer |
 
 ## Showcase
 

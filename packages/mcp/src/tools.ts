@@ -39,20 +39,27 @@ import {
   resolveLayer,
   resolveDitherLevel as resolveCoreDitherLevel,
   ditherLevelResolution as coreDitherLevelResolution,
+  blitTilemap,
+  renderTilemap,
+  resolveTilemap,
   scaleAtlas,
   scaleNearest,
   spriteFromAseprite,
   spriteFromPng,
+  tileCount,
   toAsepriteJson,
   toTiledJson,
   type Command,
   type Sprite,
+  type TilemapLayer,
 } from '@pixel/core';
 import { z } from 'zod';
 import { ScriptRuntime } from '@pixel/script';
 import { BUILTIN_PALETTES, type DocumentStore, type PixelDocument } from './session.js';
 import { PIXEL_ART_SKILL } from './skill.js';
 import { analyzeLandscape } from './quality-landscape.js';
+import { analyzeTilemapQuality } from './quality-tilemap.js';
+import { renderTilemapPreview } from './tilemap-preview.js';
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -94,14 +101,48 @@ const previewBackgroundSchema = z
   .optional()
   .describe('Composite over this colour instead of transparency.');
 
+const tilemapDebugSchema = z
+  .object({
+    grid: z.boolean().optional().describe('Draw one line at every tile boundary.'),
+    indices: z.boolean().optional().describe('Print tile indices over the image.'),
+    showInvalid: z.boolean().optional().describe('Outline indices outside the tileset. Defaults to true.'),
+    highlightCells: z
+      .array(z.object({ x: z.number().int(), y: z.number().int() }).strict())
+      .max(4096)
+      .optional()
+      .describe('Exact tile cells to outline in magenta.'),
+    highlightRect: z
+      .object({
+        x: z.number().int(),
+        y: z.number().int(),
+        w: z.number().int().min(1),
+        h: z.number().int().min(1),
+      })
+      .strict()
+      .optional()
+      .describe('Changed tile region to outline in magenta.'),
+  })
+  .strict();
+
 /** Shared options for a single-frame preview returned in a mutation response. */
 const previewOptionsObjectSchema = z
   .object({
     frame: frameRefSchema.optional().describe('Frame id or 0-based index. Defaults to frame 0.'),
-    rect: previewRectSchema.optional(),
+    tilemap: z
+      .union([z.string(), z.number().int()])
+      .optional()
+      .describe('Preview this tilemap directly instead of a composited frame. Useful in apply_ops/run_script after a tile edit.'),
+    underlay: z
+      .union([z.string(), z.number().int()])
+      .optional()
+      .describe('With `tilemap`, render this base map first and alpha-composite the active map over it.'),
+    rect: previewRectSchema.optional().describe('Canvas pixels normally; tile coordinates when `tilemap` is set.'),
     layers: previewLayersSchema,
     scale: previewScaleSchema,
     background: previewBackgroundSchema,
+    replaceEmpty: z.number().int().min(-1).optional().describe('Tilemap preview: render empty cells with this tile.'),
+    opacity: z.number().min(0).max(1).optional().describe('Tilemap preview opacity. Defaults to 1.'),
+    debug: tilemapDebugSchema.optional(),
   })
   .strict();
 
@@ -125,6 +166,7 @@ const READ_ONLY_TOOLS = new Set([
   'get_palette',
   'get_history',
   'get_preview',
+  'preview_tilemap',
   'get_pixels',
   'histogram',
   'quality_report',
@@ -145,6 +187,7 @@ const SESSION_TOOLS: Array<{ name: string; description: string }> = [
   { name: 'redo', description: 'Redo undone edit(s).' },
   { name: 'get_history', description: 'Recent commands with labels and summaries.' },
   { name: 'get_preview', description: 'Render the sprite (or a rect) as a PNG to look at.' },
+  { name: 'preview_tilemap', description: 'Render an unbaked tilemap with optional grid, tile-index and changed-cell overlays.' },
   { name: 'get_pixels', description: 'Exact pixel colours in a small region.' },
   { name: 'histogram', description: 'Per-colour pixel counts and unused palette slots for a region.' },
   { name: 'quality_report', description: 'Objective defect/presence report with internal landscape structure and fix warnings.' },
@@ -255,10 +298,21 @@ interface PreviewOnionOptions {
 
 interface PreviewRenderOptions {
   frame?: number | string;
+  tilemap?: string | number;
+  underlay?: string | number;
   rect?: { x: number; y: number; w: number; h: number };
   layers?: Array<string | number>;
   scale?: number;
   background?: string | null;
+  replaceEmpty?: number;
+  opacity?: number;
+  debug?: {
+    grid?: boolean;
+    indices?: boolean;
+    showInvalid?: boolean;
+    highlightCells?: Array<{ x: number; y: number }>;
+    highlightRect?: { x: number; y: number; w: number; h: number };
+  };
   frames?: 'one' | 'all';
   onion?: PreviewOnionOptions;
 }
@@ -283,6 +337,35 @@ function previewPayload(
   sprite: Sprite,
   options: PreviewRenderOptions = {},
 ): { blocks: ContentBlock[]; meta: Record<string, unknown> } {
+  if (options.underlay !== undefined && options.tilemap === undefined) {
+    throw new Error('`underlay` requires `tilemap` in previewOptions.');
+  }
+  if (options.tilemap !== undefined) {
+    if (options.frame !== undefined) {
+      throw new Error('A tilemap preview cannot also name a `frame`.');
+    }
+    if (options.layers || options.onion || options.frames === 'all') {
+      throw new Error('A tilemap preview cannot also use `layers`, `onion` or `frames: "all"`.');
+    }
+    const tilemap = resolveTilemap(sprite, options.tilemap);
+    const underlay = options.underlay === undefined
+      ? undefined
+      : resolveTilemap(sprite, options.underlay);
+    const rendered = renderTilemapPreview(sprite, tilemap, {
+      rect: options.rect,
+      underlay,
+      scale: options.scale,
+      background: options.background === undefined ? undefined : resolveBackground(options.background),
+      replaceEmpty: options.replaceEmpty,
+      opacity: options.opacity,
+      debug: options.debug,
+    });
+    return {
+      blocks: [imageContent(rendered.image)],
+      meta: { ...rendered.meta, structure: rendered.structure },
+    };
+  }
+
   const background = resolveBackground(options.background);
   const layerIds = options.layers?.map((ref) => resolveLayer(sprite, ref).id);
   const onion = options.onion;
@@ -398,7 +481,19 @@ function describeSprite(sprite: Sprite): Record<string, unknown> {
     paletteLocked: sprite.paletteLocked ?? false,
     celCount: sprite.frames.reduce((sum, f) => sum + f.cels.size, 0),
     hasTileset: Boolean(sprite.tileset),
+    tilePropertyCount: Object.keys(sprite.tileset?.tileProperties ?? {}).length,
     tilemaps: sprite.tilemaps?.map((t) => ({ id: t.id, name: t.name, width: t.width, height: t.height })) ?? [],
+    mapObjects: sprite.mapObjects?.map((object) => ({
+      id: object.id,
+      name: object.name,
+      type: object.type,
+      x: object.x,
+      y: object.y,
+      width: object.width,
+      height: object.height,
+      tile: object.tile ?? null,
+      propertyCount: Object.keys(object.properties).length,
+    })) ?? [],
   };
 }
 
@@ -406,6 +501,11 @@ interface QualityAnalysisOptions {
   rect?: { x: number; y: number; w: number; h: number };
   noiseThreshold?: number;
   alphaThreshold?: number;
+  /** Analyse this tilemap directly instead of a composited pixel frame. */
+  tilemap?: TilemapLayer;
+  /** Optional base map under an alpha-masked terrain/edge map. */
+  underlay?: TilemapLayer;
+  replaceEmpty?: number;
   /** Optional square grid for per-region outlier/isolated counts. */
   grid?: number;
   /**
@@ -805,9 +905,68 @@ function ditherAdvisories(params: Record<string, unknown>): string[] {
  * `despeckle` and `antialias` are the matching fix commands.
  */
 function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, options: QualityAnalysisOptions = {}): Record<string, unknown> {
-  const frame = resolveFrame(sprite, frameRef ?? 0);
-  const full = compositeFrame(sprite, frame.id);
-  const buffer = options.rect ? extractRegion(full, options.rect) : full;
+  if (
+    options.tilemap &&
+    options.underlay &&
+    (options.tilemap.tileWidth !== options.underlay.tileWidth || options.tilemap.tileHeight !== options.underlay.tileHeight)
+  ) {
+    throw new Error('Tilemap quality underlay must use the same cell size as the active map.');
+  }
+  if (options.tilemap && sprite.tileset && options.replaceEmpty !== undefined) {
+    const available = tileCount(sprite.tileset);
+    if (options.replaceEmpty < -1 || options.replaceEmpty >= available) {
+      throw new Error(`replaceEmpty ${options.replaceEmpty} is outside the ${available}-tile tileset.`);
+    }
+  }
+  const tilemapAnalysis = options.tilemap && sprite.tileset
+    ? analyzeTilemapQuality(options.tilemap, sprite.tileset)
+    : null;
+  const frame = options.tilemap ? null : resolveFrame(sprite, frameRef ?? 0);
+  let buffer: PixelBuffer;
+  if (options.tilemap) {
+    if (options.rect) {
+      // A crop is enough for the report, so avoid allocating a potentially huge
+      // standalone map just to throw most of it away.
+      buffer = new PixelBuffer(options.rect.w, options.rect.h);
+      if (options.underlay) {
+        blitTilemap(buffer, sprite.tileset!, options.underlay, {
+          offsetX: -options.rect.x,
+          offsetY: -options.rect.y,
+          blend: 'copy',
+        });
+      }
+      blitTilemap(buffer, sprite.tileset!, options.tilemap, {
+        offsetX: -options.rect.x,
+        offsetY: -options.rect.y,
+        blend: 'over',
+        replaceEmpty: options.replaceEmpty ?? null,
+      });
+    } else {
+      const sourceWidth = options.tilemap.width * options.tilemap.tileWidth;
+      const sourceHeight = options.tilemap.height * options.tilemap.tileHeight;
+      if (sourceWidth * sourceHeight > 16_777_216) {
+        throw new Error(
+          `Tilemap analysis would render ${sourceWidth}x${sourceHeight} pixels. Pass a smaller pixel-space \`rect\`.`,
+        );
+      }
+      if (options.underlay) {
+        buffer = renderTilemap(sprite.tileset!, options.underlay, { blend: 'copy' });
+        blitTilemap(buffer, sprite.tileset!, options.tilemap, {
+          blend: 'over',
+          replaceEmpty: options.replaceEmpty ?? null,
+        });
+      } else {
+        buffer = renderTilemap(sprite.tileset!, options.tilemap, {
+          blend: 'over',
+          replaceEmpty: options.replaceEmpty ?? null,
+        });
+      }
+    }
+  } else {
+    const full = compositeFrame(sprite, frame!.id);
+    buffer = options.rect ? extractRegion(full, options.rect) : full;
+  }
+  const tilemapMode = options.tilemap !== undefined;
   const { width, height, data } = buffer;
   const total = width * height;
   const noiseThreshold = Math.max(0, Math.min(255, options.noiseThreshold ?? 40));
@@ -947,36 +1106,41 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
   );
 
   const warnings: Array<{ code: string; severity: 'info' | 'warning'; message: string }> = [];
+  const rasterSeverity = tilemapMode ? 'info' as const : 'warning' as const;
+  const rasterContext = tilemapMode
+    ? ' In tilemap mode this is tile texture evidence, not an automatic defect; inspect `structure.tilemap` and the debug preview before changing pixels.'
+    : '';
   if (isolatedRatio > 0.005) {
     warnings.push({
       code: 'isolated_pixels',
-      severity: 'warning',
-      message: `${isolated} isolated solid pixels (${(isolatedRatio * 100).toFixed(2)}%). Run \`despeckle\` under a clip or rect to remove single-pixel noise.`,
+      severity: rasterSeverity,
+      message: `${isolated} isolated solid pixels (${(isolatedRatio * 100).toFixed(2)}%). Run \`despeckle\` under a clip or rect to remove single-pixel noise.${rasterContext}`,
     });
   }
   if (outlierRatio > 0.01) {
     const exempt = options.textureRects?.length ?? 0;
     warnings.push({
       code: 'high_frequency_noise',
-      severity: 'warning',
+      severity: rasterSeverity,
       message:
         `${(outlierRatio * 100).toFixed(2)}% of solid pixels are colour outliers against their neighbourhood` +
         (exempt > 0 ? `, excluding ${exempt} declared texture region(s)` : '') +
-        '. If this area is deliberate texture - sparkle, grain, foliage - pass it as `textureRects` rather than despeckling it; otherwise prefer cluster dither (`cluster2`/`cluster4`) or `despeckle`.',
+        '. If this area is deliberate texture - sparkle, grain, foliage, water ripples or crop rows - pass it as `textureRects` rather than despeckling it; otherwise prefer cluster dither (`cluster2`/`cluster4`) or `despeckle`.' +
+        rasterContext,
     });
   }
   if (meanEdge > 16) {
     warnings.push({
       code: 'high_edge_contrast',
-      severity: 'warning',
-      message: `Mean adjacent luminance delta is ${meanEdge.toFixed(1)}; the edge field is harsh. Run \`antialias\` on the silhouette or internal colour steps.`,
+      severity: rasterSeverity,
+      message: `Mean adjacent luminance delta is ${meanEdge.toFixed(1)}; the edge field is harsh. Run \`antialias\` on the silhouette or internal colour steps.${rasterContext}`,
     });
   }
   if (overexposedRatio > 0.02) {
     warnings.push({
       code: 'clipped_highlights',
-      severity: 'warning',
-      message: `${(overexposedRatio * 100).toFixed(2)}% of solid pixels are near-white. Reduce glow/bloom coverage; a soft pixel piece keeps a value ceiling, not a white-out.`,
+      severity: rasterSeverity,
+      message: `${(overexposedRatio * 100).toFixed(2)}% of solid pixels are near-white. Reduce glow/bloom coverage; a soft pixel piece keeps a value ceiling, not a white-out.${rasterContext}`,
     });
   }
   if (paletteUsage.unusedIndices.length > 0) {
@@ -996,11 +1160,73 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
       message: `${paletteUsage.crowded.length} in-use palette pair(s) sit closer than 6/255 on the max channel and will read as the same tone (closest: slots ${worst.a} and ${worst.b}, delta ${worst.delta}). Widen the ramp or drop one of the pair.`,
     });
   }
+  if (tilemapAnalysis) {
+    if (!tilemapAnalysis.dataLengthValid) {
+      warnings.push({
+        code: 'tilemap_data_length_mismatch',
+        severity: 'warning',
+        message: `Tilemap data has ${tilemapAnalysis.cells} expected cells but stores ${tilemapAnalysis.dataLength} values. Resize or recreate the map before export.`,
+      });
+    }
+    if (tilemapAnalysis.invalid > 0) {
+      warnings.push({
+        code: 'tilemap_invalid_indices',
+        severity: 'warning',
+        message: `${tilemapAnalysis.invalid} cell(s) reference tiles outside the ${tilemapAnalysis.tileCount}-tile tileset. ${tilemapAnalysis.invalidExamples.length} coordinates are listed in \`structure.tilemap.invalidExamples\`.`,
+      });
+    }
+    if (!tilemapAnalysis.tileSizeMatchesTileset) {
+      warnings.push({
+        code: 'tilemap_tile_size_mismatch',
+        severity: 'info',
+        message: `Tilemap cells are ${tilemapAnalysis.tileWidth}x${tilemapAnalysis.tileHeight}, but the source tiles are a different size. This is valid when scaling is intentional; otherwise alpha-mask and Tiled alignment will be ambiguous.`,
+      });
+    }
+    if (tilemapAnalysis.validFilled === 0) {
+      warnings.push({
+        code: 'tilemap_empty',
+        severity: 'warning',
+        message: 'The tilemap has no valid filled cells. Nothing will render or export as terrain.',
+      });
+    }
+    if (
+      tilemapAnalysis.dominantVariant &&
+      tilemapAnalysis.validFilled >= 32 &&
+      tilemapAnalysis.dominantVariant.ratio > 0.78
+    ) {
+      warnings.push({
+        code: 'tilemap_dominant_variant',
+        severity: 'info',
+        message: `Tile ${tilemapAnalysis.dominantVariant.tile} covers ${(tilemapAnalysis.dominantVariant.ratio * 100).toFixed(1)}% of the map. Use \`stroke_tilemap\` with weighted \`tiles\` and \`avoidRepeats\` when that variant is texture rather than a deliberate road/water field.`,
+      });
+    }
+    if (
+      tilemapAnalysis.repetition.sameTileRatio > 0.72 &&
+      tilemapAnalysis.variants.length > 1 &&
+      tilemapAnalysis.validFilled >= 32
+    ) {
+      warnings.push({
+        code: 'tilemap_repetitive_tiles',
+        severity: 'info',
+        message: `${(tilemapAnalysis.repetition.sameTileRatio * 100).toFixed(1)}% of tile-to-tile adjacencies repeat the same index. This is expected for fields, water and roads; use weighted variants if the repetition reads as wallpaper.`,
+      });
+    }
+    if (
+      tilemapAnalysis.terrain.singletonComponents > 0 &&
+      tilemapAnalysis.terrain.singletonComponents / Math.max(1, tilemapAnalysis.terrain.components) > 0.35
+    ) {
+      warnings.push({
+        code: 'tilemap_fragmented_terrain',
+        severity: 'info',
+        message: `${tilemapAnalysis.terrain.singletonComponents} of ${tilemapAnalysis.terrain.components} non-empty terrain components are single cells. Inspect scale and \`terrain.openEdges\`; a sparse map may be intentional.`,
+      });
+    }
+  }
   if (bands.strongBands > 3) {
     warnings.push({
       code: 'horizontal_banding',
-      severity: 'warning',
-      message: `${bands.strongBands} strong full-width tonal edges (${bands.horizontalBands} edges in total). Past about three strong ones the composition reads as stacked stripes rather than depth. Break them with a vertical or diagonal element - a light path, a foreground silhouette, a waterfall.`,
+      severity: rasterSeverity,
+      message: `${bands.strongBands} strong full-width tonal edges (${bands.horizontalBands} edges in total). Past about three strong ones the composition reads as stacked stripes rather than depth. Break them with a vertical or diagonal element - a light path, a foreground silhouette, a waterfall.${rasterContext}`,
     });
   }
   // Full-bleed landscape diagnostics are separate from defectScore. They report the
@@ -1091,8 +1317,8 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
   if (presence.flatestBand.share > 0.45) {
     warnings.push({
       code: 'dead_flat_region',
-      severity: 'warning',
-      message: `${(presence.flatestBand.share * 100).toFixed(1)}% of the canvas sits on a single luminance value (about ${presence.flatestBand.value}). A large uniform area reads as a hole in the piece; give it a value gradient or break it with texture.`,
+      severity: rasterSeverity,
+      message: `${(presence.flatestBand.share * 100).toFixed(1)}% of the canvas sits on a single luminance value (about ${presence.flatestBand.value}). A large uniform area reads as a hole in the piece; give it a value gradient or break it with texture.${rasterContext}`,
     });
   }
   if (rhythm.uniform) {
@@ -1174,8 +1400,16 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
   }
 
   return {
-    frame: sprite.frames.findIndex((f) => f.id === frame.id),
-    frameId: frame.id,
+    source: options.tilemap
+      ? {
+          kind: 'tilemap',
+          id: options.tilemap.id,
+          name: options.tilemap.name,
+          underlay: options.underlay ? { id: options.underlay.id, name: options.underlay.name } : null,
+        }
+      : { kind: 'frame', frame: frame ? sprite.frames.findIndex((f) => f.id === frame.id) : 0, frameId: frame?.id ?? null },
+    frame: frame ? sprite.frames.findIndex((f) => f.id === frame.id) : null,
+    frameId: frame?.id ?? null,
     width,
     height,
     rect: options.rect ?? null,
@@ -1203,6 +1437,7 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
       ridge: landscape.ridge,
       waterline: landscape.waterline,
       guideLines: landscape.guideLines,
+      ...(tilemapAnalysis ? { tilemap: tilemapAnalysis } : {}),
     },
     landscape,
     presence: {
@@ -1235,6 +1470,7 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
     },
     overexposedRatio,
     defectScore,
+    defectScoreContext: tilemapMode ? 'tilemap-texture-diagnostic' : 'raster',
     // Kept as a deprecated alias so existing callers do not break on the rename.
     softnessScore: defectScore,
     ...(regions.length > 0 ? { regions } : {}),
@@ -1735,6 +1971,85 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
 
   addTool(
     server,
+    'preview_tilemap',
+    {
+      title: 'Preview and debug a tilemap',
+      description:
+        'Render a tilemap directly from its tileset, even when it has not been baked into a pixel layer. This is the immediate visual check after set/fill/stroke/autotile. `debug.grid` overlays tile boundaries, `debug.indices` prints every tile index, `debug.highlightCells` marks exact writes and `debug.highlightRect` marks a changed region. Invalid/out-of-range indices are outlined in red. `underlay` composes a base map first so alpha-masked bank/edge tiles can be judged over real ground. `rect` is in tile coordinates. The response also includes structural evidence such as empty ratio, invalid cells, variant distribution, repeated adjacency and connected terrain.',
+      inputSchema: z.object({
+        document: documentRef,
+        tilemap: z.union([z.string(), z.number().int()]).describe('Tilemap id, name or 0-based index.'),
+        underlay: z
+          .union([z.string(), z.number().int()])
+          .optional()
+          .describe('Optional ground/base tilemap rendered first. Alpha-masked edge tiles then blend over it.'),
+        rect: z
+          .object({
+            x: z.number().int(),
+            y: z.number().int(),
+            w: z.number().int().min(1),
+            h: z.number().int().min(1),
+          })
+          .strict()
+          .optional()
+          .describe('Crop in tile coordinates. Defaults to the whole tilemap.'),
+        scale: previewScaleSchema,
+        background: previewBackgroundSchema,
+        replaceEmpty: z
+          .number()
+          .int()
+          .min(-1)
+          .optional()
+          .describe('Render empty cells with this tile index. Defaults to leaving them transparent.'),
+        opacity: z.number().min(0).max(1).optional().describe('Terrain opacity. Defaults to 1.'),
+        debug: tilemapDebugSchema.optional(),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    (args) => {
+      try {
+        const doc = store.require(args.document as string | undefined);
+        const tilemap = resolveTilemap(doc.editor.sprite, args.tilemap as string | number);
+        const underlay = args.underlay === undefined
+          ? undefined
+          : resolveTilemap(doc.editor.sprite, args.underlay as string | number);
+        const rendered = renderTilemapPreview(doc.editor.sprite, tilemap, {
+          rect: args.rect as { x: number; y: number; w: number; h: number } | undefined,
+          underlay,
+          scale: args.scale as number | undefined,
+          background:
+            args.background === undefined
+              ? undefined
+              : resolveBackground(args.background as string | null),
+          replaceEmpty: args.replaceEmpty as number | undefined,
+          opacity: args.opacity as number | undefined,
+          debug: args.debug as
+            | {
+                grid?: boolean;
+                indices?: boolean;
+                showInvalid?: boolean;
+                highlightCells?: Array<{ x: number; y: number }>;
+                highlightRect?: { x: number; y: number; w: number; h: number };
+              }
+            | undefined,
+        });
+        return ok(
+          {
+            ok: true,
+            document: store.summary(doc),
+            ...rendered.meta,
+            structure: rendered.structure,
+          },
+          [imageContent(rendered.image)],
+        );
+      } catch (error) {
+        return fail((error as Error).message);
+      }
+    },
+  );
+
+  addTool(
+    server,
     'get_pixels',
     {
       title: 'Read exact pixel colours',
@@ -1928,10 +2243,24 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Measure defect, presence and landscape quality',
       description:
-        'Read-only report over an objective raster, in two halves. DEFECT half: isolated-pixel ratio, colour-outlier ratio, mean edge contrast, near-white highlight ratio, palette usage, and `defectScore` on 0-100 where HIGHER MEANS CLEANER - 99 means almost nothing measurable is wrong, which is necessary but not sufficient. PRESENCE half: `presence.valueRange` (healthy above 150, collapsed below 90), `darkShare` (over 75% reads as underexposed), `flatShare` (over 45% is a dead region), `planeSeparation` (below 6 means two depth planes have merged into one value) and `lightConcentration` (near 1 is a real source, below 0.3 is ambient). Driving defectScore to 100 flattens the piece, because intentional texture scores identically to noise - declare it with `textureRects` and re-read the presence half afterwards. Also reports `palette.unusedIndices`, `palette.crowded`, `structure.strongBands`, `structure.rhythm`, and `structure.landscape` (internal horizon/ridge/waterline candidates, regularity and vertical/diagonal guide evidence) for full-bleed scenes.',
+        'Read-only report over an objective raster, in two halves. DEFECT half: isolated-pixel ratio, colour-outlier ratio, mean edge contrast, near-white highlight ratio, palette usage, and `defectScore` on 0-100 where HIGHER MEANS CLEANER - 99 means almost nothing measurable is wrong, which is necessary but not sufficient. PRESENCE half: `presence.valueRange` (healthy above 150, collapsed below 90), `darkShare` (over 75% reads as underexposed), `flatShare` (over 45% is a dead region), `planeSeparation` (below 6 means two depth planes have merged into one value) and `lightConcentration` (near 1 is a real source, below 0.3 is ambient). Driving defectScore to 100 flattens the piece, because intentional texture scores identically to noise - declare it with `textureRects` and re-read the presence half afterwards. Also reports `palette.unusedIndices`, `palette.crowded`, `structure.strongBands`, `structure.rhythm`, and `structure.landscape` (internal horizon/ridge/waterline candidates, regularity and vertical/diagonal guide evidence) for full-bleed scenes. Pass `tilemap` to analyse an unbaked tile grid directly: pixel texture warnings become informational and `structure.tilemap` reports invalid indices, variant distribution, repeated adjacency, runs, open edges and connected terrain without treating water ripples or crop rows as noise. Add `underlay` to measure alpha-masked bank/edge tiles over their base terrain.',
       inputSchema: z.object({
         document: documentRef,
-        frame: frameRefSchema.optional().describe('Frame id or 0-based index. Defaults to frame 0.'),
+        frame: frameRefSchema.optional().describe('Frame id or 0-based index. Defaults to frame 0. Do not pass with `tilemap`.'),
+        tilemap: z
+          .union([z.string(), z.number().int()])
+          .optional()
+          .describe('Tilemap id, name or 0-based index. Analyses this grid directly instead of a composited frame.'),
+        underlay: z
+          .union([z.string(), z.number().int()])
+          .optional()
+          .describe('With `tilemap`, composite this base grid first so alpha-masked terrain edges are measured over real ground.'),
+        replaceEmpty: z
+          .number()
+          .int()
+          .min(-1)
+          .optional()
+          .describe('With `tilemap`, render empty cells using this tile before raster analysis.'),
         rect: previewRectSchema.optional(),
         noiseThreshold: z
           .number()
@@ -1978,6 +2307,21 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     (args) => {
       try {
         const doc = store.require(args.document as string | undefined);
+        if (args.underlay !== undefined && args.tilemap === undefined) {
+          return fail('`underlay` requires `tilemap` in quality_report.');
+        }
+        if (args.tilemap !== undefined && args.frame !== undefined) {
+          return fail('Pass either `tilemap` or `frame` to quality_report, not both.');
+        }
+        if (args.tilemap !== undefined && !doc.editor.sprite.tileset) {
+          return fail('Tilemap quality analysis needs a tileset. Run `create_tileset` first.');
+        }
+        const tilemap = args.tilemap === undefined
+          ? undefined
+          : resolveTilemap(doc.editor.sprite, args.tilemap as string | number);
+        const underlay = args.underlay === undefined
+          ? undefined
+          : resolveTilemap(doc.editor.sprite, args.underlay as string | number);
         return ok({
           ok: true,
           document: store.summary(doc),
@@ -1986,6 +2330,9 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
             noiseThreshold: args.noiseThreshold as number | undefined,
             alphaThreshold: args.alphaThreshold as number | undefined,
             grid: args.grid as number | undefined,
+            tilemap,
+            underlay,
+            replaceEmpty: args.replaceEmpty as number | undefined,
             textureRects: args.textureRects as Array<{ x: number; y: number; w: number; h: number }> | undefined,
           }),
         });
@@ -2089,7 +2436,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Apply a batch of commands',
       description:
-        'Run several commands in one round trip. Far cheaper than one call per edit when you are generating a sprite or all the frames of an animation. Each op is `{command, params}` - or put the params inline: `{command: "draw_rect", layer: "base", rect: {...}, color: "#f00", fill: true}`. Set `defaultLayer`/`defaultFrame` once instead of repeating them in every op. Use `list_commands` to see every available command and its parameters. Returns a per-op result, so a failure tells you exactly which op and why. Pass `preview: true` to get the rendered result in the same response; add `previewOptions: {scale: 4, rect, layers, frame}` to choose the exact view without a second `get_preview` call.',
+        'Run several commands in one round trip. Far cheaper than one call per edit when you are generating a sprite or all the frames of an animation. Each op is `{command, params}` - or put the params inline: `{command: "draw_rect", layer: "base", rect: {...}, color: "#f00", fill: true}`. Set `defaultLayer`/`defaultFrame` once instead of repeating them in every op. Use `list_commands` to see every available command and its parameters. Returns a per-op result, so a failure tells you exactly which op and why. Pass `preview: true` to get the rendered result in the same response; add `previewOptions: {scale: 4, rect, layers, frame}` to choose a sprite view, or `{tilemap: "Ground", debug: {grid: true, indices: true}}` to inspect an unbaked tile grid without a second call.',
       inputSchema: z.object({
         document: documentRef,
         expectedVersion: versionRef,
@@ -2123,7 +2470,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           .describe('Include a rendered PNG of the result in this response. Defaults to false.'),
         previewOptions: previewOptionsObjectSchema
           .optional()
-          .describe('Configure the inline preview. Requires `preview: true`; use `{scale: 4}` for a normal iteration preview or add frame/rect/layers/background when inspecting a detail.'),
+          .describe('Configure the inline preview. Requires `preview: true`; use `{scale: 4}` for sprite art or `{tilemap, debug: {grid, indices, highlightCells}}` for an unbaked map.'),
         previewFrame: frameRefSchema
           .optional()
           .describe('Legacy alias for `previewOptions.frame`. Do not pass both.'),
@@ -2171,6 +2518,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
       const results: Array<Record<string, unknown>> = [];
       const failures: Array<Record<string, unknown>> = [];
       const advisories: Array<{ index: number; command: string; message: string }> = [];
+      const beforeVersion = doc.editor.version;
       let applied = 0;
       let failed = 0;
       let stoppedAt: number | null = null;
@@ -2237,8 +2585,6 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
       // it out loud: ops after `stoppedAt` never ran.
       const skipped = stoppedAt === null ? 0 : rawOps.length - stoppedAt - 1;
 
-      if (applied > 0) store.touch(doc);
-
       if (atomic && failed > 0) {
         // One undo unwinds the whole collapsed transaction; otherwise there is one
         // history entry per successful op.
@@ -2256,6 +2602,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         });
       }
 
+      if (applied > 0 && doc.editor.version !== beforeVersion) store.touch(doc);
       const blocks: ContentBlock[] = [];
       let previewMeta: Record<string, unknown> | undefined;
       let previewError: string | undefined;
@@ -2441,12 +2788,14 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Export a Tiled map',
       description:
-        'Write the tilemaps as a Tiled 1.10 `.tmj` map, ready to open in the Tiled level editor or to load from a game engine. One tile layer is written per tilemap, in order, and the tileset is referenced by `image` - so the tileset PNG has to sit next to the map under that name. Empty cells are exported as `0` and tile `n` becomes `n + firstgid`, which is how Tiled numbers tiles.',
+        'Write a self-contained Tiled 1.10 `.tmj` map, ready to open in Tiled or load from a game engine. One tile layer is written per tilemap, in order. By default the referenced tileset PNG is written beside the map as well; pass `writeTileset: false` only when supplying it yourself. Empty cells become `0`, tile `n` becomes `n + firstgid`, and malformed data, mixed tile sizes or out-of-range indices are rejected before any file is written.',
       inputSchema: z.object({
         document: documentRef,
         out: z.string().optional().describe('Destination .tmj path.'),
         path: z.string().optional().describe('Alias for `out`, for callers who expect a source-style path argument.'),
-        image: z.string().optional().describe('Tileset image path the map references. Defaults to "tileset.png".'),
+        image: z.string().optional().describe('Tileset image path referenced by the map. Relative paths are resolved beside `out`. Defaults to "tileset.png".'),
+        writeTileset: z.boolean().optional().describe('Also write the referenced tileset PNG. Defaults to true.'),
+        objectLayer: z.string().min(1).optional().describe('Name for the independent object-group layer. Defaults to "Objects".'),
         firstgid: z.number().int().min(1).optional().describe('First global tile id. Defaults to 1.'),
       }),
       annotations: { destructiveHint: false },
@@ -2461,16 +2810,50 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         const tilemaps = sprite.tilemaps ?? [];
         if (tilemaps.length === 0) return fail('This document has no tilemaps. Run `add_tilemap` first.');
 
+        const analyses = tilemaps.map((tilemap) => analyzeTilemapQuality(tilemap, sprite.tileset!));
+        const malformed = analyses.find((analysis) => !analysis.dataLengthValid);
+        if (malformed) {
+          return fail(`Tilemap "${malformed.name}" stores ${malformed.dataLength} values for ${malformed.cells} cells. Fix it before export.`);
+        }
+        const baseSize = analyses[0];
+        const mixedSize = baseSize
+          ? analyses.find((analysis) =>
+              analysis.tileWidth !== baseSize.tileWidth || analysis.tileHeight !== baseSize.tileHeight,
+            )
+          : undefined;
+        if (mixedSize && baseSize) {
+          return fail(
+            `Tilemap "${mixedSize.name}" uses ${mixedSize.tileWidth}x${mixedSize.tileHeight} cells; the Tiled map uses ${baseSize.tileWidth}x${baseSize.tileHeight}.`,
+          );
+        }
+        const invalid = analyses.find((analysis) => analysis.invalid > 0);
+        if (invalid) {
+          const first = invalid.invalidExamples[0];
+          return fail(
+            `Tilemap "${invalid.name}" has ${invalid.invalid} out-of-range tile cell(s); first at (${first.x}, ${first.y}) = ${first.tile}. Fix or clear them before export.`,
+          );
+        }
+
         const image = (args.image as string | undefined) ?? 'tileset.png';
         const firstgid = (args.firstgid as number | undefined) ?? 1;
-        const map = toTiledJson(sprite.tileset, tilemaps, { image, firstgid });
+        const map = toTiledJson(sprite.tileset, tilemaps, {
+          image,
+          firstgid,
+          mapObjects: sprite.mapObjects ?? [],
+          objectLayerName: args.objectLayer as string | undefined,
+        });
+        const tilesetPath = resolve(dirname(out), image);
+        const writeTileset = args.writeTileset !== false;
         writeFile(out, Buffer.from(`${JSON.stringify(map, null, 2)}\n`, 'utf8'));
+        if (writeTileset) writeFile(tilesetPath, encodePNG(sprite.tileset.image));
 
         return ok({
           ok: true,
           path: out,
           absolute: absPath(out),
           image,
+          tilesetPath: writeTileset ? tilesetPath : null,
+          tilesetWritten: writeTileset,
           firstgid,
           width: map.width,
           height: map.height,
@@ -2478,6 +2861,8 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           tileHeight: map.tileheight,
           layers: map.layers.map((layer) => layer.name),
           tiles: map.tilesets[0]?.tilecount ?? 0,
+          tileProperties: Object.keys(sprite.tileset.tileProperties ?? {}).length,
+          objects: sprite.mapObjects?.length ?? 0,
           document: store.summary(doc),
         });
       } catch (error) {
@@ -2620,7 +3005,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Run a sandboxed script',
       description:
-        'Run trusted JavaScript against the current document in a constrained `node:vm` context; it is not a security boundary for hostile code. `exec(command, params)` / `tryExec(...)` drive the same command bus as the tools; `document()`, `layers()`, `frames()`, `tags()`, `palette()`, `getPixel(x, y)` and `sample(x, y)` read state; `log(...)` collects output; returning a value yields JSON. The whole script collapses into one undo step. For the fast draw→look loop, pass `preview: true` and optionally `previewOptions: {scale: 4, frame, rect, layers, background}` so the PNG arrives in this same response. There is no intended filesystem, network, `require` or `process` access, and it is killed after the timeout.',
+        'Run trusted JavaScript against the current document in a constrained `node:vm` context; it is not a security boundary for hostile code. `exec(command, params)` / `tryExec(...)` drive the same command bus as the tools; `draw.*`, `strokeTilemap`, `paintTilemap`, `document()`, `tilemaps()`, `layers()`, `frames()`, `tags()`, `palette()`, `getPixel(x, y)` and `sample(x, y)` provide higher-level editing and state reads; `log(...)` collects output; returning a value yields JSON. The whole script collapses into one undo step. Pass `preview: true` and optionally `previewOptions: {scale: 4, frame, rect, layers, background}` for sprite art, or `{tilemap: "Ground", debug: {grid: true, indices: true}}` for an unbaked map, so the PNG arrives in this same response. There is no intended filesystem, network, `require` or `process` access, and it is killed after the timeout.',
       inputSchema: z.object({
         document: documentRef,
         expectedVersion: versionRef,
@@ -2642,7 +3027,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           .describe('Return a PNG of the document after the script runs in this same response.'),
         previewOptions: previewOptionsObjectSchema
           .optional()
-          .describe('Configure the inline preview. Requires `preview: true`; `{scale: 4}` is the normal fast iteration view.'),
+          .describe('Configure the inline preview. Requires `preview: true`; `{scale: 4}` is the normal sprite view or `{tilemap, debug}` previews an unbaked map.'),
       }),
     },
     (args) => {
@@ -2879,7 +3264,7 @@ function registerCommandTool(server: McpServer, store: DocumentStore, command: C
       if (!result.ok) {
         return fail(result.error, { code: result.code, command: command.name });
       }
-      store.touch(doc);
+      if (!command.readOnly) store.touch(doc);
       return ok({
         ok: true,
         command: command.name,

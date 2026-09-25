@@ -290,14 +290,22 @@ export function registerIpc(getMcpStatus: () => unknown): void {
     });
     if (picked.canceled || !picked.filePath) return null;
 
-    const map = toTiledJson(sprite.tileset, tilemaps, { image: 'tileset.png' });
+    const map = toTiledJson(sprite.tileset, tilemaps, {
+      image: 'tileset.png',
+      mapObjects: sprite.mapObjects ?? [],
+    });
+    const tilesetPath = path.join(path.dirname(picked.filePath), 'tileset.png');
     await ensureDir(picked.filePath);
     await writeFile(picked.filePath, JSON.stringify(map, null, 2));
+    await writeFile(tilesetPath, encodePNG(sprite.tileset.image));
     return {
       path: picked.filePath,
+      tilesetPath,
       width: map.width,
       height: map.height,
       tiles: map.tilesets[0]?.tilecount ?? 0,
+      tileProperties: Object.keys(sprite.tileset.tileProperties ?? {}).length,
+      objects: sprite.mapObjects?.length ?? 0,
       layers: map.layers.map((layer) => layer.name),
     };
   });
@@ -328,6 +336,7 @@ export function registerIpc(getMcpStatus: () => unknown): void {
       tileWidth: tileset.tileWidth,
       tileHeight: tileset.tileHeight,
       columns: tileset.columns,
+      tilePropertyCount: Object.keys(tileset.tileProperties ?? {}).length,
       rows: Math.floor(tileset.image.height / tileset.tileHeight),
       width: tileset.image.width,
       height: tileset.image.height,

@@ -74,9 +74,15 @@ Workflow that works:
    \`list_commands\`, inline params included, and can return its preview inline too.
    For generated fields prefer \`put_pixels\` (base64 RGBA) or the seeded
    \`banded_gradient\`/\`noise_fill\`/\`ridge_line\`/\`scatter\` primitives over per-pixel JSON.
-5. Before finishing, run \`quality_report\` and fix its warnings: \`despeckle\` for
-   isolated pixels, \`antialias\` for harsh edges, less glow for clipped highlights.
-6. Finish with one \`finalize_document\` call that saves the editable \`.pixel\` source
+5. For tile maps, use \`stroke_tilemap\` for curved weighted terrain, optional custom
+   \`transitions\` for organic edges, and \`preview_tilemap\` with the returned changed
+   cells/rect for an immediate grid+index PNG. A mutation's optional \`bake\` redraws only
+   changed cells with alpha-over, so an unbaked grid does not need a full rebake to look.
+6. Before finishing, run \`quality_report\` and fix its warnings. Pass \`tilemap\` for an
+   unbaked grid: repeated texture is reported as structure/evidence, not automatically
+   despeckled. For raster art, use \`despeckle\` for isolated pixels, \`antialias\` for harsh
+   edges and less glow for clipped highlights.
+7. Finish with one \`finalize_document\` call that saves the editable \`.pixel\` source
    and writes the exact PNG exports you need. Use \`export_sheet\` for engines or
    \`export_gif\` for animation instead when those formats are required.
 

@@ -10,6 +10,7 @@ export * from './draw.js';
 export * from './generative.js';
 export * from './structure.js';
 export * from './transform.js';
+export * from './map.js';
 export * from './tilemap.js';
 
 import { generativeCommands } from './generative.js';
@@ -66,6 +67,7 @@ import {
   squashCommand,
   translateCommand,
 } from './transform.js';
+import { mapCommands } from './map.js';
 import { tilemapCommands } from './tilemap.js';
 
 /**
@@ -129,8 +131,9 @@ export const allCommands: Command[] = [
   // Per-cel motion
   translateCommand,
   squashCommand,
-  // Tilemaps and auto-tiling
+  // Tilemaps, gameplay metadata and auto-tiling
   ...tilemapCommands,
+  ...mapCommands,
 ];
 
 export const defaultRegistry: CommandRegistry = createRegistry(allCommands);

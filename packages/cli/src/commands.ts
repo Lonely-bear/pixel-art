@@ -1,4 +1,4 @@
-import { basename, extname } from 'node:path';
+import { basename, dirname, extname, resolve } from 'node:path';
 import {
   Editor,
   allCommands,
@@ -161,6 +161,8 @@ const infoCommand: CommandSpec = {
       },
       cels: celCount,
       hasTileset: sprite.tileset !== undefined,
+      tilePropertyCount: Object.keys(sprite.tileset?.tileProperties ?? {}).length,
+      mapObjectCount: sprite.mapObjects?.length ?? 0,
       tilemaps: sprite.tilemaps?.map((tilemap) => ({
         id: tilemap.id,
         name: tilemap.name,
@@ -261,8 +263,8 @@ const sheetCommand: CommandSpec = {
 
 const tiledCommand: CommandSpec = {
   name: 'tiled',
-  summary: 'Export the tilemaps as a Tiled (.tmj) map',
-  usage: 'pixel tiled <file.pixel> --out <file.tmj> [--image <tileset.png>] [--firstgid <n>]',
+  summary: 'Export a self-contained Tiled (.tmj) map and tileset PNG',
+  usage: 'pixel tiled <file.pixel> --out <file.tmj> [--image <tileset.png>] [--objects <layer>] [--firstgid <n>] [--no-tileset]',
   async run(ctx) {
     const path = requirePath(ctx);
     const sprite = await loadSprite(path);
@@ -277,13 +279,23 @@ const tiledCommand: CommandSpec = {
 
     const image = stringFlag(ctx.args.flags, 'image') ?? 'tileset.png';
     const firstgid = intFlag(ctx.args.flags, 'firstgid') ?? 1;
-    const map = toTiledJson(sprite.tileset, tilemaps, { image, firstgid });
+    const map = toTiledJson(sprite.tileset, tilemaps, {
+      image,
+      firstgid,
+      mapObjects: sprite.mapObjects ?? [],
+      objectLayerName: stringFlag(ctx.args.flags, 'objects') ?? undefined,
+    });
     await writeText(out, `${JSON.stringify(map, null, 2)}\n`);
+    const tilesetPath = resolve(dirname(out), image);
+    const writeTileset = !boolFlag(ctx.args.flags, 'no-tileset');
+    if (writeTileset) await writeBytes(tilesetPath, encodePNG(sprite.tileset.image));
 
     printJson({
       ok: true,
       path: out,
       image,
+      tilesetPath: writeTileset ? tilesetPath : null,
+      tilesetWritten: writeTileset,
       firstgid,
       width: map.width,
       height: map.height,
@@ -291,6 +303,8 @@ const tiledCommand: CommandSpec = {
       tileHeight: map.tileheight,
       layers: map.layers.map((layer) => layer.name),
       tiles: map.tilesets[0]?.tilecount ?? 0,
+      tileProperties: Object.keys(sprite.tileset.tileProperties ?? {}).length,
+      objects: sprite.mapObjects?.length ?? 0,
     });
     return 0;
   },

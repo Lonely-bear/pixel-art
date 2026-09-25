@@ -256,9 +256,9 @@ render. Break them and no amount of extra shading recovers the result.
   \`apply_ops\`, plus \`previewOptions\` (and optionally \`frame\`, \`rect\`, \`layers\`, or
   \`background\`). The command result and a real PNG come back together, so do not spend
   a second call on \`get_preview\` immediately afterwards.
-- **Leave \`scale\` alone for the whole-canvas look.** The default is the right thing:
-  it renders the piece at the size it will actually be seen at. Set \`scale\` only when
-  you are cropping into one detail.
+- **Leave \`scale\` alone for the whole-canvas look.** The default targets roughly 256px
+  on the long side, which is a useful overview. Set \`scale: 1\` when a true 1:1 export
+  is needed for fine pixel judgement, or crop when you are inspecting one detail.
 - Look after the silhouette, after major lighting/material work, and once at the
   end. Two or three visual gates catch nearly all composition problems; a long chain
   of tiny speculative edits is slower and usually less coherent.
@@ -266,9 +266,9 @@ render. Break them and no amount of extra shading recovers the result.
 - \`get_preview\` renders the composited frame (or all frames) as a PNG you can
   actually see. Use it when no edit was made, or when a mutation did not request
   an inline preview. Never chain twenty edits blind.
-- \`get_preview\` defaults to the sprite at up to ~256px on its longest side, so a
-  canvas up to 256x256 comes back at 1:1 - that is the correct view for judging
-  composition, value structure and dither texture. Pass \`frame\`/\`layers\` to isolate
+- \`get_preview\` defaults to an integer view targeting ~256px on the sprite's longest
+  side. Use \`scale: 1\` for a true 1:1 view when judging fine pixel texture. Pass
+  \`frame\`/\`layers\` to isolate
   what you are working on. Pass \`scale\` (2-32) **together with** \`rect: {x, y, w, h}\`
   to inspect one detail - a face, a hand, a waterline - at 4x. Never use a bare
   \`scale\` to judge the whole piece: upscaling a large canvas exaggerates every
@@ -477,38 +477,50 @@ into a game engine.
 - \`add_tilemap { width, height, tileWidth, tileHeight }\` makes an empty grid; \`-1\` means
   empty. \`set_tile\` writes one cell or a batch of \`tiles\`, \`fill_tilemap\` fills a rect or
   the whole map, \`resize_tilemap\` grows or shifts the grid, \`remove_tilemap\` deletes it.
-- \`autotile\` is the reason to use a tilemap at all. Lay the terrain down with a single
-  placeholder index, then let it choose the transition tiles:
-  \`autotile { tilemap, set: 47, offset: 1, indices: [1] }\`.
-  - \`set: 16\` uses only the four edge neighbours - 16 tiles, the classic cheap set.
-  - \`set: 47\` uses all eight, and counts a diagonal only when both of its adjacent edges
-    are also solid. That rule is what makes 47 tiles enough for every possible blob shape,
-    and it is what stops corners from looking chipped.
-  - \`offset\` is the first tile index of this terrain in the sheet, so one sheet can hold
-    several terrains.
-  - The tile order is fixed, so your sheet has to match it. The neighbour bits are
-    N=1, E=2, S=4, W=8, NE=16, SE=32, SW=64, NW=128, and the tile index for a cell is
-    \`offset\` plus the position of its mask in that canonical list, ascending - so with
-    \`offset: 0\`, tile 0 is the fully isolated cell and tile 46 the fully enclosed one.
-    In other words, draw your sheet in ascending mask order starting at \`offset\`.
-  - Re-running \`autotile\` needs care: the pass replaces your placeholder index with
-    transition tiles, so the same \`indices\` list no longer describes the terrain and a
-    second identical call silently leaves the map wrong. After editing terrain, re-run
-    with \`indices\` omitted - then any non-empty cell counts as solid.
-  - The pass only rewrites cells that are already terrain, so the empty background stays
-    empty. Pass \`only\` to narrow it further, or \`skipIsolated\` to leave single cells alone.
-- \`paint_tilemap\` bakes the grid into a normal pixel layer, which is how a tilemap becomes
-  a PNG or part of a spritesheet. \`get_tilemap\` reads the cells back as rows of indices
-  when you need to inspect or verify a level.
-- \`export_tiled\` writes a Tiled \`.tmj\` map with one tile layer per tilemap, ready for a
-  level editor.
+  Batch writes report every skipped coordinate and reason, plus a \`changedRect\`; do not
+  guess those coordinates back out of the grid after a partial write.
+- \`stroke_tilemap\` draws a curved tile brush through floating-point tile coordinates.
+  Give it weighted \`tiles\` (number or \`{ tile, weight }\`), \`width\`, \`seed\`,
+  \`density\`, \`jitter\`, \`smoothing: "catmull-rom"\` and \`avoidRepeats\`. It can apply
+  edge/corner transitions in the same call through \`edge: { set, transitions, seed,
+  avoidRepeats }\`; \`transitions\` is an arbitrary-order \`[{ mask, tile, weight? }]\` list,
+  so a hand-made set no longer has to occupy one sorted block.
+- \`autotile\` remains available for a solid placeholder terrain. \`set: 16\` uses the four
+  cardinal neighbours; \`set: 47\` uses all eight and counts a diagonal only when both of
+  its adjacent cardinals are solid. \`offset\` selects the traditional canonical sheet.
+  Pass \`transitions\` instead when masks are sparse, repeated, or stored in your own
+  order; each mask may have weighted variants. Missing masks are left unchanged.
+- A tilemap mutation can include
+  \`bake: { layer, frame?, blend: "over", opacity?, underlay? }\`. The command clears and
+  redraws only the cells that actually changed. When \`underlay\` names a ground/base
+  tilemap with the same cell size, that base is stamped first and the active terrain is
+  alpha-composited over it, so a bank edge does not fade into bare transparency.
+- \`paint_tilemap\` bakes any grid into a normal pixel layer. It accepts a tile-space
+  \`rect\`, \`clear\`, \`blend: "copy" | "over"\`, \`opacity\` and \`underlay\`; \`copy\` remains the default
+  for backward compatibility. \`get_tilemap\` reads exact rows of indices.
+- \`preview_tilemap\` is the immediate look/debug tool for an unbaked grid. Use
+  \`debug: { grid: true, indices: true, highlightCells, highlightRect }\` to see tile
+  boundaries, indices, invalid cells and the mutation's changed area in the same response
+  as a PNG. Pass \`underlay\` to render a ground/base tilemap first and judge alpha-masked
+  bank/edge tiles over it. Do not bake merely to inspect a tile edit.
+- \`quality_report { tilemap, underlay? }\` analyses the grid before baking. It reports invalid
+  indices, variant dominance/entropy, same-tile adjacency and runs, connected terrain,
+  singleton cells and open edges. Pixel-noise and flat-band findings become informational
+  in tilemap mode because water ripples, crop rows and roads are intentional texture.
+- Keep gameplay data out of the visual tile choice when the engine needs it:
+  \`set_tile_properties\` stores walkability, collision, speed and similar JSON-safe values
+  per tile index; \`add_map_object\`/\`update_map_object\` store spawns, triggers, bridges
+  and interactive props independently, each with its own properties. Tiled export carries
+  both as tile properties and an object-group layer.
+- \`export_tiled\` writes a self-contained Tiled \`.tmj\` plus its referenced tileset PNG by
+  default, rejecting malformed lengths, mixed tile sizes and out-of-range indices first.
 - A tilemap is for things that repeat on a grid. A pixel layer is for everything else.
 `;
 
 /** Short, always-included preamble for prompts that do not need the full guide. */
 export const SKILL_SUMMARY =
   'Pixel art workflow: block the silhouette in one flat colour on a base layer, ' +
-  'return an inline preview at the default 1:1 scale from the same run_script/apply_ops call, ' +
+  'return an inline preview from the same run_script/apply_ops call (the default integer scale targets about 256px on the long side), ' +
   'then shade with add_palette_ramp hue-shifted ramps and outline selectively. ' +
   'Judge the whole piece at 100% before zooming; keep dither to 3-5px seams only ' +
   '(cluster levels quantise to sixteenths); place shading inside the layer-visible band; ' +
@@ -537,10 +549,11 @@ pixels at once, or looping an edit over every frame.
 
 For a visual iteration, pass \`preview: true\` and leave \`previewOptions\` at its default;
 the PNG is returned with the script result, so no follow-up \`get_preview\` call is needed.
-The default scale is 1:1, which is the only correct view for judging the piece as a
-whole - pass \`previewOptions: {rect, scale}\` when you want to inspect one detail at 4x.
-Use \`expectedVersion\` when another editor may have changed the document since your
-last read. \`finalize_document\` saves the source and writes PNG exports in one call.
+The default integer scale targets about 256px on the long side. Judge the whole piece at
+100% in a separate 1:1 export when fine decisions matter; pass
+\`previewOptions: {rect, scale: 4}\` for a detail. Use \`expectedVersion\` when another
+editor may have changed the document since your last read. \`finalize_document\` saves the
+source and writes PNG exports in one call.
 
 ## What the scripting context gives you
 
@@ -551,6 +564,12 @@ last read. \`finalize_document\` saves the source and writes PNG exports in one 
   the MCP command surface when the command permits it; optional filter arguments are
   left alone. The same normalization is shared by generated MCP tools, \`apply_ops\`
   and the script bridge.
+- Higher-level aliases keep map scripts readable without bypassing validation or undo:
+  \`draw.rect/line/ellipse/polygon/polyline/pixels/putPixels\`, \`draw.tile\`,
+  \`draw.tilemap\` (curve terrain), and \`draw.bake\`. The direct aliases
+  \`strokeTilemap(params)\` and \`paintTilemap(params)\` are also available. Each one calls
+  the matching normal command, so schema errors, defaults and the script's single undo
+  step behave exactly as they do for \`exec\`.
 - \`putPixels(rect, base64RGBA, options?)\` is the compact bulk path for generated fields:
   it writes a row-major RGBA8888 buffer in one command/undo step. The decoded payload
   must contain exactly \`rect.w * rect.h * 4\` bytes; set \`clearTransparent\` when
@@ -562,7 +581,8 @@ last read. \`finalize_document\` saves the source and writes PNG exports in one 
 - \`commands()\` lists every available command as \`{ name, description, readOnly }\`.
   \`command(name)\` returns one command's full JSON Schema, or \`null\`.
 - Read state: \`document()\`, \`layers()\`, \`frames()\`, \`tags()\`, \`palette()\`,
-  \`getPixel(x, y, layer?, frame?)\` and \`sample(x, y, frame?)\` (the composited colour).
+  \`tilemaps()\`, \`mapObjects()\`, \`tileProperties(tile)\`, \`getPixel(x, y, layer?, frame?)\`
+  and \`sample(x, y, frame?)\` (the composited colour).
   For a layer-specific sample, call \`sample(x, y, { layer, frame })\`; the explicit
   \`sampleComposite(x, y, frame?)\` alias always means the composited frame and is harder
   to misread in a long script. \`getPixel\` is already layer-specific. The MCP

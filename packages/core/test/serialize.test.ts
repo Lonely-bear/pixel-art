@@ -90,6 +90,48 @@ describe('serialize', () => {
     expect(restored.frames[0].cels.has(topId)).toBe(false);
   });
 
+  it('round-trips tilesets, tilemaps, tile properties and map objects', () => {
+    const sprite = buildSprite();
+    sprite.tileset = {
+      id: makeId('tileset'),
+      name: 'Terrain',
+      tileWidth: 2,
+      tileHeight: 2,
+      columns: 2,
+      image: PixelBuffer.filled(4, 2, { r: 30, g: 90, b: 40, a: 255 }),
+      tileProperties: {
+        '0': { walkable: true, kind: 'grass' },
+        '1': { walkable: false, moveSpeed: 0.5 },
+      },
+    };
+    sprite.tilemaps = [{
+      id: makeId('tilemap'),
+      name: 'Ground',
+      width: 2,
+      height: 1,
+      tileWidth: 2,
+      tileHeight: 2,
+      data: Int32Array.from([0, 1]),
+    }];
+    sprite.mapObjects = [{
+      id: makeId('obj'),
+      name: 'Gate trigger',
+      type: 'trigger',
+      x: 3,
+      y: 1,
+      width: 2,
+      height: 2,
+      rotation: 0,
+      visible: true,
+      properties: { action: 'open', once: true },
+    }];
+
+    const restored = deserializeSprite(serializeSprite(sprite));
+    expect(restored.tileset?.tileProperties).toEqual(sprite.tileset?.tileProperties);
+    expect(Array.from(restored.tilemaps?.[0].data ?? [])).toEqual([0, 1]);
+    expect(restored.mapObjects).toEqual(sprite.mapObjects);
+  });
+
   it('rejects a payload that is not a sprite container', () => {
     expect(() => deserializeSprite(new Uint8Array([1, 2, 3, 4]))).toThrow();
   });

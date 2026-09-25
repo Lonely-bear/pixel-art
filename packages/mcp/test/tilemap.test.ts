@@ -97,12 +97,18 @@ describe('tilemaps and Tiled export', () => {
       'set_tile',
       'fill_tilemap',
       'resize_tilemap',
+      'stroke_tilemap',
       'autotile',
       'paint_tilemap',
       'get_tilemap',
+      'set_tile_properties',
+      'get_tile_properties',
+      'add_map_object',
+      'get_map_objects',
     ]) {
       expect(names).toContain(name);
     }
+    expect(names).toContain('preview_tilemap');
   });
 
   it('cuts a tileset out of a layer', async () => {
@@ -142,7 +148,12 @@ describe('tilemaps and Tiled export', () => {
       ],
     });
     expect(written.written).toBe(2);
+    expect(written.changed).toBe(2);
     expect(written.skipped).toBe(1);
+    expect(written.skippedCells).toEqual([
+      { x: 9, y: 9, tile: 1, code: 'out_of_bounds', reason: 'outside the 4x3 map' },
+    ]);
+    expect(written.changedRect).toEqual({ x: 0, y: 0, w: 4, h: 3 });
 
     const resized = await run('resize_tilemap', { tilemap: 0, width: 6, height: 4, offsetX: 1, offsetY: 1 });
     expect(resized.width).toBe(6);
@@ -200,30 +211,222 @@ describe('tilemaps and Tiled export', () => {
     expect(measured.summary.opaque).toBe(12 * 16 * 16);
   });
 
+  it('previews an unbaked tilemap with grid, indices and changed-cell overlays', async () => {
+    await makeLevelDocument();
+    await run('add_tilemap', { name: 'Ground', width: 3, height: 2, tileWidth: 16, tileHeight: 16 });
+    await run('set_tile', {
+      tilemap: 'Ground',
+      tiles: [
+        { x: 0, y: 0, tile: 0 },
+        { x: 1, y: 0, tile: 1 },
+        { x: 2, y: 1, tile: 2 },
+      ],
+    });
+
+    const result = (await client.callTool({
+      name: 'preview_tilemap',
+      arguments: {
+        tilemap: 'Ground',
+        scale: 4,
+        debug: {
+          grid: true,
+          indices: true,
+          highlightCells: [{ x: 2, y: 1 }],
+        },
+      },
+    })) as ToolResult;
+    const body = payload(result);
+    expect(result.isError).not.toBe(true);
+    expect(result.content.some((content) => content.type === 'image' && content.mimeType === 'image/png')).toBe(true);
+    expect(body).toMatchObject({
+      mode: 'tilemap',
+      imageWidth: 3 * 16 * 4,
+      imageHeight: 2 * 16 * 4,
+      scale: 4,
+    });
+    expect(body.structure).toMatchObject({ emptyRatio: 1 / 2, invalid: 0 });
+    expect(body.structure.variants).toHaveLength(3);
+  });
+
+  it('returns an inline tilemap debug preview from apply_ops', async () => {
+    await makeLevelDocument();
+    await run('add_tilemap', { name: 'Ground', width: 2, height: 2, tileWidth: 16, tileHeight: 16 });
+
+    const result = (await client.callTool({
+      name: 'apply_ops',
+      arguments: {
+        preview: true,
+        previewOptions: {
+          tilemap: 'Ground',
+          scale: 4,
+          debug: { grid: true, indices: true, highlightRect: { x: 0, y: 0, w: 1, h: 1 } },
+        },
+        ops: [{
+          command: 'fill_tilemap',
+          params: { tilemap: 'Ground', tile: 1, rect: { x: 0, y: 0, w: 1, h: 1 } },
+        }],
+      },
+    })) as ToolResult;
+    const body = payload(result);
+    expect(body.ok).toBe(true);
+    expect(body.preview.mode).toBe('tilemap');
+    expect(body.preview.structure.validFilled).toBe(1);
+    expect(result.content.some((content) => content.type === 'image' && content.mimeType === 'image/png')).toBe(true);
+  });
+
+  it('adds map-aware tile structure to quality_report without baking', async () => {
+    await makeLevelDocument();
+    await run('add_tilemap', { name: 'Ground', width: 3, height: 2, tileWidth: 16, tileHeight: 16 });
+    await run('add_tilemap', { name: 'Base', width: 3, height: 2, tileWidth: 16, tileHeight: 16 });
+    await run('fill_tilemap', { tilemap: 'Ground', tile: 1, rect: { x: 0, y: 0, w: 2, h: 1 } });
+    await run('fill_tilemap', { tilemap: 'Base', tile: 0 });
+
+    const body = payload((await client.callTool({
+      name: 'quality_report',
+      arguments: { tilemap: 'Ground', underlay: 'Base', replaceEmpty: 2 },
+    })) as ToolResult);
+    expect(body.source).toMatchObject({ kind: 'tilemap', name: 'Ground', underlay: { name: 'Base' } });
+    expect(body.frame).toBeNull();
+    expect(body.structure.tilemap).toMatchObject({
+      validFilled: 2,
+      empty: 4,
+      invalid: 0,
+      dominantVariant: { tile: 1, count: 2 },
+    });
+    expect(body.structure.tilemap.repetition.sameTileRatio).toBe(1);
+  });
+
+  it('does not mark a saved document dirty when get_tilemap reads it', async () => {
+    await makeLevelDocument();
+    await run('add_tilemap', { width: 2, height: 2, tileWidth: 16, tileHeight: 16 });
+    await run('set_tile', { tilemap: 0, x: 0, y: 0, tile: 1 });
+
+    const source = join(tempDir, 'readonly.pixel');
+    const saved = payload((await client.callTool({
+      name: 'save_document',
+      arguments: { path: source },
+    })) as ToolResult);
+    expect(saved.document.dirty).toBe(false);
+
+    await client.callTool({ name: 'get_tilemap', arguments: { tilemap: 0 } });
+    const afterRead = payload((await client.callTool({ name: 'get_document', arguments: {} })) as ToolResult);
+    expect(afterRead.document.dirty).toBe(false);
+
+    await client.callTool({
+      name: 'apply_ops',
+      arguments: { ops: [{ command: 'get_tilemap', params: { tilemap: 0, max: 4 } }] },
+    });
+    const afterBatch = payload((await client.callTool({ name: 'get_document', arguments: {} })) as ToolResult);
+    expect(afterBatch.document.dirty).toBe(false);
+  });
+
+  it('stores tile gameplay properties and independent map objects', async () => {
+    await makeLevelDocument();
+    await run('add_tilemap', { width: 2, height: 2, tileWidth: 16, tileHeight: 16 });
+
+    const properties = await run('set_tile_properties', {
+      tile: 1,
+      properties: { walkable: false, moveSpeed: 0.5, kind: 'water' },
+    });
+    expect(properties.properties).toEqual({ walkable: false, moveSpeed: 0.5, kind: 'water' });
+
+    const object = await run('add_map_object', {
+      name: 'Bridge trigger',
+      type: 'trigger',
+      x: 16,
+      y: 8,
+      width: 16,
+      height: 8,
+      properties: { action: 'cross', once: true },
+    });
+    expect(object).toMatchObject({ name: 'Bridge trigger', type: 'trigger', width: 16, height: 8 });
+    const objects = await run('get_map_objects', { type: 'trigger' });
+    expect(objects.objects[0].properties).toEqual({ action: 'cross', once: true });
+
+    const detail = payload((await client.callTool({ name: 'get_document', arguments: {} })) as ToolResult);
+    expect(detail.tilePropertyCount).toBe(1);
+    expect(detail.mapObjects).toEqual([expect.objectContaining({ name: 'Bridge trigger', type: 'trigger' })]);
+  });
+
   it('exports a Tiled map whose data matches the tilemap', async () => {
     await makeLevelDocument();
     await run('add_tilemap', { name: 'Ground', width: 4, height: 3, tileWidth: 16, tileHeight: 16 });
     await run('fill_tilemap', { tilemap: 0, tile: 1, rect: { x: 1, y: 1, w: 2, h: 2 } });
-    await run('autotile', { tilemap: 0, set: 16, indices: [1] });
+    await run('autotile', {
+      tilemap: 0,
+      set: 16,
+      indices: [1],
+      transitions: [
+        { mask: 6, tile: 2 },
+        { mask: 12, tile: 3 },
+        { mask: 3, tile: 1 },
+        { mask: 9, tile: 0 },
+      ],
+      unmapped: 'keep',
+    });
+    await run('set_tile_properties', {
+      tile: 2,
+      properties: { walkable: false, kind: 'river' },
+    });
+    await run('add_map_object', {
+      name: 'Bridge',
+      type: 'interaction',
+      x: 24,
+      y: 8,
+      width: 16,
+      height: 16,
+      properties: { action: 'cross', speed: 0.75 },
+    });
 
     const out = join(tempDir, 'level.tmj');
     const exported = await run('export_tiled', { out });
     expect(exported.ok).toBe(true);
-    expect(exported.layers).toEqual(['Ground']);
+    expect(exported.layers).toEqual(['Ground', 'Objects']);
     expect(exported.tiles).toBe(4);
     expect(exported.width).toBe(4);
     expect(exported.height).toBe(3);
+    expect(exported.tilesetWritten).toBe(true);
+    expect(exported.tileProperties).toBe(1);
+    expect(exported.objects).toBe(1);
+    expect(readFileSync(join(tempDir, 'tileset.png')).subarray(1, 4).toString('ascii')).toBe('PNG');
 
     const map = JSON.parse(readFileSync(out, 'utf8'));
     expect(map.type).toBe('map');
     expect(map.tilewidth).toBe(16);
-    expect(map.layers).toHaveLength(1);
+    expect(map.layers).toHaveLength(2);
     expect(map.layers[0].data).toHaveLength(12);
     // Empty cells become 0; tile `n` becomes `n + firstgid`.
     expect(map.layers[0].data[0]).toBe(0);
-    expect(map.layers[0].data[1 * 4 + 1]).toBe(6 + 1);
+    expect(map.layers[0].data[1 * 4 + 1]).toBe(2 + 1);
     expect(map.tilesets[0].tilecount).toBe(4);
     expect(map.tilesets[0].firstgid).toBe(1);
+    expect(map.tilesets[0].tiles).toEqual([
+      expect.objectContaining({
+        id: 2,
+        properties: expect.arrayContaining([
+          { name: 'walkable', type: 'bool', value: false },
+          { name: 'kind', type: 'string', value: 'river' },
+        ]),
+      }),
+    ]);
+    expect(map.layers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'objectgroup', name: 'Objects' }),
+    ]));
+    const objects = map.layers.find((layer: { type: string }) => layer.type === 'objectgroup').objects;
+    expect(objects).toEqual([
+      expect.objectContaining({
+        name: 'Bridge',
+        type: 'interaction',
+        x: 24,
+        y: 8,
+        width: 16,
+        height: 16,
+        properties: expect.arrayContaining([
+          { name: 'action', type: 'string', value: 'cross' },
+          { name: 'speed', type: 'float', value: 0.75 },
+        ]),
+      }),
+    ]);
   });
 
   it('accepts `path` as an alias for `out` on export_tiled', async () => {

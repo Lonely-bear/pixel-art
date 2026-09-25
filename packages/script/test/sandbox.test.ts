@@ -5,6 +5,7 @@ import {
   createMutableRegistry,
   createPalette,
   createSprite,
+  setTileCommand,
   type Editor,
 } from '@pixel/core';
 import { ScriptRuntime } from '../src/sandbox.js';
@@ -136,6 +137,132 @@ describe('ScriptRuntime.run', () => {
     expect((outcome.result as { written: number }).written).toBe(2);
     expect(pixel(editor, 1, 1)).toEqual({ r: 255, g: 0, b: 0, a: 255 });
     expect(pixel(editor, 2, 1)).toEqual({ r: 0, g: 255, b: 0, a: 128 });
+  });
+
+  it('exposes context-native draw helpers and fills layer/frame defaults', () => {
+    const editor = makeEditor();
+    const runtime = new ScriptRuntime();
+    const outcome = runtime.run(
+      `const rect = draw.rect({ rect: { x: 0, y: 0, w: 2, h: 2 }, color: '#ff0000', fill: true });
+       const line = draw.line({ from: { x: 3, y: 0 }, to: { x: 5, y: 0 }, color: '#00ff00' });
+       return {
+         rect,
+         line,
+         methods: ['rect', 'line', 'ellipse', 'polygon', 'polyline', 'pixels', 'putPixels', 'tile', 'tilemap', 'bake']
+           .map((name) => typeof draw[name]),
+         pixel: getPixel(0, 0),
+       };`,
+      editor,
+    );
+    expect(outcome.ok, outcome.error).toBe(true);
+    expect(outcome.result).toMatchObject({
+      methods: ['function', 'function', 'function', 'function', 'function', 'function', 'function', 'function', 'function', 'function'],
+      pixel: { r: 255, g: 0, b: 0, a: 255 },
+    });
+    expect(editor.history()).toHaveLength(1);
+  });
+
+  it('forwards tile and tilemap draw wrappers to their command names and params', () => {
+    // Keep the real command set intact, but provide a test double for the command that
+    // is being introduced separately. This verifies the wrapper does not inspect or
+    // reshape a future schema in this package.
+    const registry = createMutableRegistry(allCommands.filter((command) => command.name !== 'stroke_tilemap'));
+    registry.register({
+      ...setTileCommand,
+      name: 'stroke_tilemap',
+      apply(_ctx, params) {
+        return { forwarded: params };
+      },
+    });
+    const editor = createEditor(
+      createSprite({ width: 8, height: 8, layers: ['base'], palette: createPalette('test', ['#ff0000']) }),
+      registry,
+    );
+    editor.execute('add_tilemap', { name: 'Ground', width: 2, height: 2, tileWidth: 4, tileHeight: 4 });
+    const runtime = new ScriptRuntime();
+    const outcome = runtime.run(
+      `const tile = draw.tile({ tilemap: 'Ground', x: 0, y: 0, tile: 0 });
+       const stroke = draw.tilemap({ tilemap: 'Ground', tiles: [{ x: 1, y: 1, tile: 1 }] });
+       return { tile, stroke };`,
+      editor,
+    );
+    expect(outcome.ok, outcome.error).toBe(true);
+    expect((outcome.result as { tile: { written: number } }).tile).toMatchObject({ written: 1 });
+    expect((outcome.result as { stroke: { forwarded: unknown } }).stroke).toEqual({
+      forwarded: { tilemap: 'Ground', tiles: [{ x: 1, y: 1, tile: 1 }] },
+    });
+  });
+
+  it('bakes a tilemap through draw.bake with command defaults', () => {
+    const editor = makeEditor();
+    editor.execute('draw_rect', { layer: 0, frame: 0, rect: { x: 0, y: 0, w: 8, h: 8 }, color: '#ff0000', fill: true });
+    editor.execute('create_tileset', { layer: 0, frame: 0, tileWidth: 4, tileHeight: 4, columns: 2 });
+    editor.execute('add_tilemap', { name: 'Ground', width: 2, height: 2, tileWidth: 4, tileHeight: 4 });
+    editor.execute('fill_tilemap', { tilemap: 0, tile: 0 });
+    const runtime = new ScriptRuntime();
+    const outcome = runtime.run(`return draw.bake({ tilemap: 0 });`, editor);
+    expect(outcome.ok, outcome.error).toBe(true);
+    expect(outcome.result).toMatchObject({ drawn: 4, tilemap: 'Ground' });
+  });
+
+  it('returns tilemap metadata without reading cell data', () => {
+    const editor = makeEditor();
+    editor.execute('add_tilemap', { name: 'Ground', width: 2, height: 3, tileWidth: 4, tileHeight: 5 });
+    const historyBefore = editor.history().length;
+    const runtime = new ScriptRuntime();
+    const outcome = runtime.run(`return tilemaps();`, editor);
+    expect(outcome.ok, outcome.error).toBe(true);
+    expect(outcome.result).toEqual([
+      {
+        id: editor.sprite.tilemaps?.[0].id,
+        name: 'Ground',
+        width: 2,
+        height: 3,
+      },
+    ]);
+    expect((outcome.result as Array<Record<string, unknown>>)[0]).not.toHaveProperty('data');
+    expect(editor.history()).toHaveLength(historyBefore);
+  });
+
+  it('reads map gameplay metadata without creating undo entries', () => {
+    const editor = makeEditor();
+    editor.execute('draw_rect', { layer: 0, frame: 0, rect: { x: 0, y: 0, w: 8, h: 8 }, color: '#ff0000', fill: true });
+    editor.execute('create_tileset', { layer: 0, frame: 0, tileWidth: 4, tileHeight: 4, columns: 2 });
+    editor.execute('set_tile_properties', { tile: 1, properties: { walkable: false, moveSpeed: 0.5 } });
+    editor.execute('add_map_object', {
+      name: 'Gate',
+      type: 'trigger',
+      x: 2,
+      y: 2,
+      properties: { action: 'open' },
+    });
+    const historyBefore = editor.history().length;
+    const runtime = new ScriptRuntime();
+    const outcome = runtime.run(
+      `return { properties: tileProperties(1), objects: mapObjects(), documentObjects: document().mapObjects };`,
+      editor,
+    );
+    expect(outcome.ok, outcome.error).toBe(true);
+    expect(outcome.result).toMatchObject({
+      properties: { walkable: false, moveSpeed: 0.5 },
+      objects: [{ name: 'Gate', type: 'trigger', properties: { action: 'open' } }],
+      documentObjects: [{ name: 'Gate', propertyCount: 1 }],
+    });
+    expect(editor.history()).toHaveLength(historyBefore);
+  });
+
+  it('rolls back a high-level draw when a later wrapper fails', () => {
+    const editor = makeEditor();
+    const runtime = new ScriptRuntime();
+    const outcome = runtime.run(
+      `draw.rect({ rect: { x: 0, y: 0, w: 2, h: 2 }, color: '#ff0000', fill: true });
+       draw.tile({});`,
+      editor,
+    );
+    expect(outcome.ok).toBe(false);
+    expect(outcome.code).toBe('invalid_params');
+    expect(pixel(editor, 0, 0)).toBeNull();
+    expect(editor.history()).toHaveLength(0);
   });
 
   it('reports a thrown script error without killing the runtime', () => {
@@ -289,6 +416,48 @@ describe('ScriptRuntime.loadPlugin', () => {
     expect(outcome.ok).toBe(true);
     expect(outcome.commands).toEqual(['draw_border']);
     expect(registry.has('draw_border')).toBe(true);
+  });
+
+  it('exposes the high-level draw and map helpers on the plugin API', () => {
+    const registry = createMutableRegistry(allCommands);
+    const editor = createEditor(
+      createSprite({ width: 8, height: 8, layers: ['base'], palette: createPalette('test', ['#ff0000']) }),
+      registry,
+    );
+    const runtime = new ScriptRuntime();
+    const loaded = runtime.loadPlugin(
+      `defineCommand({
+         name: 'draw_api_probe',
+         description: 'Checks the scripting helpers exposed to plugins.',
+         params: {},
+         run(api) {
+           return {
+             draw: typeof api.draw,
+             rect: typeof api.draw.rect,
+             line: typeof api.draw.line,
+             tile: typeof api.draw.tile,
+             tilemap: typeof api.draw.tilemap,
+             bake: typeof api.draw.bake,
+             maps: typeof api.tilemaps,
+             stroke: typeof api.strokeTilemap,
+             paint: typeof api.paintTilemap,
+           };
+         },
+       });`,
+      { name: 'draw-api', registry },
+    );
+    expect(loaded.ok, loaded.error).toBe(true);
+    expect(editor.execute('draw_api_probe')).toEqual({
+      draw: 'object',
+      rect: 'function',
+      line: 'function',
+      tile: 'function',
+      tilemap: 'function',
+      bake: 'function',
+      maps: 'function',
+      stroke: 'function',
+      paint: 'function',
+    });
   });
 
   it('runs a plugin command against the caller draft as one undo step', () => {

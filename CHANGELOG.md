@@ -4,6 +4,20 @@ All notable changes to Pixel Art MCP are documented in this file.
 
 ## [0.1.1] - 2026-09-25
 
+### Added
+
+- Curved `stroke_tilemap` terrain brushes with weighted variants, deterministic density/jitter and repeat avoidance.
+- Sparse/weighted 16/47 transition mappings, alpha-over edge masks and changed-cell-only local baking.
+- `preview_tilemap` grid/index/changed-area PNG debugging and tilemap-aware `quality_report` structure analysis.
+- Per-tile gameplay properties, independent map objects, and Tiled object/property export support.
+- High-level `draw.*`, `strokeTilemap`, `paintTilemap` and `tilemaps` script helpers.
+
+### Changed
+
+- Tilemap mutation summaries now report exact skipped coordinates, unchanged writes and changed bounds.
+- Tiled export now writes its referenced tileset PNG by default and validates the map before writing.
+- Read-only generated commands no longer mark a saved document dirty.
+
 ### Fixed
 
 - Added the `dotloom-mcp` executable alias so `npx -y dotloom-mcp` starts the MCP server directly.

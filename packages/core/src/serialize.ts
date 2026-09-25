@@ -1,6 +1,6 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { PixelBuffer } from './buffer.js';
-import type { AnimationTag, Layer, Sprite, TilemapLayer } from './document.js';
+import type { AnimationTag, Layer, MapObject, MapPropertyValue, Sprite, TilemapLayer } from './document.js';
 import { createPalette, type Palette } from './palette.js';
 import { decodePNG, encodePNG } from './png.js';
 
@@ -50,6 +50,7 @@ export interface SpriteManifest {
     tileHeight: number;
     columns: number;
     image: string;
+    tileProperties?: Record<string, Record<string, MapPropertyValue>>;
   };
   tilemaps?: {
     id: string;
@@ -60,6 +61,7 @@ export interface SpriteManifest {
     tileHeight: number;
     data: string;
   }[];
+  mapObjects?: MapObject[];
 }
 
 export function serializeSprite(sprite: Sprite): Uint8Array {
@@ -91,6 +93,14 @@ export function serializeSprite(sprite: Sprite): Uint8Array {
       paletteLocked: sprite.paletteLocked,
     },
     cels,
+    ...(sprite.mapObjects?.length
+      ? {
+          mapObjects: sprite.mapObjects.map((object) => ({
+            ...object,
+            properties: { ...object.properties },
+          })),
+        }
+      : {}),
   };
 
   if (sprite.tileset) {
@@ -102,6 +112,9 @@ export function serializeSprite(sprite: Sprite): Uint8Array {
       tileHeight: sprite.tileset.tileHeight,
       columns: sprite.tileset.columns,
       image: 'tileset.png',
+      ...(sprite.tileset.tileProperties
+        ? { tileProperties: { ...sprite.tileset.tileProperties } }
+        : {}),
     };
   }
 
@@ -168,6 +181,16 @@ export function deserializeSprite(bytes: Uint8Array): Sprite {
     tags: source.tags ?? [],
     palette: normalizePalette(source.palette),
     paletteLocked: source.paletteLocked ?? false,
+    ...(manifest.mapObjects?.length
+      ? {
+          mapObjects: manifest.mapObjects.map((object) => ({
+            ...object,
+            rotation: object.rotation ?? 0,
+            visible: object.visible ?? true,
+            properties: { ...(object.properties ?? {}) },
+          })),
+        }
+      : {}),
   };
 
   if (manifest.tileset) {
@@ -180,6 +203,9 @@ export function deserializeSprite(bytes: Uint8Array): Sprite {
         tileHeight: manifest.tileset.tileHeight,
         columns: manifest.tileset.columns,
         image: decodePNG(png),
+        ...(manifest.tileset.tileProperties
+          ? { tileProperties: { ...manifest.tileset.tileProperties } }
+          : {}),
       };
     }
   }
@@ -190,6 +216,14 @@ export function deserializeSprite(bytes: Uint8Array): Sprite {
         const raw = entries[meta.data];
         if (!raw) return null;
         const values = JSON.parse(strFromU8(raw)) as number[];
+        if (!Number.isInteger(meta.width) || meta.width <= 0 || !Number.isInteger(meta.height) || meta.height <= 0) {
+          throw new Error(`Tilemap "${meta.name}" has invalid dimensions ${meta.width}x${meta.height}.`);
+        }
+        if (values.length !== meta.width * meta.height) {
+          throw new Error(
+            `Tilemap "${meta.name}" stores ${values.length} cells; expected ${meta.width * meta.height}.`,
+          );
+        }
         const tilemap: TilemapLayer = {
           id: meta.id,
           name: meta.name,

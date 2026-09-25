@@ -47,6 +47,9 @@ export interface AnimationTag {
   repeat: number;
 }
 
+/** JSON-safe value stored in Tiled tile/object custom properties. */
+export type MapPropertyValue = string | number | boolean;
+
 export interface Tileset {
   id: TilesetId;
   name: string;
@@ -54,6 +57,8 @@ export interface Tileset {
   tileHeight: number;
   columns: number;
   image: PixelBuffer;
+  /** Gameplay metadata keyed by decimal tile index, e.g. walkable or moveSpeed. */
+  tileProperties?: Record<string, Record<string, MapPropertyValue>>;
 }
 
 export interface TilemapLayer {
@@ -65,6 +70,27 @@ export interface TilemapLayer {
   tileHeight: number;
   /** Row-major tile indices, `-1` for an empty cell. */
   data: Int32Array;
+}
+
+/**
+ * A Tiled-compatible object record, stored independently from visual tile cells.
+ *
+ * Pixel coordinates keep the object useful for bridges, spawn points, triggers and
+ * interactive props even when it is not backed by one tile. `tile` is optional and
+ * supplies the tile-object gid on export.
+ */
+export interface MapObject {
+  id: string;
+  name: string;
+  type: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  tile?: number;
+  rotation: number;
+  visible: boolean;
+  properties: Record<string, MapPropertyValue>;
 }
 
 export interface Sprite {
@@ -84,6 +110,8 @@ export interface Sprite {
   paletteLocked?: boolean;
   tileset?: Tileset;
   tilemaps?: TilemapLayer[];
+  /** Non-cell map entities exported as a Tiled object group. */
+  mapObjects?: MapObject[];
 }
 
 export interface CreateSpriteOptions {
@@ -230,7 +258,19 @@ export function cloneSpriteStructure(sprite: Sprite): Sprite {
     tags: sprite.tags.map((t) => ({ ...t })),
     palette: { ...sprite.palette, colors: sprite.palette.colors.slice() },
     tilemaps: sprite.tilemaps?.map((t) => ({ ...t, data: t.data })),
-    tileset: sprite.tileset ? { ...sprite.tileset, image: sprite.tileset.image } : undefined,
+    tileset: sprite.tileset
+      ? {
+          ...sprite.tileset,
+          image: sprite.tileset.image,
+          ...(sprite.tileset.tileProperties
+            ? { tileProperties: { ...sprite.tileset.tileProperties } }
+            : {}),
+        }
+      : undefined,
+    mapObjects: sprite.mapObjects?.map((object) => ({
+      ...object,
+      properties: { ...object.properties },
+    })),
   };
 }
 
