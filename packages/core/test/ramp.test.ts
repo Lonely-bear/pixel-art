@@ -16,6 +16,12 @@ describe('hue-shifted palette ramps', () => {
     }
   });
 
+  it('interpolates endpoint alpha unless an explicit override is supplied', () => {
+    const ramp = buildHueRamp('#ff000080', '#0000ff40', 3);
+    expect(ramp.colors.map((color) => color.a)).toEqual([128, 96, 64]);
+    expect(buildHueRamp('#ff000080', '#0000ff40', 3, { alpha: 200 }).colors.every((color) => color.a === 200)).toBe(true);
+  });
+
   it('pulls shadows cool and highlights warm along the short path', () => {
     const plain = buildHueRamp('#803030', '#f0d0a0', 5, { hueShift: 0 });
     const shifted = buildHueRamp('#803030', '#f0d0a0', 5, { hueShift: 30 });

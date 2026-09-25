@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { blendInto } from '../blend.js';
-import { decodeBase64 } from '../binary.js';
+import { base64ByteLength, decodeBase64 } from '../binary.js';
 import { clipRect, fullRect } from '../geometry.js';
 import { frameMask, compositeFrame } from '../render.js';
 import {
@@ -23,6 +23,7 @@ import {
   type DrawOptions,
 } from '../raster.js';
 import {
+  base64DataSchema,
   blendOptionsShape,
   celOf,
   clipMask,
@@ -38,6 +39,7 @@ import {
   layerRefSchema,
   nullableColorSchema,
   pointSchema,
+  positiveRectSchema,
   rectSchema,
   resolveColor,
   shapeSchema,
@@ -144,8 +146,8 @@ export const putPixelsCommand = defineCommand({
   params: z.object({
     layer: layerRefSchema,
     frame: frameRefSchema,
-    rect: rectSchema.describe('Destination rectangle in canvas pixels.'),
-    data: z.string().min(1).describe('Base64-encoded row-major RGBA8888 bytes.'),
+    rect: positiveRectSchema.describe('Destination rectangle in canvas pixels (1-4096 per side).'),
+    data: base64DataSchema.describe('Base64-encoded row-major RGBA8888 bytes.'),
     clearTransparent: z.boolean().optional().describe('Erase destination pixels whose source alpha is zero. Defaults to false.'),
     clip: clipSchema,
     ...blendOptionsShape,
@@ -158,13 +160,14 @@ export const putPixelsCommand = defineCommand({
     if (!Number.isSafeInteger(pixelCount) || pixelCount > 4096 * 4096) {
       throw new Error(`Invalid put_pixels rect: ${p.rect.w}x${p.rect.h} is too large`);
     }
-    const bytes = decodeBase64(p.data);
     const expected = pixelCount * 4;
-    if (bytes.length !== expected) {
+    const decodedLength = base64ByteLength(p.data);
+    if (decodedLength !== expected) {
       throw new Error(
-        `put_pixels data length mismatch: expected ${expected} RGBA bytes for ${p.rect.w}x${p.rect.h}, decoded ${bytes.length}`,
+        `put_pixels data length mismatch: expected ${expected} RGBA bytes for ${p.rect.w}x${p.rect.h}, decoded ${decodedLength}`,
       );
     }
+    const bytes = decodeBase64(p.data);
 
     const buf = celOf(ctx, p.layer, p.frame);
     const result = putPixels(buf, p.rect, bytes, {

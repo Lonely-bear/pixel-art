@@ -17,6 +17,7 @@ describe('base64 bulk pixels', () => {
     expect([...decodeBase64('AQIDBA')]).toEqual([1, 2, 3, 4]);
     expect([...decodeBase64(' AQI\n DBA== ')]).toEqual([1, 2, 3, 4]);
     expect(() => decodeBase64('A')).toThrow(/length/);
+    expect(() => decodeBase64('AQIDBA=')).toThrow(/length|padding/);
     expect(() => decodeBase64('!!!!')).toThrow(/base64/);
   });
 
@@ -151,6 +152,7 @@ describe('generative primitives', () => {
       from: '#101018',
       to: '#f0f0e0',
       steps: 6,
+      banded: false,
     });
     const cel = editor.sprite.frames[0].cels.get(editor.sprite.layers[0].id)!;
     const allowed = new Set(['#101018', '#f0f0e0']);
@@ -161,6 +163,50 @@ describe('generative primitives', () => {
         expect(allowed.has(hex)).toBe(true);
       }
     }
+  });
+
+  it('clips generation to the visible canvas before allocating a field', () => {
+    const editor = makeEditor(4, 4);
+    const result = editor.execute('banded_gradient', {
+      layer: 0,
+      frame: 0,
+      rect: { x: 100, y: 100, w: 4096, h: 4096 },
+      from: '#101018',
+      to: '#f0f0e0',
+    }) as { pixels: number; painted: number };
+    expect(result).toMatchObject({ pixels: 4096 * 4096, painted: 0 });
+  });
+
+  it('does not alias safe integer seeds that share the same low word', () => {
+    const a = makeEditor(8, 8);
+    const b = makeEditor(8, 8);
+    const params = {
+      layer: 0,
+      frame: 0,
+      rect: { x: 0, y: 0, w: 8, h: 8 },
+      from: '#10182c',
+      to: '#83b7b0',
+      jitter: 0.5,
+    };
+    a.execute('banded_gradient', { ...params, seed: 1 });
+    b.execute('banded_gradient', { ...params, seed: 4_294_967_297 });
+    expect(snapshot(a)).not.toEqual(snapshot(b));
+  });
+
+  it('does not let transparent scatter samples block later opaque discs', () => {
+    const editor = makeEditor(12, 12);
+    const result = editor.execute('scatter', {
+      layer: 0,
+      frame: 0,
+      rect: { x: 0, y: 0, w: 12, h: 12 },
+      count: 40,
+      colors: ['#00000000', '#ffffff'],
+      radius: 2,
+      falloff: 1,
+      seed: 21,
+    }) as { pixels: number; painted: number };
+    expect(result.pixels).toBeGreaterThan(0);
+    expect(result.painted).toBe(result.pixels);
   });
 
   it('places deterministic scatter clusters and enforces a size limit', () => {

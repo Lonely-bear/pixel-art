@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { buildHueRamp } from '../ramp.js';
+import { clipRect } from '../geometry.js';
 import { drawPixels, putPixels, type PixelSpec } from '../raster.js';
 import type { Sprite } from '../document.js';
 import type { Color, ColorInput, Rect } from '../types.js';
@@ -15,20 +16,29 @@ import {
   frameIdOf,
   layerIdOf,
   layerRefSchema,
-  rectSchema,
+  positiveRectSchema,
   resolveColor,
 } from './types.js';
 
 const MAX_GENERATED_PIXELS = 4_194_304;
+const MAX_GENERATED_WORK = 16_000_000;
 
-function validateGeneratedRect(rect: Rect, commandName: string): void {
+function validateGeneratedRect(rect: Rect, commandName: string, workPixels = rect.w * rect.h): void {
   if (rect.w <= 0 || rect.h <= 0) {
     throw new Error(`${commandName} rect must have positive width and height, got ${rect.w}x${rect.h}`);
   }
-  const pixels = rect.w * rect.h;
-  if (!Number.isSafeInteger(pixels) || pixels > MAX_GENERATED_PIXELS) {
+  if (!Number.isSafeInteger(workPixels) || workPixels > MAX_GENERATED_PIXELS) {
     throw new Error(
-      `${commandName} rect ${rect.w}x${rect.h} exceeds the ${MAX_GENERATED_PIXELS} generated-pixel safety limit`,
+      `${commandName} visible work area ${workPixels} exceeds the ${MAX_GENERATED_PIXELS} generated-pixel safety limit`,
+    );
+  }
+}
+
+function validateGeneratedWork(pixels: number, multiplier: number, commandName: string): void {
+  const work = pixels * multiplier;
+  if (!Number.isSafeInteger(work) || work > MAX_GENERATED_WORK) {
+    throw new Error(
+      `${commandName} estimated work ${work} exceeds the ${MAX_GENERATED_WORK} operation safety limit; reduce the rect or octaves`,
     );
   }
 }
@@ -44,7 +54,11 @@ function clampByte(value: number): number {
 function hash2D(x: number, y: number, seed: number): number {
   let n = Math.imul((x | 0) ^ 0x9e3779b9, 0x85ebca6b);
   n ^= Math.imul((y | 0) ^ 0xc2b2ae35, 0x27d4eb2f);
-  n ^= Math.imul(seed | 0, 0x165667b1);
+  // Mix both 32-bit halves so safe integer seeds do not alias after `| 0`.
+  const seedLow = seed >>> 0;
+  const seedHigh = Math.floor(seed / 0x100000000) >>> 0;
+  n ^= Math.imul(seedLow ^ seedHigh, 0x165667b1);
+  n ^= Math.imul(seedHigh, 0x9e3779b9);
   n = Math.imul(n ^ (n >>> 15), 0x85ebca6b);
   n ^= n >>> 13;
   return (n >>> 0) / 0x100000000;
@@ -111,19 +125,22 @@ function directionValue(x: number, y: number, rect: Rect, direction: 'vertical' 
 
 function gradientRgba(
   rect: Rect,
+  outputRect: Rect,
   ramp: readonly Color[],
   direction: 'vertical' | 'horizontal' | 'diagonal' | 'radial',
   banded: boolean,
   jitter: number,
   seed: number,
 ): Uint8ClampedArray {
-  const data = new Uint8ClampedArray(rect.w * rect.h * 4);
-  for (let y = 0; y < rect.h; y++) {
-    for (let x = 0; x < rect.w; x++) {
-      const jitterValue = (hash2D(x, y, seed) - 0.5) * 2 * jitter;
-      const t = clamp01(directionValue(x, y, rect, direction) + jitterValue);
+  const data = new Uint8ClampedArray(outputRect.w * outputRect.h * 4);
+  for (let y = 0; y < outputRect.h; y++) {
+    const localY = outputRect.y + y - rect.y;
+    for (let x = 0; x < outputRect.w; x++) {
+      const localX = outputRect.x + x - rect.x;
+      const jitterValue = (hash2D(localX, localY, seed) - 0.5) * 2 * jitter;
+      const t = clamp01(directionValue(localX, localY, rect, direction) + jitterValue);
       const color = colorAt(ramp, t, banded);
-      const i = (y * rect.w + x) * 4;
+      const i = (y * outputRect.w + x) * 4;
       data[i] = color.r;
       data[i + 1] = color.g;
       data[i + 2] = color.b;
@@ -135,6 +152,7 @@ function gradientRgba(
 
 function noiseRgba(
   rect: Rect,
+  outputRect: Rect,
   ramp: readonly Color[],
   scale: number,
   octaves: number,
@@ -145,13 +163,15 @@ function noiseRgba(
   banded: boolean,
   seed: number,
 ): Uint8ClampedArray {
-  const data = new Uint8ClampedArray(rect.w * rect.h * 4);
-  for (let y = 0; y < rect.h; y++) {
-    for (let x = 0; x < rect.w; x++) {
-      const value = fbm(x / scale, y / scale, seed, octaves, lacunarity, gain);
+  const data = new Uint8ClampedArray(outputRect.w * outputRect.h * 4);
+  for (let y = 0; y < outputRect.h; y++) {
+    const localY = outputRect.y + y - rect.y;
+    for (let x = 0; x < outputRect.w; x++) {
+      const localX = outputRect.x + x - rect.x;
+      const value = fbm(localX / scale, localY / scale, seed, octaves, lacunarity, gain);
       const t = clamp01((value - 0.5) * contrast + 0.5 + bias);
       const color = colorAt(ramp, t, banded);
-      const i = (y * rect.w + x) * 4;
+      const i = (y * outputRect.w + x) * 4;
       data[i] = color.r;
       data[i + 1] = color.g;
       data[i + 2] = color.b;
@@ -181,12 +201,17 @@ function addDisc(
       if (x < bounds.x || y < bounds.y || x >= bounds.x + bounds.w || y >= bounds.y + bounds.h) {
         continue;
       }
-      const key = (y & 0xffff) << 16 | (x & 0xffff);
+      const relativeX = x - bounds.x;
+      const relativeY = y - bounds.y;
+      const key = relativeY * bounds.w + relativeX;
       if (seen.has(key)) continue;
-      seen.add(key);
       const edge = clamp01(1 - (r > 0 ? distance / r : 0) * falloff);
       const alpha = clampByte((color.a / 255) * edge * 255);
-      if (alpha > 0) pixels.push({ x, y, color: { ...color, a: alpha } });
+      // A fully transparent edge must not reserve the coordinate for a later disc.
+      if (alpha > 0) {
+        seen.add(key);
+        pixels.push({ x, y, color: { ...color, a: alpha } });
+      }
     }
   }
 }
@@ -244,7 +269,7 @@ export const bandedGradientCommand = defineCommand({
   params: z.object({
     layer: layerRefSchema,
     frame: frameRefSchema,
-    rect: rectSchema,
+    rect: positiveRectSchema,
     from: colorSchema.describe('Gradient start colour.'),
     to: colorSchema.describe('Gradient end colour.'),
     direction: z.enum(['vertical', 'horizontal', 'diagonal', 'radial']).optional().describe('Defaults to vertical.'),
@@ -259,23 +284,28 @@ export const bandedGradientCommand = defineCommand({
     ...blendOptionsShape,
   }),
   apply(ctx, p) {
-    validateGeneratedRect(p.rect, 'banded_gradient');
+    const buf = celOf(ctx, p.layer, p.frame);
+    const visible = clipRect(p.rect, buf.width, buf.height);
+    validateGeneratedRect(p.rect, 'banded_gradient', visible.w * visible.h);
     const ramp = rampFrom(ctx, p.from, p.to, p.steps ?? 8, p.hueShift ?? 20, p.shadowHue, p.highlightHue);
-    const rgba = gradientRgba(p.rect, ramp, p.direction ?? 'vertical', p.banded ?? true, p.jitter ?? 0, p.seed ?? 1);
-    const result = putPixels(celOf(ctx, p.layer, p.frame), p.rect, rgba, {
-      blend: p.blend,
-      opacity: p.opacity,
-      mask: clipMask(ctx, p.clip, p.layer, p.frame),
-    });
-    return {
+    const summary = {
       layer: layerIdOf(ctx.sprite, p.layer),
       frame: frameIdOf(ctx.sprite, p.frame),
-      pixels: result.requested,
-      painted: result.painted,
+      pixels: p.rect.w * p.rect.h,
       direction: p.direction ?? 'vertical',
       banded: p.banded ?? true,
       ...clipWarning(ctx, p.clip, p.layer),
     };
+    if (visible.w === 0 || visible.h === 0) return { ...summary, painted: 0 };
+
+    const rgba = gradientRgba(p.rect, visible, ramp, p.direction ?? 'vertical', p.banded ?? true, p.jitter ?? 0, p.seed ?? 1);
+    const result = putPixels(buf, visible, rgba, {
+      blend: p.blend,
+      opacity: p.opacity,
+      mask: clipMask(ctx, p.clip, p.layer, p.frame),
+      mapColor: (color) => resolveColor(ctx.sprite, color),
+    });
+    return { ...summary, painted: result.painted };
   },
 });
 
@@ -286,7 +316,7 @@ export const noiseFillCommand = defineCommand({
   params: z.object({
     layer: layerRefSchema,
     frame: frameRefSchema,
-    rect: rectSchema,
+    rect: positiveRectSchema,
     from: colorSchema.describe('Noise ramp start colour.'),
     to: colorSchema.describe('Noise ramp end colour.'),
     steps: z.number().int().min(2).max(32).optional().describe('Ramp steps. Defaults to 8.'),
@@ -305,10 +335,25 @@ export const noiseFillCommand = defineCommand({
     ...blendOptionsShape,
   }),
   apply(ctx, p) {
-    validateGeneratedRect(p.rect, 'noise_fill');
+    const buf = celOf(ctx, p.layer, p.frame);
+    const visible = clipRect(p.rect, buf.width, buf.height);
+    const visiblePixels = visible.w * visible.h;
+    validateGeneratedRect(p.rect, 'noise_fill', visiblePixels);
+    validateGeneratedWork(visiblePixels, p.octaves ?? 1, 'noise_fill');
     const ramp = rampFrom(ctx, p.from, p.to, p.steps ?? 8, p.hueShift ?? 20, p.shadowHue, p.highlightHue);
+    const summary = {
+      layer: layerIdOf(ctx.sprite, p.layer),
+      frame: frameIdOf(ctx.sprite, p.frame),
+      pixels: p.rect.w * p.rect.h,
+      mode: (p.octaves ?? 1) > 1 ? 'fbm' : 'noise',
+      octaves: p.octaves ?? 1,
+      ...clipWarning(ctx, p.clip, p.layer),
+    };
+    if (visible.w === 0 || visible.h === 0) return { ...summary, painted: 0 };
+
     const rgba = noiseRgba(
       p.rect,
+      visible,
       ramp,
       p.scale ?? 32,
       p.octaves ?? 1,
@@ -319,20 +364,13 @@ export const noiseFillCommand = defineCommand({
       p.banded ?? true,
       p.seed ?? 1,
     );
-    const result = putPixels(celOf(ctx, p.layer, p.frame), p.rect, rgba, {
+    const result = putPixels(buf, visible, rgba, {
       blend: p.blend,
       opacity: p.opacity,
       mask: clipMask(ctx, p.clip, p.layer, p.frame),
+      mapColor: (color) => resolveColor(ctx.sprite, color),
     });
-    return {
-      layer: layerIdOf(ctx.sprite, p.layer),
-      frame: frameIdOf(ctx.sprite, p.frame),
-      pixels: result.requested,
-      painted: result.painted,
-      mode: (p.octaves ?? 1) > 1 ? 'fbm' : 'noise',
-      octaves: p.octaves ?? 1,
-      ...clipWarning(ctx, p.clip, p.layer),
-    };
+    return { ...summary, painted: result.painted };
   },
 });
 
@@ -343,10 +381,10 @@ export const scatterCommand = defineCommand({
   params: z.object({
     layer: layerRefSchema,
     frame: frameRefSchema,
-    rect: rectSchema,
+    rect: positiveRectSchema,
     count: z.number().int().min(1).max(4096).optional().describe('Number of seed points. Defaults to 32.'),
-    color: colorSchema.optional().describe('Single point colour. Defaults to white when no `colors` are given.'),
-    colors: z.array(colorSchema).min(1).max(32).optional().describe('Palette/ramp colours selected deterministically per point.'),
+    color: colorSchema.optional().describe('Single point colour. Defaults to white when no `colors` are given; ignored when `colors` is present.'),
+    colors: z.array(colorSchema).min(1).max(32).optional().describe('Palette/ramp colours selected deterministically per point. Takes precedence over `color`.'),
     radius: z.number().int().min(0).max(24).optional().describe('Maximum point radius in pixels. Defaults to 1.'),
     falloff: z.number().min(0).max(1).optional().describe('0 = hard discs, 1 = fades fully at the edge. Defaults to 0.35.'),
     cluster: z.number().min(0).max(1).optional().describe('Probability of a nearby satellite point. Defaults to 0.'),
@@ -355,7 +393,9 @@ export const scatterCommand = defineCommand({
     ...blendOptionsShape,
   }),
   apply(ctx, p) {
-    validateGeneratedRect(p.rect, 'scatter');
+    const buf = celOf(ctx, p.layer, p.frame);
+    const visible = clipRect(p.rect, buf.width, buf.height);
+    validateGeneratedRect(p.rect, 'scatter', visible.w * visible.h);
     const count = p.count ?? 32;
     const radius = p.radius ?? 1;
     const estimated = count * Math.pow(radius * 2 + 1, 2) * (1 + (p.cluster ?? 0));
@@ -366,21 +406,22 @@ export const scatterCommand = defineCommand({
       ? p.colors
       : [p.color ?? '#ffffff'];
     const colors = sourceColors.map((color) => resolveColor(ctx.sprite, color));
-    const pixels = scatterPixels(p.rect, colors, count, radius, p.falloff ?? 0.35, p.cluster ?? 0, p.seed ?? 1);
-    const painted = drawPixels(celOf(ctx, p.layer, p.frame), pixels, {
+    const summary = {
+      layer: layerIdOf(ctx.sprite, p.layer),
+      frame: frameIdOf(ctx.sprite, p.frame),
+      points: count,
+      seed: p.seed ?? 1,
+      ...clipWarning(ctx, p.clip, p.layer),
+    };
+    if (visible.w === 0 || visible.h === 0) return { ...summary, pixels: 0, painted: 0 };
+
+    const pixels = scatterPixels(visible, colors, count, radius, p.falloff ?? 0.35, p.cluster ?? 0, p.seed ?? 1);
+    const painted = drawPixels(buf, pixels, {
       blend: p.blend,
       opacity: p.opacity,
       mask: clipMask(ctx, p.clip, p.layer, p.frame),
     });
-    return {
-      layer: layerIdOf(ctx.sprite, p.layer),
-      frame: frameIdOf(ctx.sprite, p.frame),
-      points: count,
-      pixels: pixels.length,
-      painted,
-      seed: p.seed ?? 1,
-      ...clipWarning(ctx, p.clip, p.layer),
-    };
+    return { ...summary, pixels: pixels.length, painted };
   },
 });
 

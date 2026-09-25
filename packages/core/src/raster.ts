@@ -153,7 +153,10 @@ export interface PutPixelsResult {
   written: number;
   painted: number;
   cleared: number;
+  /** Destination pixels skipped because they were outside the canvas or masked. */
   clipped: number;
+  /** In-bounds source samples with alpha zero when clearTransparent was false. */
+  ignoredTransparent: number;
 }
 
 /**
@@ -170,8 +173,17 @@ export function putPixels(
   rgba: RgbaBuffer,
   opts: PutPixelsOptions = {},
 ): PutPixelsResult {
-  if (!Number.isInteger(rect.w) || !Number.isInteger(rect.h) || rect.w <= 0 || rect.h <= 0) {
-    throw new RangeError(`putPixels rect must have positive integer width and height, got ${rect.w}x${rect.h}`);
+  if (
+    !Number.isSafeInteger(rect.x) ||
+    !Number.isSafeInteger(rect.y) ||
+    !Number.isSafeInteger(rect.w) ||
+    !Number.isSafeInteger(rect.h) ||
+    rect.w <= 0 ||
+    rect.h <= 0
+  ) {
+    throw new RangeError(
+      `putPixels rect must have safe integer coordinates and positive integer width/height, got ${rect.x},${rect.y},${rect.w}x${rect.h}`,
+    );
   }
   const requested = rect.w * rect.h;
   if (!Number.isSafeInteger(requested) || requested > 4096 * 4096) {
@@ -185,6 +197,7 @@ export function putPixels(
   let written = 0;
   let cleared = 0;
   let clipped = 0;
+  let ignoredTransparent = 0;
   for (let ly = 0; ly < rect.h; ly++) {
     const y = rect.y + ly;
     if (y < 0 || y >= buf.height) {
@@ -213,7 +226,7 @@ export function putPixels(
           written++;
           cleared++;
         } else {
-          clipped++;
+          ignoredTransparent++;
         }
         continue;
       }
@@ -223,7 +236,7 @@ export function putPixels(
       written++;
     }
   }
-  return { requested, written, painted: written, cleared, clipped };
+  return { requested, written, painted: written, cleared, clipped, ignoredTransparent };
 }
 
 export function drawLine(

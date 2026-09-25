@@ -48,7 +48,7 @@ describe('putPixels', () => {
       new Uint8ClampedArray([255, 0, 0, 255, 0, 255, 0, 128]),
       { mapColor: (color) => ({ ...color, b: 32 }) },
     );
-    expect(result).toEqual({ requested: 2, written: 2, painted: 2, cleared: 0, clipped: 0 });
+    expect(result).toEqual({ requested: 2, written: 2, painted: 2, cleared: 0, clipped: 0, ignoredTransparent: 0 });
     expect(buf.getColor(1, 1)).toEqual({ r: 255, g: 0, b: 32, a: 255 });
     expect(buf.getColor(2, 1)).toEqual({ r: 0, g: 255, b: 32, a: 128 });
   });
@@ -58,10 +58,13 @@ describe('putPixels', () => {
     const result = putPixels(buf, { x: 0, y: 0, w: 2, h: 1 }, new Uint8ClampedArray([0, 0, 0, 0, 0, 0, 255, 255]), {
       clearTransparent: true,
     });
-    expect(result).toMatchObject({ written: 2, cleared: 1 });
+    expect(result).toMatchObject({ written: 2, cleared: 1, ignoredTransparent: 0 });
     expect(buf.getColor(0, 0).a).toBe(0);
     expect(buf.getColor(1, 0).a).toBe(255);
+    const ignored = putPixels(buf, { x: 0, y: 0, w: 1, h: 1 }, new Uint8ClampedArray([0, 0, 0, 0]));
+    expect(ignored).toMatchObject({ clipped: 0, ignoredTransparent: 1 });
     expect(() => putPixels(buf, { x: 0, y: 0, w: 1, h: 1 }, new Uint8ClampedArray([1, 2, 3]))).toThrow(/expected 4 RGBA bytes/);
+    expect(() => putPixels(buf, { x: 0.5, y: 0, w: 1, h: 1 }, new Uint8ClampedArray([1, 2, 3, 255]))).toThrow(/safe integer/);
   });
 });
 

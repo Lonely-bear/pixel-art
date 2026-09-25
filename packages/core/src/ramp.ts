@@ -23,7 +23,7 @@ export interface HueRampOptions {
   highlightHue?: number;
   /** Extra saturation at the middle of the ramp, -0.5 to 0.5. Defaults to 0. */
   saturationBoost?: number;
-  /** Alpha for every generated colour. Defaults to 255. */
+  /** Override the alpha for every generated colour. Otherwise endpoint alpha is interpolated. */
   alpha?: number;
 }
 
@@ -125,7 +125,7 @@ export function buildHueRamp(
   // through green.
   const deltaHue = ((h1 - h0 + 540) % 360) - 180;
   const saturationBoost = options.saturationBoost ?? 0;
-  const alpha = options.alpha ?? 255;
+  const alphaOverride = options.alpha;
 
   const colors: Color[] = [];
   for (let i = 0; i < count; i++) {
@@ -134,6 +134,9 @@ export function buildHueRamp(
     const saturation = clamp01(startHsl.s + (endHsl.s - startHsl.s) * t + Math.sin(Math.PI * t) * saturationBoost);
     const lightness = clamp01(startHsl.l + (endHsl.l - startHsl.l) * t);
     const rgb = hslToRgb(hue, saturation, lightness);
+    const alpha = alphaOverride === undefined
+      ? Math.round(start.a + (end.a - start.a) * t)
+      : alphaOverride;
     colors.push({ ...rgb, a: alpha });
   }
 

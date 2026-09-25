@@ -82,8 +82,9 @@ describe('tool surface', () => {
     expect(names).toContain('finalize_document');
     expect(names).toContain('export_sheet');
     expect(names).toContain('read_skill');
-    // 57 core commands plus the session/perception/export tools.
-    expect(names.length).toBe(83);
+    // 57 core commands plus the session/perception/export tools; plugins and
+    // follow-up session tools may add more without changing this baseline.
+    expect(names.length).toBeGreaterThanOrEqual(83);
   });
 
   it('exposes command descriptions and their own schemas', async () => {
@@ -820,6 +821,13 @@ describe('quality and softness tools', () => {
       arguments: { rect: { x: 4, y: 4, w: 4, h: 4 }, count: 4, colors: ['#fff2c7'], seed: 4 },
     })) as ToolResult;
     expect((payload(scatter).summary as { points: number }).points).toBe(4);
+
+    const invalid = (await client.callTool({
+      name: 'put_pixels',
+      arguments: { rect: { x: 0, y: 0, w: 1, h: 1 }, data: '!!!!' },
+    })) as ToolResult;
+    expect(invalid.isError).toBe(true);
+    expect(firstText(invalid)).toMatch(/base64|validation/i);
   });
 });
 

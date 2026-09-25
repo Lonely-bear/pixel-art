@@ -339,14 +339,15 @@ drive the editor through the commands, never touch the filesystem, the network o
 
 A script runs inside a hardened `node:vm` context with no `require`, no `process`, no `module`,
 no `eval`/`new Function` and no string code generation, under a timeout (2 s by default). It is
-handed a small **context-native** API — `exec`, `tryExec`, `commands`, `command`, `document`,
-`layers`, `frames`, `tags`, `palette`, `getPixel`, `sample`, `log` — and its return value and
-logs come back as JSON:
+handed a small **context-native** API — `exec`, `tryExec`, `putPixels`, `commands`, `command`,
+`document`, `layers`, `frames`, `tags`, `palette`, `getPixel`, `sample`, `log` — and its return
+value and logs come back as JSON:
 
 ```js
 const base = layers()[0].id;
 exec('draw_rect', { layer: base, frame: 0, rect: { x: 0, y: 0, w: 8, h: 8 }, color: 'pal:3', fill: true });
 exec('draw_pixels', { layer: base, frame: 0, pixels: [{ x: 0, y: 0, color: '#101820' }] });
+putPixels({ x: 8, y: 0, w: 2, h: 1 }, '/wAA/wD/AIA=');
 log('done', commands().length);
 return { w: document().width };
 ```

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { base64ByteLength, MAX_BASE64_INPUT_LENGTH } from '../binary.js';
 import { PixelBuffer } from '../buffer.js';
 import { parseColor } from '../color.js';
 import type { Sprite } from '../document.js';
@@ -96,6 +97,28 @@ export const rectSchema = z
     h: z.number().int().describe('Height in pixels.'),
   })
   .strict();
+
+/** Rect shape used by bulk/generative commands, which require positive bounded dimensions. */
+export const positiveRectSchema = rectSchema
+  .extend({
+    w: z.number().int().min(1).max(4096).describe('Width in pixels (1-4096).'),
+    h: z.number().int().min(1).max(4096).describe('Height in pixels (1-4096).'),
+  })
+  .strict();
+
+/** Standard base64 syntax/size guard used before the command decodes a payload. */
+export const base64DataSchema = z
+  .string()
+  .min(1)
+  .max(MAX_BASE64_INPUT_LENGTH)
+  .refine((value) => {
+    try {
+      base64ByteLength(value);
+      return true;
+    } catch {
+      return false;
+    }
+  }, 'Invalid standard base64 data');
 
 export const layerRefSchema = z
   .union([z.string(), z.number().int()])
