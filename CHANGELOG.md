@@ -2,7 +2,7 @@
 
 All notable changes to Pixel Art MCP are documented in this file.
 
-## [0.1.1] - 2026-09-25
+## [0.1.2] - 2026-09-25
 
 ### Added
 
@@ -17,6 +17,8 @@ All notable changes to Pixel Art MCP are documented in this file.
 - Tilemap mutation summaries now report exact skipped coordinates, unchanged writes and changed bounds.
 - Tiled export now writes its referenced tileset PNG by default and validates the map before writing.
 - Read-only generated commands no longer mark a saved document dirty.
+
+## [0.1.1] - 2026-09-25
 
 ### Fixed
 

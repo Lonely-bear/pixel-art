@@ -1,6 +1,6 @@
 {
   "name": "dotloom-mcp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A pixel-art engine for humans and AI agents, with a scriptable CLI and Model Context Protocol server.",
   "license": "Apache-2.0",
   "author": "Lonely-bear",
