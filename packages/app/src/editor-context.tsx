@@ -226,16 +226,25 @@ export function EditorProvider({ children }: { children: ReactNode }): ReactNode
         if (current && next.layerList.some((layer) => layer.id === current)) return current;
         return next.layerList[next.layerList.length - 1]?.id ?? null;
       });
-      setFrameId((current) => {
-        if (current && next.frameList.some((frame) => frame.id === current)) return current;
-        return next.frameList[0]?.id ?? null;
-      });
 
-      await loadPreview(next.id, frameIdRef.current);
+      // The frame has to be clamped against the document we just read *before*
+      // the preview request, not through the setter: `setFrameId` only queues the
+      // update, so `frameIdRef` still held the previous document's frame at this
+      // point. Asking the main process for the active document with another
+      // document's frame id is what produced `Unknown frame: frm_…` on open.
+      const current = frameIdRef.current;
+      const frame =
+        current && next.frameList.some((entry) => entry.id === current)
+          ? current
+          : next.frameList[0]?.id ?? null;
+      frameIdRef.current = frame;
+      setFrameId(frame);
+
+      await loadPreview(next.id, frame);
       if (options.thumbnails) {
         await loadThumbnails(
           next.id,
-          next.frameList.map((frame) => frame.id),
+          next.frameList.map((entry) => entry.id),
         );
       }
     },
