@@ -18,8 +18,9 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { Implementation, ServerCapabilities } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import { SERVER_NAME, SERVER_VERSION } from './version.js';
 
-const BRIDGE_INFO: Implementation = { name: 'pixel-mcp-bridge', version: '0.1.0' };
+const BRIDGE_INFO: Implementation = { name: `${SERVER_NAME}-bridge`, version: SERVER_VERSION };
 
 /**
  * Long exports (spritesheets, GIFs) can outlive the SDK's 60s default request
@@ -74,7 +75,7 @@ export async function runAttachBridge(rawUrl: string, options: AttachOptions = {
 
   // Mirror exactly what the app advertises so capability-gated client calls pass.
   const capabilities: ServerCapabilities = remote.getServerCapabilities() ?? {};
-  const info: Implementation = remote.getServerVersion() ?? { name: 'pixel-art', version: '0.0.0' };
+  const info: Implementation = remote.getServerVersion() ?? { name: SERVER_NAME, version: SERVER_VERSION };
   const instructions = remote.getInstructions();
 
   const server = new Server(info, {

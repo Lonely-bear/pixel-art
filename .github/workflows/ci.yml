@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Build, test, and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.6.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build workspace
+        run: pnpm build
+
+      - name: Build npm distribution
+        run: pnpm build:npm
+
+      - name: Create package tarball
+        shell: bash
+        run: |
+          mkdir -p .artifacts
+          pnpm pack --pack-destination .artifacts
+          test -n "$(find .artifacts -maxdepth 1 -name '*.tgz' -print -quit)"
+
+      - name: Install tarball in a clean consumer
+        shell: bash
+        run: |
+          TARBALL="$(find .artifacts -maxdepth 1 -name '*.tgz' -print -quit)"
+          CONSUMER="$(mktemp -d)"
+          cd "$CONSUMER"
+          npm init -y >/dev/null
+          npm install "$GITHUB_WORKSPACE/$TARBALL"
+          ./node_modules/.bin/pixel --version | tee version.json
+          node -e "const v=require('./version.json'); if (v.name !== 'pixel-art-mcp' || v.version !== '0.1.0') process.exit(1)"
+          ./node_modules/.bin/pixel-mcp --version
+          ./node_modules/.bin/pixel-art-mcp --version

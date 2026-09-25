@@ -1,18 +1,75 @@
 {
-  "name": "pixel-art",
-  "version": "0.0.0",
-  "private": true,
+  "name": "pixel-art-mcp",
+  "version": "0.1.0",
+  "description": "A pixel-art engine for humans and AI agents, with a scriptable CLI and Model Context Protocol server.",
+  "license": "Apache-2.0",
+  "author": "Lonely-bear",
   "type": "module",
-  "description": "Pixel art tooling built to be driven by both humans and AI agents (MCP).",
+  "packageManager": "pnpm@11.6.0",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "keywords": [
+    "pixel-art",
+    "mcp",
+    "model-context-protocol",
+    "ai",
+    "sprite",
+    "animation",
+    "tilemap",
+    "electron"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Lonely-bear/pixel-art.git",
+    "directory": "."
+  },
+  "homepage": "https://github.com/Lonely-bear/pixel-art#readme",
+  "bugs": {
+    "url": "https://github.com/Lonely-bear/pixel-art/issues"
+  },
+  "bin": {
+    "pixel": "dist/pixel.js",
+    "pixel-mcp": "dist/pixel-mcp.js",
+    "pixel-art-mcp": "dist/pixel-mcp.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "assets"
+  ],
   "scripts": {
-    "build": "pnpm -r run build",
-    "test": "pnpm -r run test",
-    "typecheck": "pnpm -r run typecheck",
-    "clean": "pnpm -r exec node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\""
+    "build:libs": "pnpm --filter @pixel/core build && pnpm --filter @pixel/script build && pnpm --filter @pixel/cli build && pnpm --filter @pixel/mcp build",
+    "build:app": "pnpm --filter @pixel/app build",
+    "build": "pnpm run build:libs && pnpm run build:app",
+    "build:npm": "node scripts/build-npm-package.mjs",
+    "typecheck": "pnpm run build:libs && pnpm -r run typecheck",
+    "test": "pnpm run build:libs && pnpm -r run test",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && pnpm -r exec node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "prepack": "pnpm run build:npm",
+    "prepublishOnly": "pnpm run typecheck && pnpm run test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "fast-png": "^8.0.0",
+    "fflate": "^0.8.3",
+    "gifenc": "^1.0.3",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
+    "esbuild": "^0.28.2",
     "typescript": "^7.0.2",
     "vitest": "^5.0.1"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
   }
 }

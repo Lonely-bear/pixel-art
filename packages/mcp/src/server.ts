@@ -15,9 +15,9 @@ import { registerTools } from './tools.js';
 import { registerResources } from './resources.js';
 import { registerPrompts } from './prompts.js';
 import { PIXEL_ART_SKILL, SKILL_SUMMARY } from './skill.js';
+import { SERVER_NAME, SERVER_VERSION } from './version.js';
 
-export const SERVER_NAME = 'pixel-art';
-export const SERVER_VERSION = '0.1.0';
+export { SERVER_NAME, SERVER_VERSION };
 
 /**
  * A fingerprint of what this process actually loaded.

@@ -6,6 +6,7 @@
  * tools and, later, wrapped one-for-one by the MCP server. Exit code 0 means success.
  */
 
+import packageJson from '../../../package.json' with { type: 'json' };
 import { parseArgs, UsageError } from './args.js';
 import { COMMANDS, findCommand } from './commands.js';
 
@@ -28,6 +29,11 @@ function fail(message: string, code = 1): number {
 async function main(): Promise<number> {
   const { command, positionals, flags } = parseArgs(process.argv.slice(2));
 
+  if (command === 'version' || flags['version'] === true || flags['v'] === true) {
+    process.stdout.write(`${JSON.stringify({ name: packageJson.name, version: packageJson.version })}\n`);
+    return 0;
+  }
+
   if (command === null || command === 'help' || flags['help'] === true || flags['h'] === true) {
     const target = command === 'help' ? positionals[0] : command;
     const spec = target ? findCommand(target) : undefined;
@@ -36,11 +42,6 @@ async function main(): Promise<number> {
     } else {
       process.stdout.write(USAGE);
     }
-    return 0;
-  }
-
-  if (command === 'version' || flags['version'] === true) {
-    process.stdout.write(`${JSON.stringify({ name: '@pixel/cli', version: '0.0.0' })}\n`);
     return 0;
   }
 

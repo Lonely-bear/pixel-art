@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+  <title id="title">Pixel Art MCP mark</title>
+  <defs>
+    <linearGradient id="bg" x1="16" y1="8" x2="112" y2="120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#17152f"/>
+      <stop offset="1" stop-color="#090b18"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#bg)"/>
+  <rect x="22" y="22" width="36" height="36" rx="6" fill="#6868e8"/>
+  <rect x="70" y="22" width="36" height="36" rx="6" fill="#f0a44c"/>
+  <rect x="22" y="70" width="36" height="36" rx="6" fill="#4dbb8b"/>
+  <rect x="70" y="70" width="36" height="36" rx="6" fill="#ec6f86"/>
+  <path d="M28 28h24M76 28h24M28 76h24M76 76h24" stroke="#fff" stroke-opacity=".18" stroke-width="4"/>
+</svg>
