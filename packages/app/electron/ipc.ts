@@ -144,7 +144,7 @@ export function registerIpc(getMcpStatus: () => unknown): void {
     const window = focusedWindow();
     const picked = await dialog.showOpenDialog(window!, {
       title: text().open,
-      filters: [{ name: 'Pixel Art sprite', extensions: ['pixel'] }],
+      filters: [{ name: 'dotloom-mcp sprite', extensions: ['pixel'] }],
       properties: ['openFile'],
     });
     if (picked.canceled || picked.filePaths.length === 0) return null;
@@ -162,7 +162,7 @@ export function registerIpc(getMcpStatus: () => unknown): void {
       const picked = await dialog.showSaveDialog(focusedWindow()!, {
         title: text().save,
         defaultPath: `${doc.name}.pixel`,
-        filters: [{ name: 'Pixel Art sprite', extensions: ['pixel'] }],
+        filters: [{ name: 'dotloom-mcp sprite', extensions: ['pixel'] }],
       });
       if (picked.canceled || !picked.filePath) return null;
       filePath = picked.filePath;
@@ -180,7 +180,7 @@ export function registerIpc(getMcpStatus: () => unknown): void {
     const picked = await dialog.showSaveDialog(focusedWindow()!, {
       title: text().saveAs,
       defaultPath: doc.path ?? `${doc.name}.pixel`,
-      filters: [{ name: 'Pixel Art sprite', extensions: ['pixel'] }],
+      filters: [{ name: 'dotloom-mcp sprite', extensions: ['pixel'] }],
     });
     if (picked.canceled || !picked.filePath) return null;
     await ensureDir(picked.filePath);

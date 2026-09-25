@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * `pixel-mcp` - the standalone stdio MCP server.
+ * `dotloom-mcp` - the standalone stdio MCP server.
  *
  * Point any MCP client at this binary and the agent gets the full editor without
  * the desktop app running. Nothing but JSON-RPC may go to stdout, so every log
@@ -28,8 +28,8 @@ async function main(): Promise<void> {
   }
   if (args.includes('--help') || args.includes('-h')) {
     process.stderr.write(
-      `${SERVER_NAME} ${SERVER_VERSION} - MCP server for the pixel art editor.\n\n` +
-        `Usage: pixel-mcp [options]\n\n` +
+      `${SERVER_NAME} ${SERVER_VERSION} - MCP server for the dotloom-mcp pixel-art editor.\n\n` +
+        `Usage: dotloom-mcp [options]\n\n` +
         `Options:\n` +
         `  -h, --help         Show this help.\n` +
         `  -v, --version      Print the version.\n` +
@@ -73,6 +73,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  process.stderr.write(`pixel-mcp failed to start: ${(error as Error).stack ?? String(error)}\n`);
+  process.stderr.write(`dotloom-mcp failed to start: ${(error as Error).stack ?? String(error)}\n`);
   process.exit(1);
 });

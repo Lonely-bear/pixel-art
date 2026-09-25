@@ -1,8 +1,10 @@
-# Pixel Art MCP — Technical Reference
+# dotloom-mcp — Technical Reference
 
 > This document preserves the detailed command, MCP, scripting, and architecture notes. For installation and the project overview, return to the [main README](../README.md).
 
-A pixel art tool built from day one to be operated by **both humans and AI agents**.
+dotloom-mcp is a pixel-art tool built from day one to be operated by **both humans and AI agents**.
+
+The public npm distribution is [`dotloom-mcp`](https://www.npmjs.com/package/dotloom-mcp). The `@pixel/*` workspace packages below are internal implementation packages; they are not separate npm products.
 
 The product is not the Electron window — it is the **headless, addressable pixel document
 model** in `packages/core`. The Electron app and the MCP server are both just clients of it.
@@ -11,6 +13,7 @@ model** in `packages/core`. The Electron app and the MCP server are both just cl
 
 | Package | Role |
 | --- | --- |
+| `dotloom-mcp` | Published npm package: bundled library, CLI, and standalone MCP server. |
 | `packages/core` | Pure TypeScript. Document model, command bus, rasteriser, PNG, serialisation. **No DOM, no Electron, no Node APIs.** |
 | `packages/script` | Constrained JavaScript runtime + plugin loader (`node:vm`). **Node only; not an untrusted-code boundary.** |
 | `packages/cli` | Headless command line over `core` (M0). |
@@ -177,11 +180,11 @@ Client configuration (Claude Desktop, or any `mcpServers` JSON):
 ```json
 {
   "mcpServers": {
-    "pixel-art": {
+    "dotloom-mcp": {
       "command": "npx",
       "args": ["-y", "dotloom-mcp"]
     },
-    "pixel-art-live": {
+    "dotloom-mcp-live": {
       "command": "npx",
       "args": [
         "-y",
@@ -203,7 +206,7 @@ OpenCode V2 can load the published stdio server from a project or global configu
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
     "servers": {
-      "pixel-art": {
+      "dotloom-mcp": {
         "type": "local",
         "command": ["npx", "-y", "dotloom-mcp"]
       }
@@ -215,7 +218,7 @@ OpenCode V2 can load the published stdio server from a project or global configu
 The equivalent CLI command is:
 
 ```bash
-opencode mcp add pixel-art -- npx -y dotloom-mcp
+opencode mcp add dotloom-mcp -- npx -y dotloom-mcp
 ```
 
 To connect to a running desktop app instead of the standalone server, append

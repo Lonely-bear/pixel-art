@@ -3,7 +3,7 @@
  *
  * The server is deliberately usable two ways:
  *
- *  - **Standalone** (`pixel-mcp` on stdio, or over HTTP) so an agent can work
+ *  - **Standalone** (`dotloom-mcp` on stdio, or over HTTP) so an agent can work
  *    without the desktop app running at all.
  *  - **Embedded**, by the Electron main process, so the GUI and the agent share
  *    one in-memory `DocumentStore` and therefore one undo history. An agent edit
@@ -52,7 +52,7 @@ export const SKILL_FINGERPRINT: ServerBuild = {
   skillLength: PIXEL_ART_SKILL.length,
 };
 
-export const SERVER_INSTRUCTIONS = `A pixel art editor for game assets: sprites, animation frames and spritesheets.
+export const SERVER_INSTRUCTIONS = `dotloom-mcp is a pixel-art editor for game assets: sprites, animation frames and spritesheets.
 
 You edit a **document** - a sprite with layers, frames, animation tags and a palette.
 Documents live in this session and are addressed by id; one is active, and every
@@ -122,7 +122,7 @@ export function createPixelServer(options: PixelServerOptions = {}): PixelServer
     {
       name: options.name ?? SERVER_NAME,
       version: options.version ?? SERVER_VERSION,
-      title: 'Pixel Art',
+      title: 'dotloom-mcp',
     },
     {
       instructions: SERVER_INSTRUCTIONS,

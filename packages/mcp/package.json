@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "MCP server exposing the pixel-art engine to AI agents.",
+  "description": "MCP server exposing the dotloom-mcp pixel-art engine to AI agents.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

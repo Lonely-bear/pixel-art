@@ -1,8 +1,8 @@
 <div align="center">
-  <img src="assets/pixel-mark.svg" width="88" alt="Pixel Art MCP logo" />
-  <h1>Pixel Art MCP</h1>
+  <img src="assets/pixel-mark.svg" width="88" alt="dotloom-mcp logo" />
+  <h1>dotloom-mcp</h1>
   <p><strong>One pixel-art engine. Two ways to create.</strong></p>
-  <p>为人类与 AI 打造的同一套像素画引擎 · Electron for humans, MCP for agents</p>
+  <p>dotloom-mcp 为人类与 AI 提供同一套像素画引擎 · Electron for humans, MCP for agents</p>
   <p>
     <a href="https://www.npmjs.com/package/dotloom-mcp"><img src="https://img.shields.io/npm/v/dotloom-mcp?label=npm&logo=npm&style=flat-square" alt="npm version" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="Apache-2.0 License" /></a>
@@ -12,7 +12,11 @@
 </div>
 
 <p align="center">
-  <img src="assets/hero.png" width="760" alt="A pixel-art mountain lake at dusk, created with the Pixel Art MCP toolchain" />
+  <a href="README.md">English</a> · <a href="README-ZH.md">中文</a>
+</p>
+
+<p align="center">
+  <img src="assets/hero.png" width="760" alt="A pixel-art mountain lake at dusk, created with the dotloom-mcp toolchain" />
 </p>
 
 <p align="center">
@@ -20,7 +24,7 @@
   Every mutation crosses one command bus, so tools, history, exports, and undo/redo never disagree.
 </p>
 
-## Why Pixel Art MCP?
+## Why dotloom-mcp?
 
 <table>
   <tr>
@@ -52,6 +56,8 @@
 
 ## Install
 
+`dotloom-mcp` is the canonical public package name. The internal workspace packages remain scoped as `@pixel/*`; those are implementation packages, not additional npm products.
+
 ### Requirements
 
 - Node.js **22.13 or newer**
@@ -66,9 +72,11 @@ npm install -g dotloom-mcp
 Verify the installation:
 
 ```bash
+dotloom-mcp --version
 pixel --version
-pixel-mcp --version
 ```
+
+`pixel-mcp` and `pixel-art-mcp` remain compatibility aliases for the standalone MCP server; `pixel` is the headless document CLI.
 
 The package also exposes namespaced library APIs without starting a CLI process:
 
@@ -93,7 +101,7 @@ Most desktop MCP clients use an `mcpServers` object:
 ```json
 {
   "mcpServers": {
-    "pixel-art": {
+    "dotloom-mcp": {
       "command": "npx",
       "args": ["-y", "dotloom-mcp"]
     }
@@ -109,7 +117,7 @@ On Windows, some clients require `"command": "npx.cmd"`.
 Add the server from the project you want it available in:
 
 ```bash
-opencode mcp add pixel-art -- npx -y dotloom-mcp
+opencode mcp add dotloom-mcp -- npx -y dotloom-mcp
 ```
 
 Or configure it manually in `opencode.json` / `.opencode/opencode.json`:
@@ -119,7 +127,7 @@ Or configure it manually in `opencode.json` / `.opencode/opencode.json`:
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
     "servers": {
-      "pixel-art": {
+      "dotloom-mcp": {
         "type": "local",
         "command": ["npx", "-y", "dotloom-mcp"]
       }
@@ -216,7 +224,7 @@ quality_report ← fix warnings ← preview each visual gate → finalize_docume
 The standalone server runs over stdio and requires no desktop app. If the Electron app is already running, it can also attach over its loopback HTTP endpoint:
 
 ```bash
-pixel-mcp --attach http://127.0.0.1:7331/mcp
+dotloom-mcp --attach http://127.0.0.1:7331/mcp
 ```
 
 The attached GUI and agent then share documents and undo history: an agent edit repaints the canvas, and a human edit is immediately visible to the agent.
@@ -290,6 +298,7 @@ Map scripts can call `strokeTilemap(...)`, `paintTilemap(...)`, and the matching
 
 | Package | Role |
 | --- | --- |
+| `dotloom-mcp` | Published npm package: bundled library, CLI, and standalone MCP server. |
 | `packages/core` | Platform-free TypeScript document model, command bus, rasteriser, PNG, GIF, and serialisation. |
 | `packages/script` | Node-only JavaScript sandbox and plugin runtime. |
 | `packages/cli` | JSON-first headless command line. |
@@ -325,7 +334,7 @@ npm pack --dry-run
 
 The repository uses pnpm workspaces, strict TypeScript, Vitest, and a clean-build CI gate. The public package bundles the internal workspace code while keeping normal npm dependencies external.
 
-> **Distribution scope:** `dotloom-mcp@0.1.1` publishes the CLI, library entry, and standalone MCP server. The Electron application remains a source-based application in this release; desktop installers are not part of the npm tarball.
+> **Distribution scope:** `dotloom-mcp@0.1.3` publishes the CLI, library entry, and standalone MCP server. The Electron application remains a source-based application in this release; desktop installers are not part of the npm tarball.
 
 ## Security and local trust
 
@@ -343,7 +352,7 @@ The repository uses pnpm workspaces, strict TypeScript, Vitest, and a clean-buil
 
 ## Project status
 
-`0.1.1` is the current installable CLI/MCP release.
+`dotloom-mcp@0.1.3` is the current installable CLI/MCP release.
 
 - [x] Core document model, rasteriser, command bus, history, and native serialisation
 - [x] PNG, spritesheet, GIF, Aseprite import, and Tiled export

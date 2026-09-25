@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Sandboxed JavaScript scripting and plugins for the pixel-art engine (Node only).",
+  "description": "Sandboxed JavaScript scripting and plugins for dotloom-mcp (Node only).",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

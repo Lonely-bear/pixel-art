@@ -14,7 +14,7 @@ const STORAGE_KEY = 'pixel-art.locale';
 const en = {
   'app.starting': 'Starting the pixel editor…',
   'app.noDocument': 'No document open',
-  'brand.name': 'Pixel Studio',
+  'brand.name': 'dotloom-mcp',
   'brand.subtitle': 'Sprite workspace',
   'top.openDocuments': 'Open documents',
   'top.spriteName': 'Sprite name',
@@ -218,7 +218,7 @@ export type TranslationKey = keyof typeof en;
 const zh: Record<TranslationKey, string> = {
   'app.starting': '正在启动像素编辑器…',
   'app.noDocument': '当前没有打开的文档',
-  'brand.name': '像素工作室',
+  'brand.name': 'dotloom-mcp',
   'brand.subtitle': '角色与动画工作区',
   'top.openDocuments': '切换已打开的文档',
   'top.spriteName': '角色名称',

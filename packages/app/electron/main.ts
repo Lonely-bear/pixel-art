@@ -26,7 +26,7 @@ function createWindow(): BrowserWindow {
     minWidth: 900,
     minHeight: 600,
     backgroundColor: '#f4f4f1',
-    title: 'Pixel Studio',
+    title: 'dotloom-mcp',
     show: false,
     webPreferences: {
       preload: path.join(here, 'preload.cjs'),
@@ -44,10 +44,10 @@ function createWindow(): BrowserWindow {
     if (!created.isVisible()) created.show();
   });
   created.webContents.on('did-fail-load', (_event, code, description, url) => {
-    console.error(`[pixel-art] renderer failed to load (${code} ${description}): ${url}`);
+    console.error(`[dotloom-mcp] renderer failed to load (${code} ${description}): ${url}`);
   });
   created.webContents.on('render-process-gone', (_event, details) => {
-    console.error(`[pixel-art] renderer process gone: ${details.reason}`);
+    console.error(`[dotloom-mcp] renderer process gone: ${details.reason}`);
   });
   created.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
@@ -162,8 +162,8 @@ async function smokeTest(created: BrowserWindow, target: string): Promise<void> 
     `${target}.mcp.txt`,
     JSON.stringify({ url: mcpStatus.url, running: mcpStatus.running }, null, 2),
   );
-  console.error(`[pixel-art] smoke screenshot: ${target}`);
-  console.error(`[pixel-art] smoke mcp: ${mcpStatus.url ?? 'not running'}`);
+  console.error(`[dotloom-mcp] smoke screenshot: ${target}`);
+  console.error(`[dotloom-mcp] smoke mcp: ${mcpStatus.url ?? 'not running'}`);
   if (process.env.PIXEL_SMOKE_KEEP !== '1') app.quit();
 }
 
@@ -190,14 +190,14 @@ async function start(): Promise<void> {
     mcp = await startMcpHost(Number(process.env.PIXEL_MCP_PORT ?? DEFAULT_MCP_PORT));
     mcpStatus = mcp.status();
     if (mcpStatus.url) {
-      console.error(`[pixel-art] MCP server listening on ${mcpStatus.url}`);
+      console.error(`[dotloom-mcp] MCP server listening on ${mcpStatus.url}`);
     }
   } catch (error) {
     mcpStatus = {
       running: false,
       error: error instanceof Error ? error.message : String(error),
     };
-    console.error('[pixel-art] MCP server failed to start:', mcpStatus.error);
+    console.error('[dotloom-mcp] MCP server failed to start:', mcpStatus.error);
   }
 
   if (process.env.PIXEL_SMOKE && window) {
@@ -210,7 +210,7 @@ if (!app.requestSingleInstanceLock()) {
   // terminal does not always deliver SIGINT to the dev launcher, so electron.exe
   // lingers). The existing instance was focused by its `second-instance` handler.
   console.error(
-    '[pixel-art] another instance is already running — focusing it instead of opening a second window.',
+    '[dotloom-mcp] another instance is already running — focusing it instead of opening a second window.',
   );
   app.quit();
 } else {

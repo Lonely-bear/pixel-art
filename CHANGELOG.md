@@ -1,6 +1,18 @@
 # Changelog
 
-All notable changes to Pixel Art MCP are documented in this file.
+All notable changes to dotloom-mcp are documented in this file.
+
+## [0.1.3] - 2026-09-25
+
+### Added
+
+- Added a complete Chinese README at `README-ZH.md`, with language navigation from the English README.
+- Included the Chinese README in the published npm package.
+
+### Changed
+
+- Unified the public product identity around the `dotloom-mcp` npm package across documentation, application labels, MCP metadata, and CLI help.
+- Refreshed release documentation and CI package-version checks for `0.1.3`.
 
 ## [0.1.2] - 2026-09-25
 

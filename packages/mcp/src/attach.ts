@@ -1,5 +1,5 @@
 /**
- * `pixel-mcp --attach <url>` - a transparent stdio -> HTTP bridge.
+ * `dotloom-mcp --attach <url>` - a transparent stdio -> HTTP bridge.
  *
  * The desktop app hosts the full MCP server over Streamable HTTP on loopback
  * (default `http://127.0.0.1:7331/mcp`). Clients that can only speak stdio
@@ -7,7 +7,7 @@
  * stdio server to the client and forwards every request, notification and
  * response to the running app.
  *
- * The bridge is deliberately dumb: it does not know the pixel art vocabulary.
+ * The bridge is deliberately dumb: it does not know the dotloom-mcp vocabulary.
  * It copies the remote server's advertised capabilities and instructions, then
  * relays unknown methods through `fallbackRequestHandler`. New tools added to
  * the app therefore work through the bridge with no changes here.
@@ -59,7 +59,7 @@ export interface AttachOptions {
 }
 
 /**
- * Connect to a running pixel art MCP host and expose it over stdio.
+ * Connect to a running dotloom-mcp host and expose it over stdio.
  *
  * Resolves once the stdio transport is connected and the bridge is live. The
  * caller owns the process lifecycle (signals, exit codes).
@@ -71,7 +71,7 @@ export async function runAttachBridge(rawUrl: string, options: AttachOptions = {
   const remote = new Client(BRIDGE_INFO, { capabilities: {} });
   const httpTransport = new StreamableHTTPClientTransport(new URL(url));
   await remote.connect(httpTransport);
-  log(`pixel-mcp bridge: connected to ${url}`);
+  log(`dotloom-mcp bridge: connected to ${url}`);
 
   // Mirror exactly what the app advertises so capability-gated client calls pass.
   const capabilities: ServerCapabilities = remote.getServerCapabilities() ?? {};
@@ -98,7 +98,7 @@ export async function runAttachBridge(rawUrl: string, options: AttachOptions = {
     try {
       await remote.notification(notification);
     } catch (error) {
-      log(`pixel-mcp bridge: dropping notification ${notification.method}: ${(error as Error).message}`);
+      log(`dotloom-mcp bridge: dropping notification ${notification.method}: ${(error as Error).message}`);
     }
   };
 

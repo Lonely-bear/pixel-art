@@ -87,7 +87,7 @@ await waitForPort(port);
 // 3. Start Electron against the dev server. Print the banner *before* spawning
 // so it is not mistaken for "the app started" when Electron then dies.
 const electronEntry = (await import('electron')).default;
-console.log(`\nPixel Art dev — renderer on ${devServer}\n`);
+console.log(`\ndotloom-mcp dev — renderer on ${devServer}\n`);
 
 // Some machines make Electron's GPU process die with a native crash such as
 // 0xC0000006 (STATUS_IN_PAGE_ERROR). This shows up with virtual/remote display

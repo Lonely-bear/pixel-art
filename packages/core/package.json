@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Headless pixel art document model, command bus and rasteriser.",
+  "description": "Headless pixel-art document model, command bus and rasteriser for dotloom-mcp.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Headless command line client for @pixel/core.",
+  "description": "Headless command line client for the dotloom-mcp engine.",
   "bin": {
     "pixel": "./dist/index.js"
   },

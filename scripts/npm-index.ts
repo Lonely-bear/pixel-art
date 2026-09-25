@@ -1,6 +1,6 @@
 import packageJson from '../package.json' with { type: 'json' };
 
-/** Published DotLoom package version. */
+/** Published dotloom-mcp package version. */
 export const VERSION = packageJson.version;
 
 /** Headless document model, command bus, rasteriser, and file codecs. */

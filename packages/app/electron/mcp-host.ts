@@ -8,7 +8,7 @@
  *
  * Transport is Streamable HTTP on loopback: stdio is already taken by the app's
  * own process, and a local HTTP endpoint lets any number of clients attach,
- * including ones that only speak stdio via `pixel-mcp --attach <url>`.
+ * including ones that only speak stdio via `dotloom-mcp --attach <url>`.
  */
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
