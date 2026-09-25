@@ -12,6 +12,7 @@
  *   editor.execute(name, p)   -> the single mutation entry point
  *   compositeFrame()          -> render to RGBA
  *   encodePNG()               -> hand bytes to a human or to a multimodal model
+ *   renderGridView()          -> hand the same pixels back as text, for an agent
  *   serializeSprite()         -> the .pixel container
  *   buildSpritesheet()        -> engine-ready sheets and metadata
  */
@@ -34,6 +35,7 @@ export * from './transform.js';
 export * from './rig.js';
 export * from './render.js';
 export * from './png.js';
+export * from './grid.js';
 export * from './serialize.js';
 export * from './ase.js';
 export * from './atlas.js';

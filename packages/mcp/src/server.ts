@@ -77,15 +77,19 @@ Workflow that works:
 1. \`create_document\` returns the complete layer/frame/palette structure. Use
    \`create_sprite_spec\` when a character also needs tags, palette roles and a persistent rig.
    Call \`find_workflow\` for a multi-step task and \`describe_command\` for one exact schema.
-2. Block the silhouette in one flat colour. For the fast draw→look loop, call
-   \`run_script\` or \`apply_ops\` with \`preview: true\` and
+2. Block the silhouette in one flat colour. \`read_grid\` returns the artwork as one
+   character per pixel - \`{view: "mask"}\` for the silhouette, \`{view: "value"}\` for
+   tone - which answers "is this symmetric / which tone is in row 14 / did that edit
+   land" exactly and cheaply, and a repeated call also reports which rows changed.
+   That is how you verify. \`get_preview\` is how you approve: for the fast draw→look
+   loop, call \`run_script\` or \`apply_ops\` with \`preview: true\` and
    \`previewOptions: {scale: 4}\`; for a completed animation use \`preview_animation\` with
-   its tag. Inspect the returned PNG before the next pass.
-   Use \`get_preview\` when you need a view without making an edit.
+   its tag. Save the pictures for the two or three gates that matter, not every pass.
 3. Build material ramps with \`add_palette_ramp\` (dark anchor, light anchor, steps,
    \`hueShift\`) and shade with them, then outline selectively. On large canvases use
    \`cluster2\`/\`cluster4\` dither instead of a full-field 1px Bayer; keep 1px patterns
-   for narrow transition bands. Two or three visual gates are usually enough.
+   for narrow transition bands. Between passes, \`read_grid\` is the cheap check; two or
+   three \`get_preview\` gates are usually enough.
 4. Use \`apply_ops\` instead of one call per edit. It accepts any command from
    \`list_commands\`, inline params included, and can return its preview inline too.
    For generated fields prefer \`put_pixels\` (base64 RGBA) or the seeded

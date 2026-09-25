@@ -46,6 +46,10 @@ const DESCRIPTION_BUDGET: Record<string, number> = {
   // the report is the step every workflow ends on, so its description is the one worth
   // being explicit in.
   quality_report: 700,
+  // The primary way to check a drawing, so it has to say when to reach for it *instead*
+  // of a preview, and name the four views. Everything else about it - regions, frames,
+  // layers, diffing - is in the schema, where it costs nothing unless it is used.
+  read_grid: 1000,
 };
 const DESCRIPTION_FLOOR = 80;
 

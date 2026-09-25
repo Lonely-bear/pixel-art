@@ -38,10 +38,18 @@ import {
   flattenAlpha,
   findRigTween,
   interpolatePose,
+  luminanceOf,
+  renderGridView,
+  rowsFromCells,
+  formatGrid,
+  formatGridDiff,
+  diffGridRows,
+  type GridView,
   requiredCommandArgs,
   frameRefSchema,
   isAseprite,
   layerRefSchema,
+  rectSchema,
   parseColor,
   PixelBuffer,
   resolveFrame,
@@ -64,6 +72,7 @@ import {
   toAsepriteJson,
   toTiledJson,
   type Command,
+  type Frame,
   type RenderedPose,
   type RigPose,
   type Sprite,
@@ -284,6 +293,7 @@ const READ_ONLY_TOOLS = new Set([
   'preview_animation',
   'preview_tilemap',
   'get_pixels',
+  'read_grid',
   'histogram',
   'quality_report',
   'list_commands',
@@ -384,6 +394,7 @@ const SESSION_TOOLS: Array<{ name: string; description: string }> = [
   { name: 'preview_animation', description: 'Render a timeline or tag-expanded playback contact sheet with optional onion skin.' },
   { name: 'preview_tilemap', description: 'Render an unbaked tilemap with optional grid, tile-index and changed-cell overlays.' },
   { name: 'get_pixels', description: 'Exact pixel colours in a small region.' },
+  { name: 'read_grid', description: 'The artwork as a character grid: silhouette, luminance, palette slot or colour name. The default way to check a drawing.' },
   { name: 'histogram', description: 'Per-colour pixel counts and unused palette slots for a region.' },
   { name: 'quality_report', description: 'Asset-aware raster report with character animation stability and intentional-detail exemptions.' },
   { name: 'get_document', description: 'Layers, frames, tags, palette.' },
@@ -981,9 +992,8 @@ interface QualityAnalysisOptions {
 
 type PixelAt = (x: number, y: number) => { r: number; g: number; b: number; a: number } | null;
 
-function luminanceOf(c: { r: number; g: number; b: number }): number {
-  return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
-}
+// `luminanceOf` now comes from @pixel/core, so the text grid and the quality report
+// cannot drift apart on what "light" means.
 
 /**
  * Palette slots that never reach the canvas, plus the used pairs that sit closer
@@ -3732,6 +3742,269 @@ export function registerTools(
           legend: 'row-major, one row per line; `..` = transparent, `--` = outside the canvas',
           rows,
         });
+      } catch (error) {
+        return fail((error as Error).message);
+      }
+    },
+  );
+
+  /**
+   * Previously-read grids, so a repeated `read_grid` can report what changed.
+   *
+   * Keyed by everything that changes the answer - document, frame, scope, layer, view
+   * and region - so a diff is only ever offered against a genuinely comparable read.
+   * A caller that crops, re-frames or switches view gets a fresh baseline rather than a
+   * misleading diff. Bounded because it is a cache of a convenience, not state: past
+   * the limit the oldest entry is simply forgotten and the next call has no baseline.
+   */
+  /**
+   * How many frames `read_grid` will print at once.
+   *
+   * A bound on the response, not on the document: sixteen 32x32 grids is already more
+   * text than is useful in one read, and an animation with more frames is better served
+   * by narrowing the region or by the contact sheet `preview_animation` draws.
+   */
+  const GRID_FRAME_LIMIT = 16;
+  /** Ceiling on the `max` argument, matching the schema. */
+  const GRID_MAX_LIMIT = 128;
+  const GRID_MAX_DEFAULT = 64;
+
+  const gridBaselines = new Map<string, Int32Array>();
+  const GRID_BASELINE_LIMIT = 32;
+
+  function readGridBaseline(key: string): Int32Array | undefined {
+    return gridBaselines.get(key);
+  }
+
+  function rememberGridBaseline(key: string, cells: Int32Array): void {
+    // Re-insert so the map's iteration order doubles as a recency list.
+    gridBaselines.delete(key);
+    gridBaselines.set(key, cells);
+    while (gridBaselines.size > GRID_BASELINE_LIMIT) {
+      const oldest = gridBaselines.keys().next();
+      if (oldest.done) break;
+      gridBaselines.delete(oldest.value);
+    }
+  }
+
+  /**
+   * How far a frame's silhouette has moved from the first frame's.
+   *
+   * Counted on the `mask` grids rather than the caller's chosen view, because for an
+   * animation the question is always "did the outline move" and never "did the colours
+   * change" - the latter is supposed to change. Reporting it as a number turns "this
+   * frame flickers" from something to squint at into something to act on.
+   */
+  function silhouetteDrift(first: readonly string[], now: readonly string[]): {
+    pixels: number;
+    worstRow: number | null;
+    worstRowPixels: number;
+  } {
+    let pixels = 0;
+    let worstRow: number | null = null;
+    let worstRowPixels = 0;
+    const shared = Math.min(first.length, now.length);
+    for (let i = 0; i < shared; i++) {
+      const a = first[i];
+      const b = now[i];
+      let rowPixels = 0;
+      for (let x = 0; x < Math.min(a.length, b.length); x++) {
+        if (a[x] !== b[x]) {
+          rowPixels++;
+          pixels++;
+        }
+      }
+      if (rowPixels > worstRowPixels) {
+        worstRowPixels = rowPixels;
+        worstRow = i;
+      }
+    }
+    return { pixels, worstRow, worstRowPixels };
+  }
+
+  /** The silhouette of a region as `#`/`.` rows, for frame-to-frame comparison. */
+  function maskGrid(surface: PixelBuffer, rect: { x: number; y: number; w: number; h: number }, sprite: Sprite): string[] {
+    return renderGridView(surface, rect, 'mask', sprite.palette.colors).rows;
+  }
+
+  addTool(
+    server,
+    'read_grid',
+    {
+      title: 'Read the artwork as a character grid',
+      description:
+        'Render a region as text, one character per pixel, instead of a picture. This is the default way to check a drawing: it answers "is the silhouette symmetric", "which tone is in row 14", "did that edit land" and "does it still fit the canvas" exactly and in one call, where a preview PNG must be re-read from scratch after every edit. Pick the view: `mask` is the silhouette (`#`/`.`), `value` is a luminance ladder - use it for form and lighting, with one glyph per distinct tone, so a collapsed ramp shows up as collapsed glyphs - `index` is the palette slot, so the next draw can name it as `pal:7`, and `named` is generated colour names like "dark red". Repeating a call with the same arguments also reports which rows changed and what they were before. `allFrames` reads every frame and adds per-frame silhouette drift. Reach for `get_preview` when the question is whether it looks good, and for this one when the question is whether it is right.',
+      inputSchema: z.object({
+        document: documentRef,
+        view: z
+          .enum(['mask', 'value', 'index', 'named'])
+          .optional()
+          .describe(
+            'What each character means. `mask` = silhouette, `value` = luminance, `index` = palette slot, `named` = colour name. Defaults to `value`, which is the one that answers "is the form working".',
+          ),
+        scope: z
+          .enum(['composite', 'cel'])
+          .optional()
+          .describe('`composite` (default) reads the frame as it renders; `cel` reads one layer on its own, to check a silhouette before shading lands on it.'),
+        layer: layerRefSchema.optional().describe('Layer for `scope: "cel"`. Defaults to the bottom layer.'),
+        frame: frameRefSchema.optional().describe('Frame id or 0-based index. Defaults to frame 0.'),
+        allFrames: z
+          .boolean()
+          .optional()
+          .describe('Read every frame, each as its own grid. For an animation this is how silhouette drift between frames becomes readable as text rather than as a flicker you have to squint at.'),
+        rect: rectSchema.optional().describe('Region to read, `{x, y, w, h}`. Defaults to the whole canvas. Pass the area you care about - a face, a hand - to keep the answer small; the rulers carry absolute coordinates either way.'),
+        max: z
+          .number()
+          .int()
+          .min(8)
+          .max(128)
+          .optional()
+          .describe(`Largest region side allowed. Defaults to ${GRID_MAX_DEFAULT}, ceiling ${GRID_MAX_LIMIT}. Pass a \`rect\` to read just the part you are working on.`),
+        diff: z
+          .boolean()
+          .optional()
+          .describe('Compare against the previous identical read and report changed rows. Defaults to true.'),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    (args) => {
+      try {
+        const doc = store.require(args.document as string | undefined);
+        const sprite = doc.editor.sprite;
+        const view = ((args.view as GridView | undefined) ?? 'value') as GridView;
+        const scope = ((args.scope as string | undefined) ?? 'composite') as 'composite' | 'cel';
+        const allFrames = args.allFrames === true;
+        const wantDiff = args.diff !== false;
+        const max = (args.max as number | undefined) ?? GRID_MAX_DEFAULT;
+
+        const frameRefs: Array<number | string> = allFrames
+          ? sprite.frames.map((_, index) => index)
+          : [(args.frame as number | string | undefined) ?? 0];
+        if (allFrames && frameRefs.length > GRID_FRAME_LIMIT) {
+          return fail(
+            `This document has ${frameRefs.length} frames and read_grid reads at most ${GRID_FRAME_LIMIT} in one call, because ${GRID_FRAME_LIMIT} grids is already more than is worth reading in one response. Narrow it with \`frame\` and \`rect\`, or render the whole loop with \`preview_animation\`.`,
+          );
+        }
+
+        const requested = (args.rect as { x: number; y: number; w: number; h: number } | undefined) ?? {
+          x: 0,
+          y: 0,
+          w: sprite.width,
+          h: sprite.height,
+        };
+        if (requested.w > max || requested.h > max) {
+          return fail(
+            `Region ${requested.w}x${requested.h} exceeds the ${max}x${max} limit. Pass a smaller \`rect\` to read just the part you are working on, or raise \`max\` up to ${GRID_MAX_LIMIT} for a large canvas.`,
+          );
+        }
+        if (
+          requested.x < 0 ||
+          requested.y < 0 ||
+          requested.x + requested.w > sprite.width ||
+          requested.y + requested.h > sprite.height
+        ) {
+          return fail(
+            `Region ${requested.w}x${requested.h} at (${requested.x}, ${requested.y}) runs off the ${sprite.width}x${sprite.height} canvas. Clip it to the canvas, or omit \`rect\` to read the whole thing.`,
+          );
+        }
+
+        // One surface per scope, resolved once and reused across frames. For `cel` this
+        // is the layer's own pixels read straight off the frame, so a silhouette can be
+        // checked before anything is shaded on top of it. A layer with no cel on a frame
+        // contributes nothing, which renders as an empty surface rather than an error.
+        const celLayer = scope === 'cel' ? resolveLayer(sprite, (args.layer as string | number | undefined) ?? 0) : null;
+        const surfaceFor = (frame: Frame): PixelBuffer =>
+          celLayer
+            ? frame.cels.get(celLayer.id) ?? PixelBuffer.empty(sprite.width, sprite.height)
+            : compositeFrame(sprite, frame.id);
+
+        const blocks: string[] = [];
+        const metas: Array<Record<string, unknown>> = [];
+
+        // The first frame read is the baseline for the rest, so `allFrames` reports
+        // drift against the pose the animator is holding still rather than against
+        // whichever frame happened to be read last.
+        let firstMask: string[] | null = null;
+
+        for (const ref of frameRefs) {
+          const frame = resolveFrame(sprite, ref);
+          const frameIndex = sprite.frames.indexOf(frame);
+          const surface = surfaceFor(frame);
+          const render = renderGridView(surface, requested, view, sprite.palette.colors);
+
+          // Diffed against the same document, frame, scope, layer, view and region -
+          // anything else would be comparing two different questions.
+          const key = [
+            doc.id,
+            frameIndex,
+            scope,
+            celLayer ? celLayer.id : '-',
+            view,
+            `${requested.x},${requested.y},${requested.w},${requested.h}`,
+          ].join('|');
+          const previous = wantDiff ? readGridBaseline(key) : undefined;
+          rememberGridBaseline(key, render.cells);
+
+          const meta: Record<string, unknown> = {
+            frame: frameIndex,
+            rect: render.rect,
+            opaque: render.opaque,
+            total: render.total,
+            partialAlpha: render.partialAlpha,
+            unmapped: render.unmapped,
+            valueRange: render.valueRange ?? null,
+            levels: render.levels ?? null,
+            legend: render.legend,
+            diff: null,
+            driftFromFirst: null,
+          };
+          if (previous) {
+            // Both sides are drawn through *this* read's mapping. Diffing the rendered
+            // glyphs would report the whole region as changed whenever the value ladder
+            // re-ranks, which is exactly the case where a diff is most needed.
+            meta.diff = diffGridRows(
+              rowsFromCells(previous, render.rect, render),
+              render.rows,
+              requested.y,
+            );
+          }
+
+          if (allFrames) {
+            // Drift is measured on the silhouette, always. Comparing `value` grids
+            // across frames would count every intentional tone change as drift, when
+            // what an animator needs to know is whether the outline moved.
+            const mask = maskGrid(surface, requested, sprite);
+            meta.driftFromFirst = firstMask ? silhouetteDrift(firstMask, mask) : null;
+            if (!firstMask) firstMask = mask;
+          }
+
+          blocks.push(
+            formatGrid(render, {
+              view,
+              scope,
+              frame: frameIndex,
+              layer: celLayer?.name,
+              frameCount: sprite.frames.length,
+            }),
+          );
+          metas.push(meta);
+        }
+
+        // A diff rides along with the grid rather than replacing it: the caller still
+        // needs to see the current state, and the changed rows say which part of it to
+        // look at.
+        if (wantDiff) {
+          metas.forEach((meta, i) => {
+            const diff = meta.diff as ReturnType<typeof diffGridRows> | null;
+            if (!diff) return;
+            blocks[i] += `\n\n${formatGridDiff(diff, 'changed since the previous read_grid')}`;
+          });
+        }
+
+        return ok(
+          { ok: true, view, scope, frameCount: sprite.frames.length, regions: metas },
+          [text(blocks.join('\n\n'))],
+        );
       } catch (error) {
         return fail((error as Error).message);
       }

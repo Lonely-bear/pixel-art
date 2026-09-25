@@ -230,7 +230,7 @@ To connect to a running desktop app instead of the standalone server, append
   — the session, perception, export and discovery tools: `create_document`, `create_sprite_spec`,
   `open_document`, `save_document`, `finalize_document`, `import_image` (PNG or Aseprite),
   `select_document`, `close_document`, `list_documents`, `get_document`, `get_preview`, `preview_pose`,
-  `preview_animation`, `preview_tilemap`, `get_pixels`, `histogram`, `quality_report`, `get_palette`,
+  `preview_animation`, `preview_tilemap`, `read_grid`, `get_pixels`, `histogram`, `quality_report`, `get_palette`,
   `get_history`, `undo`, `redo`, `apply_ops`, `export_png`, `export_sheet`, `export_tiled`, `export_gif`,
   `list_commands`, `describe_command`, `find_workflow`, `read_skill`, and the scripting tools
   `run_script`, `load_plugin`, `list_plugins`.
@@ -292,12 +292,29 @@ To connect to a running desktop app instead of the standalone server, append
   as `{code, severity}`. Same analysis, about a third of the bytes: the per-plane arrays, the
   landscape block, the region breakdown and the warning prose are dropped. Drop the flag when a
   specific diagnostic is needed.
+- **`read_grid` and the grid resource: text where a picture cannot answer the question.**
+  A `image/png` is the only way to judge whether a piece *looks* good, but it is a poor
+  tool for the questions an agent actually iterates on: a 256px downsample of a 32x32
+  sprite cannot say whether the silhouette is symmetric or whether row 14 is one step off
+  row 13, and an image cannot be diffed, so it has to be re-read and re-reasoned about
+  after every edit. `read_grid` returns the same pixels as one character per pixel with
+  absolute rulers and a legend, which costs roughly half a base64 preview for a 16x16
+  canvas and is exact. Four views: `mask` (silhouette), `value` (a luminance ladder with
+  one glyph per distinct tone), `index` (palette slot, so the next draw can name the
+  colour as `pal:7`) and `named` (generated colour names). `scope: "cel"` reads one
+  layer alone. A repeated call with the same arguments also diffs against the previous
+  read and prints the changed rows with their before and after, and `allFrames: true`
+  adds per-frame silhouette drift. The diff compares cell *identity* rather than
+  rendered glyphs, because the `value` ladder is ranked over the tones present and
+  re-labels itself when one is added. The same content is served at
+  `pixel://documents/{id}/grid?view=…&frame=N&layer=…&rect=x,y,w,h`.
+  The split is deliberate: **`read_grid` verifies, `get_preview` approves.**
 - **Static resources and document templates.** `pixel://documents`, `pixel://commands`,
   `pixel://skill` (a pixel-art craft guide), `pixel://script-guide` (the sandbox/plugin API),
   `pixel://guide/{command}` (a command's long-form manual — the detail behind a short tool
   description, pulled at the moment it is needed),
-  plus document and preview templates — the preview is a real `image/png` blob, so multimodal models
-  can *see* the art. The preview template takes the same view options as `get_preview` as
+  plus document, grid and preview templates. The preview is a real `image/png` blob, so
+  multimodal models can *see* the art; it takes the same view options as `get_preview` as
   query parameters: `?frame=N`, `?frames=all`, `?scale=N`, `?layers=a,b`, `?onion=N`
   (plus `?onionBefore`, `?onionAfter`, `?onionOpacity`, `?loop`, `?beforeTint`, `?afterTint`).
 - **Task prompts.** `draw_sprite`, `animate_sprite`, `improve_sprite`, and `pixel_art_basics`.

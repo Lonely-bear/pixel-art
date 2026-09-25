@@ -28,6 +28,23 @@ function firstText(result: ToolResult): string {
   return result.content.find((c) => c.type === 'text')?.text ?? '';
 }
 
+/** The printed data rows of a `read_grid` response or a grid resource. */
+function gridRows(text: string): string[] {
+  return text
+    .split('\n')
+    .filter((line) => /^\s*\d+ \| /.test(line))
+    .map((line) => line.slice(line.indexOf('| ') + 2));
+}
+
+/** Create a document and return its id. */
+async function documentId(client: Client, options: Record<string, unknown>): Promise<string> {
+  const created = (await client.callTool({
+    name: 'create_document',
+    arguments: options,
+  })) as ToolResult;
+  return (payload(created).document as { id: string }).id;
+}
+
 function decodedImage(result: ToolResult) {
   const image = result.content.find((content) => content.type === 'image');
   expect(image?.mimeType).toBe('image/png');
@@ -894,6 +911,346 @@ describe('perception', () => {
     })) as ToolResult;
     expect(result.isError).toBe(true);
     expect(payload(result).error).toMatch(/exceeds/);
+  });
+});
+
+describe('read_grid', () => {
+  /**
+   * The grid itself, one string per canvas row.
+   *
+   * Unlike most tools, `read_grid`'s first content block is the answer rather than the
+   * JSON envelope - the same way `get_preview` leads with its image. So the grid comes
+   * from the first text block and the numbers from `structuredContent`.
+   */
+  function gridOf(result: ToolResult): string[] {
+    return gridRows(firstText(result));
+  }
+
+  function regionsOf(result: ToolResult): Array<Record<string, unknown>> {
+    return (result.structuredContent?.regions ?? []) as Array<Record<string, unknown>>;
+  }
+
+  async function drawBlock(): Promise<void> {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 8, height: 8, layers: ['base'] },
+    });
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { layer: 'base', rect: { x: 2, y: 2, w: 4, h: 4 }, color: '#ff0000', fill: true },
+    });
+  }
+
+  it('is advertised as read-only', async () => {
+    const { tools } = await client.listTools();
+    const tool = tools.find((t) => t.name === 'read_grid');
+    expect(tool).toBeDefined();
+    expect(tool?.annotations?.readOnlyHint).toBe(true);
+    expect(tool?.annotations?.openWorldHint).toBe(false);
+  });
+
+  it('returns the composite as a character grid, not a picture', async () => {
+    await drawBlock();
+    const result = (await client.callTool({
+      name: 'read_grid',
+      arguments: { view: 'mask', rect: { x: 0, y: 0, w: 8, h: 8 } },
+    })) as ToolResult;
+
+    expect(gridOf(result)).toEqual([
+      '........',
+      '........',
+      '..####..',
+      '..####..',
+      '..####..',
+      '..####..',
+      '........',
+      '........',
+    ]);
+    // The whole answer is text: no image block, so it costs tokens like prose.
+    expect(result.content.some((c) => c.type === 'image')).toBe(false);
+    expect(result.structuredContent?.view).toBe('mask');
+    expect(regionsOf(result)[0]).toMatchObject({ opaque: 16, total: 64 });
+  });
+
+  it('defaults to the value view so the common case needs no argument', async () => {
+    await drawBlock();
+    // `{}` rather than no `arguments` at all: the SDK requires the key to be an object,
+    // which is true of every tool on this server and not something read_grid changes.
+    const result = (await client.callTool({ name: 'read_grid', arguments: {} })) as ToolResult;
+    expect(result.structuredContent?.view).toBe('value');
+    expect(firstText(result)).toContain('legend (luminance');
+  });
+
+  it('reads one layer on its own with scope cel', async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 6, height: 6, layers: ['base', 'shade'] },
+    });
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { layer: 'base', rect: { x: 0, y: 0, w: 6, h: 6 }, color: '#804020', fill: true },
+    });
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { layer: 'shade', rect: { x: 0, y: 0, w: 3, h: 3 }, color: '#402010', fill: true },
+    });
+
+    const cel = (await client.callTool({
+      name: 'read_grid',
+      arguments: { view: 'mask', scope: 'cel', layer: 'shade' },
+    })) as ToolResult;
+    expect(gridOf(cel)[0]).toBe('###...');
+
+    const composite = (await client.callTool({
+      name: 'read_grid',
+      arguments: { view: 'mask' },
+    })) as ToolResult;
+    // The shade layer is under nothing, so the composite is solid: this is the whole
+    // reason `scope: "cel"` exists.
+    expect(gridOf(composite)[0]).toBe('######');
+    expect(firstText(cel)).toContain('layer=shade');
+  });
+
+  it('diffs a repeated read against the last one, row by row', async () => {
+    await drawBlock();
+    const first = (await client.callTool({
+      name: 'read_grid',
+      arguments: { view: 'mask' },
+    })) as ToolResult;
+    expect(firstText(first)).not.toContain('changed since');
+
+    await client.callTool({
+      name: 'draw_pixels',
+      arguments: { layer: 'base', pixels: [{ x: 6, y: 6, color: '#ff0000' }] },
+    });
+    const second = (await client.callTool({
+      name: 'read_grid',
+      arguments: { view: 'mask' },
+    })) as ToolResult;
+    const text = firstText(second);
+    expect(text).toContain('changed since the previous read_grid');
+    expect(text).toMatch(/1 of 8 rows, 1 pixel\(s\) changed/);
+    // The diff carries the whole row before and after, which is what makes it readable.
+    expect(text).toMatch(/y=6 {2}was "[^"]*" {2}now "[^"]*"/);
+  });
+
+  it('reports only the painted pixels when a read introduces a new tone', async () => {
+    // The `value` ladder is ranked over the tones present, so adding a tone re-labels
+    // every other glyph. A diff taken on the rendered rows would call the whole region
+    // changed here; comparing cell identity and re-rendering keeps it honest.
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 4, height: 1, layers: ['base'] },
+    });
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { layer: 'base', rect: { x: 0, y: 0, w: 4, h: 1 }, color: '#646464', fill: true },
+    });
+    await client.callTool({
+      name: 'read_grid',
+      arguments: { view: 'value' },
+    });
+    await client.callTool({
+      name: 'draw_pixels',
+      arguments: { layer: 'base', pixels: [{ x: 0, y: 0, color: '#c8c8c8' }] },
+    });
+    const result = (await client.callTool({
+      name: 'read_grid',
+      arguments: { view: 'value' },
+    })) as ToolResult;
+    const diff = regionsOf(result)[0].diff as { changedPixels: number; entries: unknown[] };
+    expect(diff.changedPixels).toBe(1);
+    expect(diff.entries).toHaveLength(1);
+    expect(firstText(result)).toMatch(/1 of 1 rows, 1 pixel\(s\) changed/);
+  });
+
+  it('does not diff across a different view, region or layer', async () => {
+    await drawBlock();
+    await client.callTool({ name: 'read_grid', arguments: { view: 'mask' } });
+    // A different view is a different question, so offering a diff would be noise.
+    const other = (await client.callTool({
+      name: 'read_grid',
+      arguments: { view: 'value' },
+    })) as ToolResult;
+    expect(firstText(other)).not.toContain('changed since');
+    const region = (await client.callTool({
+      name: 'read_grid',
+      arguments: { view: 'mask', rect: { x: 0, y: 0, w: 4, h: 4 } },
+    })) as ToolResult;
+    expect(firstText(region)).not.toContain('changed since');
+  });
+
+  it('skips the diff when asked to', async () => {
+    await drawBlock();
+    await client.callTool({ name: 'read_grid', arguments: { view: 'mask' } });
+    await client.callTool({
+      name: 'draw_pixels',
+      arguments: { layer: 'base', pixels: [{ x: 0, y: 0, color: '#ff0000' }] },
+    });
+    const result = (await client.callTool({
+      name: 'read_grid',
+      arguments: { view: 'mask', diff: false },
+    })) as ToolResult;
+    expect(firstText(result)).not.toContain('changed since');
+    // The grid itself is still current.
+    expect(gridOf(result)[0]).toBe('#.......');
+  });
+
+  it('reports palette slots so the next draw can name the colour', async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 4, height: 4, layers: ['base'] },
+    });
+    // Appended, so it lands after the built-in palette rather than at slot 0 - which is
+    // the case worth testing, since a slot past 9 has to be spelled with a letter.
+    await client.callTool({
+      name: 'add_palette_color',
+      arguments: { color: '#ff0000' },
+    });
+    const palette = payload(
+      (await client.callTool({ name: 'get_palette', arguments: {} })) as ToolResult,
+    ).colors as Array<{ index: number; hex: string }>;
+    const slot = palette.find((c) => c.hex === '#ff0000')!.index;
+
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: {
+        layer: 'base',
+        rect: { x: 0, y: 0, w: 4, h: 4 },
+        color: `pal:${slot}`,
+        fill: true,
+      },
+    });
+    const result = (await client.callTool({
+      name: 'read_grid',
+      arguments: { view: 'index' },
+    })) as ToolResult;
+    const legend = regionsOf(result)[0].legend as Array<Record<string, unknown>>;
+    const used = legend.find((e) => e.index === slot);
+    expect(used).toBeDefined();
+    expect(regionsOf(result)[0].unmapped).toBe(0);
+    // The grid character is the slot, so the next draw can name the colour it just read.
+    const char = used!.char as string;
+    expect(gridOf(result).every((row) => row === char.repeat(4))).toBe(true);
+    expect(char).toBe('0123456789abcdefghijklmnopqrstuvwxyz'[slot]);
+  });
+
+  it('marks a colour that is not in the palette as unmapped', async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 2, height: 1, layers: ['base'] },
+    });
+    // Painting a raw hex the palette does not contain is exactly the case `?` is for:
+    // the model can see that a colour is off-palette without decoding hex to find out.
+    await client.callTool({
+      name: 'draw_pixels',
+      arguments: { layer: 'base', pixels: [{ x: 0, y: 0, color: '#010203' }] },
+    });
+    const result = (await client.callTool({
+      name: 'read_grid',
+      arguments: { view: 'index' },
+    })) as ToolResult;
+    expect(gridOf(result)[0]).toBe('?.');
+    expect(regionsOf(result)[0].unmapped).toBe(1);
+  });
+
+  it('names colours in the named view', async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 2, height: 1, layers: ['base'] },
+    });
+    await client.callTool({
+      name: 'draw_pixels',
+      arguments: {
+        layer: 'base',
+        // Two steps of one hue, so the pair differs by tone rather than by family.
+        pixels: [{ x: 0, y: 0, color: '#8a1414' }, { x: 1, y: 0, color: '#f0d0d0' }],
+      },
+    });
+    const result = (await client.callTool({
+      name: 'read_grid',
+      arguments: { view: 'named' },
+    })) as ToolResult;
+    const text = firstText(result);
+    expect(text).toContain('legend (colour');
+    // The legend is what removes the hex decoding, so the two names have to be there.
+    expect(text).toContain('dark red');
+    expect(text).toContain('pale red');
+    // Numbered dark to light, so the grid also reads as a value grid.
+    const chars = gridOf(result)[0].split('');
+    expect(chars[0]).not.toBe(chars[1]);
+  });
+
+  it('reads every frame and reports silhouette drift against the first', async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 4, height: 4, layers: ['base'] },
+    });
+    // Seeded from frame 0, so frame 1 starts identical and any drift is the edit below.
+    await client.callTool({
+      name: 'add_frame',
+      arguments: { duplicateOf: 0 },
+    });
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { layer: 'base', frame: 1, rect: { x: 0, y: 0, w: 4, h: 1 }, color: '#ffffff', fill: true },
+    });
+    // And the same row in frame 0, so the drift is a real difference between the frames
+    // rather than frame 0 being empty.
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { layer: 'base', frame: 0, rect: { x: 0, y: 2, w: 4, h: 1 }, color: '#ffffff', fill: true },
+    });
+
+    const result = (await client.callTool({
+      name: 'read_grid',
+      arguments: { view: 'mask', allFrames: true },
+    })) as ToolResult;
+    const regions = regionsOf(result);
+    expect(regions).toHaveLength(2);
+    // Frame 0 is the baseline, so it has nothing to be different from.
+    expect(regions[0].driftFromFirst).toBeNull();
+    // The row moved from y=2 to y=0, so four pixels appeared and four disappeared. Both
+    // directions count: an animator needs to hear about a shape that shrank as much as
+    // one that grew.
+    expect(regions[1].driftFromFirst).toEqual({ pixels: 8, worstRow: 0, worstRowPixels: 4 });
+  });
+
+  it('refuses a region larger than max, and names the way out', async () => {
+    await client.callTool({ name: 'create_document', arguments: { width: 96, height: 96 } });
+    const result = (await client.callTool({
+      name: 'read_grid',
+      arguments: { rect: { x: 0, y: 0, w: 96, h: 96 } },
+    })) as ToolResult;
+    expect(result.isError).toBe(true);
+    const error = String(result.structuredContent?.error);
+    expect(error).toMatch(/exceeds the 64x64 limit/);
+    // The remediation has to be in the message, not something to work out afterwards.
+    expect(error).toMatch(/rect/);
+    expect(error).toMatch(/max/);
+  });
+
+  it('refuses to read every frame of a long animation', async () => {
+    await client.callTool({ name: 'create_document', arguments: { width: 4, height: 4 } });
+    await client.callTool({
+      name: 'apply_ops',
+      arguments: { ops: Array.from({ length: 20 }, () => ({ command: 'add_frame' })) },
+    });
+    const result = (await client.callTool({
+      name: 'read_grid',
+      arguments: { allFrames: true },
+    })) as ToolResult;
+    expect(result.isError).toBe(true);
+    expect(String(result.structuredContent?.error)).toMatch(/at most 16/);
+  });
+
+  it('rejects an unknown view rather than silently defaulting', async () => {
+    await drawBlock();
+    const result = (await client.callTool({
+      name: 'read_grid',
+      arguments: { view: 'silhouette' },
+    })) as ToolResult;
+    expect(result.isError).toBe(true);
   });
 });
 
@@ -2109,6 +2466,43 @@ describe('scripting and plugins', () => {
     const skill = payload((await client.callTool({ name: 'read_skill', arguments: {} })) as ToolResult)
       .skill as string;
     expect(skill.length).toBe(build.skillLength);
+  });
+
+  it('serves the artwork as a character grid, as text', async () => {
+    const id = await documentId(client, { width: 6, height: 4, layers: ['base'] });
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { layer: 'base', rect: { x: 1, y: 1, w: 4, h: 2 }, color: '#ff0000', fill: true },
+    });
+
+    const grid = await client.readResource({ uri: `pixel://documents/${id}/grid?view=mask` });
+    const text = (grid.contents[0] as { text: string }).text;
+    expect((grid.contents[0] as { mimeType: string }).mimeType).toBe('text/plain');
+    expect(gridRows(text)).toEqual(['......', '.####.', '.####.', '......']);
+  });
+
+  it('reads one layer through the grid resource', async () => {
+    const id = await documentId(client, { width: 4, height: 2, layers: ['base', 'shade'] });
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { layer: 'base', rect: { x: 0, y: 0, w: 4, h: 2 }, color: '#804020', fill: true },
+    });
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { layer: 'shade', rect: { x: 0, y: 0, w: 2, h: 1 }, color: '#402010', fill: true },
+    });
+
+    const shade = await client.readResource({
+      uri: `pixel://documents/${id}/grid?view=mask&layer=shade`,
+    });
+    expect(gridRows((shade.contents[0] as { text: string }).text)).toEqual(['##..', '....']);
+  });
+
+  it('rejects an unknown grid view by name', async () => {
+    const id = await documentId(client, { width: 4, height: 4 });
+    await expect(
+      client.readResource({ uri: `pixel://documents/${id}/grid?view=silhouette` }),
+    ).rejects.toThrow(/Unknown view/);
   });
 
   it('serves the scripting guide as a resource', async () => {

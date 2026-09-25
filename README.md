@@ -202,7 +202,8 @@ The tool catalog is generated from the same Zod schemas used to validate command
 
 | Capability | Why it matters |
 | --- | --- |
-| `get_preview` | Returns an actual PNG for one frame or all frames, optionally cropped, zoomed, layer-isolated, or onion-skinned. |
+| `read_grid` | Returns the artwork as a character grid — silhouette, luminance, palette slot or colour name. Text, so it is exact, diffable and cheap; a repeated call reports which rows changed. Use it to verify a drawing. |
+| `get_preview` | Returns an actual PNG for one frame or all frames, optionally cropped, zoomed, layer-isolated, or onion-skinned. Use it to approve a drawing. |
 | `preview_animation` | Renders a timeline or tag-expanded playback contact sheet with sequence-aware onion skin. |
 | `preview_pose` | Renders a rig pose/tween and resolves anchor and hitbox world geometry. |
 | `create_sprite_spec` | Creates layers, frames, tags, palette roles and an optional rig from one declarative scaffold. |

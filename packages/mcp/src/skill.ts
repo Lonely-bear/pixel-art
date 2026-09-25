@@ -19,7 +19,15 @@ passes, and look at the result between passes.
 These are the rules that separate a piece that reads as art from one that reads as a
 render. Break them and no amount of extra shading recovers the result.
 
-1. **Judge at 100% first.** Pixel art is a 1:1 medium. Always look at a 256x256 canvas
+1. **Verify with \`read_grid\`, approve with \`get_preview\`.** These are different
+   questions and they need different tools. "Is the silhouette symmetric, which tone
+   is in row 14, did that edit land, does it still fit the canvas" are all answered
+   exactly, cheaply and diffably by \`read_grid\`, which returns the artwork as
+   characters. "Does this look good" is the one question a character grid cannot
+   answer, and that is what \`get_preview\` is for. Reach for the grid first and the
+   picture at the end; a loop that re-reads a PNG after every edit is the slow way
+   round. See section 8.
+2. **Judge at 100% first.** Pixel art is a 1:1 medium. Always look at a 256x256 canvas
    at \`scale: 1\` before you decide anything. A 2x-4x zoom turns \`cluster2\`'s 2x2 blocks
    into an obvious dot grid and will make you delete dithering that is correct.
    Zoom is for inspecting one detail, never for judging the whole piece.
@@ -45,8 +53,9 @@ render. Break them and no amount of extra shading recovers the result.
    vertical or diagonal element - a light path, a waterfall, a foreground silhouette.
    \`quality_report\` reports \`structure.strongBands\` for exactly this.
 8. **If the preview contradicts your data, trust the data.** When an image looks wrong,
-   confirm with \`get_pixels\` or \`quality_report\` before you start "fixing" it. Inline
-   previews can be stale.
+   confirm with \`read_grid\` or \`quality_report\` before you start "fixing" it. Inline
+   previews can be stale. A grid never is: it is rendered from the same pixels the
+   commands report.
 9. **A clean defect report is not a finished piece.** \`quality_report\` has two halves and
    you must read both. The defect half says what is *wrong*; the presence half
    (\`presence.valueRange\`, \`darkShare\`, \`flatShare\`, \`planeSeparation\`) says whether the
@@ -66,8 +75,10 @@ render. Break them and no amount of extra shading recovers the result.
 ## 2. Silhouette first, colour last
 
 1. Block the whole subject in a single flat colour on \`base\`. Check the silhouette
-   by looking at \`get_preview\`. If it is not recognisable as a solid shape, no
-   amount of shading will save it.
+   with \`read_grid {view: "mask", scope: "cel", layer: "base"}\` - the shape is
+   right there as a grid of \`#\`, and you can count rows and compare left against
+   right without squinting. If it is not recognisable as a solid shape, no amount of
+   shading will save it.
 2. Only then add shading. Decide where the light comes from (top-left is the
    convention) and stay consistent.
 3. Add the outline last.
@@ -266,6 +277,37 @@ render. Break them and no amount of extra shading recovers the result.
 
 ## 8. Iterating
 
+- **Read the artwork as text with \`read_grid\`.** It returns the pixels as one character
+  per pixel, which answers the questions you actually iterate on - is the silhouette
+  symmetric, which tone is in row 14, did that edit land, is it still inside the canvas -
+  exactly, in one call, for about the cost of a sentence. A preview PNG has to be
+  re-read from scratch after every edit and its 256px downsample cannot tell you that
+  row 14 is one step off row 13. The split is deliberate: **\`read_grid\` is how you
+  verify, \`get_preview\` is how you approve.** Verify in text, look at the picture once
+  at the end.
+- Pick the view by the question. \`view: "value"\` (the default) is a luminance ladder
+  and answers "is the form working" - one glyph per distinct tone, so a collapsed ramp
+  shows up as two tones reading as one glyph. \`view: "mask"\` is the silhouette
+  (\`#\`/\`.\`) for proportion, symmetry and holes. \`view: "index"\` is the palette slot,
+  so the next draw can name the colour it just read as \`pal:7\`. \`view: "named"\` gives
+  generated colour names ("dark red", "pale blue") when you need to know which material
+  a region is without decoding hex.
+- \`scope: "cel"\` with a \`layer\` reads one layer on its own, which is how you check a
+  silhouette on \`base\` before any shading lands on top of it, and how you confirm a
+  highlight went on \`shade\` and not on the wrong layer. \`scope: "composite"\` (the
+  default) reads the frame as it renders.
+- **Repeating a \`read_grid\` call diffs itself.** Same document, frame, scope, layer, view
+  and region, and you also get which rows changed and what they were before:
+  \`y=14 was "::--::" now ":::-::"\`. That is how you confirm an edit did what you
+  intended without re-reading the whole grid and comparing it in your head. Pass
+  \`diff: false\` for a plain read.
+- \`allFrames: true\` prints every frame and adds per-frame \`driftFromFirst\` - the
+  silhouette difference against the first frame, with the worst row named. That is the
+  number for "this animation flickers", and it catches a foot that jumps a pixel in a
+  way a contact sheet does not.
+- \`read_grid\` is capped at 64x64 by default (\`max\` goes to 128) and at 16 frames for
+  \`allFrames\`. For a large canvas, pass the \`rect\` you are working on - a face, a
+  hand, a waterline - rather than raising \`max\`; a small grid is also a cheaper one.
 - The fastest draw→look loop is one call: pass \`preview: true\` to \`run_script\` or
   \`apply_ops\`, plus \`previewOptions\` (and optionally \`frame\`, \`frames: "all"\`, \`onion\`,
   \`rect\`, \`layers\`, or \`background\`). The command result and a real PNG come back together,
@@ -273,9 +315,11 @@ render. Break them and no amount of extra shading recovers the result.
 - **Leave \`scale\` alone for the whole-canvas look.** The default targets roughly 256px
   on the long side, which is a useful overview. Set \`scale: 1\` when a true 1:1 export
   is needed for fine pixel judgement, or crop when you are inspecting one detail.
-- Look after the silhouette, after major lighting/material work, and once at the
-  end. Two or three visual gates catch nearly all composition problems; a long chain
-  of tiny speculative edits is slower and usually less coherent.
+- **Spend your gates deliberately: two or three \`get_preview\` calls, many more
+  \`read_grid\` calls.** Look after the silhouette, after major lighting/material work,
+  and once at the end. A long chain of tiny speculative edits is slower and usually
+  less coherent. In between, check with \`read_grid\` - it costs a fraction of a
+  preview and tells you more about the thing you are fixing.
 
 - \`get_preview\` renders the composited frame (or all frames) as a PNG you can
   actually see. Use it when no edit was made, or when a mutation did not request
@@ -289,10 +333,12 @@ render. Break them and no amount of extra shading recovers the result.
   2x2 dither block into a visible dot grid, and the usual result is deleting dithering
   that was correct. The same crop can ride along in a mutation's \`previewOptions\`, so
   fixing and inspecting a detail is one call.
-- \`get_pixels\` returns a region as hex rows when you need exact coordinates. It is
-  capped at 32x32 per call, so use it for sampling, not for reading a whole canvas.
+- \`get_pixels\` returns a region as hex rows when you need exact channel values - to
+  paste into a draw call, or to settle what a colour actually is. It is capped at
+  32x32 per call, so use it for sampling, not for reading a whole canvas, and prefer
+  \`read_grid\` when the question is about structure rather than exact values.
   It reads the **composited frame** and takes no \`layers\` argument; to sample one layer
-  in isolation use \`get_preview\` with \`layers\`, or a layer command.
+  in isolation use \`read_grid\` with \`scope: "cel"\`, or a layer command.
   For "which colours does this actually contain", use \`histogram\`, which returns the
   count per colour in one call.
 - When an image and your expectations disagree, believe the data first: \`get_pixels\`
@@ -580,8 +626,13 @@ into a game engine.
 /** Short, always-included preamble for prompts that do not need the full guide. */
 export const SKILL_SUMMARY =
   'Pixel art workflow: block the silhouette in one flat colour on a base layer, ' +
-  'return an inline preview from the same run_script/apply_ops call (the default integer scale targets about 256px on the long side), ' +
+  'verify it with read_grid (view "mask" for the silhouette, "value" for tone - the ' +
+  'artwork comes back as one character per pixel, and a repeated call reports which ' +
+  'rows changed), ' +
+  'return an inline preview from the same run_script/apply_ops call when you want to ' +
+  'approve a gate (the default integer scale targets about 256px on the long side), ' +
   'then shade with add_palette_ramp hue-shifted ramps and outline selectively. ' +
+  'read_grid verifies, get_preview approves: keep the pictures to two or three gates. ' +
   'Judge the whole piece at 100% before zooming; keep dither to 3-5px seams only ' +
   '(cluster levels quantise to sixteenths); place shading inside the layer-visible band; ' +
   'and break up repeated shapes. Run quality_report before finalising and read its ' +

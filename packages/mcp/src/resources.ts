@@ -1,11 +1,21 @@
 /**
  * MCP resources.
  *
- * Tools are for doing; resources are for *seeing*. Multimodal models iterate far
- * better when the artwork arrives as an actual `image/png` blob than when they
- * are handed a grid of hex codes, so the preview resource is the important one
- * here. The others let a client pull the document list, the command catalogue
- * and the craft guide without spending a tool call.
+ * Tools are for doing; resources are for *seeing*. And "seeing" splits in two here.
+ *
+ * A `image/png` blob is the only way to answer "does this look good" - a rendered image
+ * carries shading, contrast and composition that no text encoding reproduces. But it is
+ * a poor way to answer "is this symmetric, which tone is in row 14, did that edit land":
+ * a 256px downsample of a 32x32 sprite cannot resolve those, and it cannot be diffed,
+ * so it has to be re-read and re-reasoned about after every edit. `pixel://grid` returns
+ * the same pixels as characters for exactly those questions.
+ *
+ * So the two are not competing channels. **The PNG is how you approve, the grid is how
+ * you verify** - and the same URI serves both, because the client should not have to
+ * know which question it is asking.
+ *
+ * The rest let a client pull the document list, the command catalogue and the craft
+ * guide without spending a tool call.
  */
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -16,13 +26,19 @@ import {
   describeCommands,
   encodePNG,
   extractRegion,
+  formatGrid,
   PixelBuffer,
+  renderGridView,
   resolveFrame,
   resolveLayer,
   scaleNearest,
+  type GridView,
 } from '@pixel/core';
 import type { DocumentStore } from './session.js';
 import { PIXEL_ART_SKILL, SCRIPT_GUIDE, SCRIPT_GUIDE_URI, SKILL_URI } from './skill.js';
+
+/** Grid views a client can ask `pixel://grid` for. */
+const GRID_VIEWS: readonly GridView[] = ['mask', 'value', 'index', 'named'];
 
 function json(uri: URL, value: unknown): ReadResourceResult {
   return {
@@ -34,6 +50,10 @@ function json(uri: URL, value: unknown): ReadResourceResult {
       },
     ],
   };
+}
+
+function plain(uri: URL, text: string, mimeType = 'text/plain'): ReadResourceResult {
+  return { contents: [{ uri: uri.href, mimeType, text }] };
 }
 
 function png(uri: URL, bytes: Uint8Array): ReadResourceResult {
@@ -105,7 +125,7 @@ export function registerResources(server: McpServer, store: DocumentStore): void
   const previewConfig = {
     title: 'Document preview',
     description:
-      'The composited sprite as a PNG image. Query options: `?frame=N` for a specific frame, `?frames=all` for a horizontal strip of every frame, `?scale=K` to upscale, `?rect=x,y,w,h` to crop-zoom a detail, `?layer=name` (repeatable, or `?layers=a,b`) to isolate layers, and `?onion=1` (or `?onionBefore=1&onionAfter=1`, with `?onionOpacity=`, `?loop=1`, `?beforeTint=`, `?afterTint=`) to ghost the neighbouring frames.',
+      'The composited sprite as a PNG image - how to *approve* a drawing. Query options: `?frame=N` for a specific frame, `?frames=all` for a horizontal strip of every frame, `?scale=K` to upscale, `?rect=x,y,w,h` to crop-zoom a detail, `?layer=name` (repeatable, or `?layers=a,b`) to isolate layers, and `?onion=1` (or `?onionBefore=1&onionAfter=1`, with `?onionOpacity=`, `?loop=1`, `?beforeTint=`, `?afterTint=`) to ghost the neighbouring frames. For *verifying* - symmetry, tone, what an edit changed - read `pixel://documents/{id}/grid` instead: it is text, it is exact, and it costs a fraction of the image.',
     mimeType: 'image/png',
   };
 
@@ -188,6 +208,71 @@ export function registerResources(server: McpServer, store: DocumentStore): void
     new ResourceTemplate('pixel://documents/{id}/preview{+query}', { list: undefined }),
     previewConfig,
     readPreview,
+  );
+
+  const gridConfig = {
+    title: 'Document as a character grid',
+    description:
+      'The same pixels as text, one character per pixel, with absolute rulers and a legend. This is how to *verify* a drawing: symmetry, tone, which rows an edit changed, whether the silhouette is where it should be. Query options: `?view=mask|value|index|named` (default `value`), `?frame=N`, `?layer=name` for one layer on its own, `?rect=x,y,w,h` to read a detail, and `?view=` with `?layers=` ignored - isolate a layer with `layer`. Use `pixel://documents/{id}/preview` instead when the question is whether it looks good.',
+    mimeType: 'text/plain',
+  };
+
+  const readGrid = (uri: URL, variables: Record<string, unknown>): ReadResourceResult => {
+    const doc = store.require(String(variables.id));
+    const sprite = doc.editor.sprite;
+    const params = new URL(uri.href).searchParams;
+
+    const requested = params.get('view') ?? 'value';
+    if (!GRID_VIEWS.includes(requested as GridView)) {
+      throw new Error(
+        `Unknown view "${requested}". Use ${GRID_VIEWS.map((v) => `\`${v}\``).join(', ')}.`,
+      );
+    }
+    const view = requested as GridView;
+
+    const frame = resolveFrame(sprite, Number(params.get('frame') ?? 0) || 0);
+    const layerRef = params.get('layer');
+    const layer = layerRef ? resolveLayer(sprite, layerRef) : null;
+    // A layer read is a `cel` read: the point is to see that layer's own pixels before
+    // anything painted above it is mistaken for part of it.
+    const surface = layer
+      ? frame.cels.get(layer.id) ?? PixelBuffer.empty(sprite.width, sprite.height)
+      : compositeFrame(sprite, frame.id);
+
+    let region = { x: 0, y: 0, w: sprite.width, h: sprite.height };
+    const rectParam = params.get('rect');
+    if (rectParam) {
+      const [rx, ry, rw, rh] = rectParam.split(',').map((n) => Math.floor(Number(n)));
+      if ([rx, ry, rw, rh].every((n) => Number.isFinite(n)) && rw > 0 && rh > 0) {
+        region = { x: rx, y: ry, w: rw, h: rh };
+      }
+    }
+
+    const render = renderGridView(surface, region, view, sprite.palette.colors);
+    return plain(
+      uri,
+      formatGrid(render, {
+        view,
+        scope: layer ? 'cel' : 'composite',
+        frame: sprite.frames.indexOf(frame),
+        layer: layer?.name,
+        frameCount: sprite.frames.length,
+      }),
+    );
+  };
+
+  server.registerResource(
+    'document-grid',
+    new ResourceTemplate('pixel://documents/{id}/grid', { list: undefined }),
+    gridConfig,
+    readGrid,
+  );
+
+  server.registerResource(
+    'document-grid-query',
+    new ResourceTemplate('pixel://documents/{id}/grid{+query}', { list: undefined }),
+    gridConfig,
+    readGrid,
   );
 
   server.registerResource(
