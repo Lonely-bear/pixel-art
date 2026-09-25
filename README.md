@@ -340,7 +340,7 @@ npm pack --dry-run
 
 The repository uses pnpm workspaces, strict TypeScript, Vitest, and a clean-build CI gate. The public package bundles the internal workspace code while keeping normal npm dependencies external.
 
-> **Distribution scope:** `dotloom-mcp@0.3.0` publishes the CLI, library entry, and standalone MCP server. The Electron application remains a source-based application in this release; desktop installers are not part of the npm tarball.
+> **Distribution scope:** `dotloom-mcp@0.3.1` publishes the CLI, library entry, and standalone MCP server. The Electron application remains a source-based application in this release; desktop installers are not part of the npm tarball.
 
 ## Security and local trust
 
@@ -358,7 +358,7 @@ The repository uses pnpm workspaces, strict TypeScript, Vitest, and a clean-buil
 
 ## Project status
 
-`dotloom-mcp@0.3.0` is the current installable CLI/MCP release.
+`dotloom-mcp@0.3.1` is the current installable CLI/MCP release.
 
 - [x] Core document model, rasteriser, command bus, history, and native serialisation
 - [x] PNG, spritesheet, GIF, Aseprite import, and Tiled export

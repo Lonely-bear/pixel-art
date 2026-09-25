@@ -4,6 +4,8 @@ All notable changes to dotloom-mcp are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-26
+
 ### Added
 
 - **`run_script { path }`** runs a program from a `.js` file, re-read on every call and never
