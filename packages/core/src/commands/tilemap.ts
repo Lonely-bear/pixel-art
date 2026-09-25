@@ -377,7 +377,7 @@ export const addTilemapCommand = defineCommand({
 
 export const removeTilemapCommand = defineCommand({
   name: 'remove_tilemap',
-  description: 'Delete a tilemap layer.',
+  description: 'Delete a tilemap layer and its cell grid. Pixels already baked out of it stay on their pixel layer, so the artwork survives even though the map does not. Undoable as one step.',
   params: z.object({ tilemap: tilemapRefSchema }),
   apply(ctx, p) {
     const list = ctx.sprite.tilemaps ?? [];
@@ -391,9 +391,16 @@ export const removeTilemapCommand = defineCommand({
 export const setTileCommand = defineCommand({
   name: 'set_tile',
   description:
-    'Write tile indices into a tilemap. Pass a `tiles` list for a batch (up to 100000 cells), or a single `x`/`y`/`tile`. Tile index `-1` clears a cell. Coordinates are tile coordinates, not pixels. ' +
-    'Every cell is accounted for: a cell outside the map, or a tile index past the end of the tileset, comes back in `skippedCells` with the reason, rather than being written as a number that renders as nothing. `written` counts the cells that were valid and attempted, `changed` only the ones whose value really moved, and `changedRect` is the bounding box of those. Writing the same cell twice in one batch is counted in `duplicateWrites` and the last write wins. ' +
-    'With `bake`, only the cells that changed are cleared and re-stamped into a pixel layer, so the artwork follows the map without a full repaint.',
+    'Write tile indices into a tilemap. Pass a `tiles` list for a batch (up to 100000 cells), or a single `x`/`y`/`tile`. Tile index `-1` clears a cell, and coordinates are tile coordinates, not pixels. Nothing is written silently: a cell outside the map or an index past the end of the tileset comes back in `skippedCells` with the reason. Use `fill_tilemap` for a solid region and `stroke_tilemap` for terrain. Undoable as one step.',
+  guide:
+    '## Reading the summary\n\n' +
+    '`written` counts the cells that were valid and attempted, `changed` only the ones\n' +
+    'whose value really moved, and `changedRect` is the bounding box of those - which is\n' +
+    'what `preview_tilemap` and `bake` want, so pass it straight through. Writing the same\n' +
+    'cell twice in one batch is counted in `duplicateWrites` and the last write wins.\n\n' +
+    '## bake\n\n' +
+    'With `bake`, only the cells that changed are cleared and re-stamped into a pixel\n' +
+    'layer, so the artwork follows the map without a full repaint.',
   params: z.object({
     tilemap: tilemapRefSchema,
     tiles: z.array(setTileSchema).optional().describe('Batch of cells to write, up to 100000 entries.'),
@@ -602,10 +609,30 @@ const mappingShape = {
 export const autotileCommand = defineCommand({
   name: 'autotile',
   description:
-    'Rewrite a tilemap so its tiles match the terrain around them. Declare which cells are solid (either by `indices`, or every non-empty cell by default) and this picks the right transition tile for each one, so you never hand-place corners. `set: 47` (default) uses the 47-blob set with diagonal-aware inner corners; `set: 16` uses the simpler 4-neighbour 16-tile set. `offset` is the first tile of this terrain in the tileset, so several terrains can share one sheet. ' +
-    'THE TILE ORDER IS FIXED, so the sheet you draw has to match it. Neighbour bits: N=1, E=2, S=4, W=8, NE=16, SE=32, SW=64, NW=128. For `set: 47` a diagonal bit only counts when BOTH of its adjacent cardinals are also solid, which is what reduces 256 combinations to 47. The tile index for a cell is `offset` plus the position of its mask in that canonical list, in ascending mask order - so `offset: 0` means tile 0 is fully isolated, and `offset: 48` puts the same set at tiles 48-94. Use `autotileSheet(47)` in `@pixel/core` if you need the exact mask for each index. ' +
-    'A `transitions` mapping replaces that convention for the masks you name, in any order and covering any subset: handy for a hand-picked set, or for one mask with three interchangeable tiles. Masks are canonicalised for `set: 47` and masked to the four cardinals for `set: 16`, so the same list works for either. A mask the mapping does not cover falls back to the set layout, or is left alone with `unmapped: "keep"`. When one mask has several variants, `seed` decides which and `avoidRepeats` (default true) steers each cell away from the variant on its left and above, so a coast is not a row of identical tiles. ' +
-    'IMPORTANT: this pass REWRITES the cells it touches, replacing the placeholder index with transition tiles. That means a second identical call with the same `indices` will find almost nothing solid any more and will silently leave the map wrong. To re-run after editing terrain, omit `indices` entirely (any non-empty cell counts as terrain) or list every transition index you now expect.',
+    'Rewrite a tilemap so its tiles match the terrain around them: declare which cells are solid and this picks the right transition tile for each one, so corners are never hand-placed. `set: 47` (default) is the diagonal-aware 47-blob set, `set: 16` the simpler 4-neighbour set, and `offset` is where this terrain starts in the tileset so several terrains can share one sheet. IMPORTANT: it replaces the placeholder indices it finds, so re-running with the same `indices` finds nothing solid and silently leaves the map wrong - omit `indices` to treat every non-empty cell as terrain. Undoable as one step.',
+  guide:
+    '## Tile order is fixed, so the sheet has to match it\n\n' +
+    'Neighbour bits: N=1, E=2, S=4, W=8, NE=16, SE=32, SW=64, NW=128. For `set: 47` a\n' +
+    'diagonal bit only counts when BOTH of its adjacent cardinals are also solid, which is\n' +
+    'what reduces 256 combinations to 47. The tile index for a cell is `offset` plus the\n' +
+    'position of its mask in that canonical list, in ascending mask order - so `offset: 0`\n' +
+    'means tile 0 is fully isolated, and `offset: 48` puts the same set at tiles 48-94. Use\n' +
+    '`autotileSheet(47)` in `@pixel/core` if you need the exact mask for each index.\n\n' +
+    '## Overriding the convention\n\n' +
+    'A `transitions` mapping replaces the set layout for the masks you name, in any order\n' +
+    'and covering any subset: handy for a hand-picked set, or for one mask with three\n' +
+    'interchangeable tiles. Masks are canonicalised for `set: 47` and masked to the four\n' +
+    'cardinals for `set: 16`, so the same list works for either. A mask the mapping does\n' +
+    'not cover falls back to the set layout, or is left alone with `unmapped: "keep"`.\n' +
+    'When one mask has several variants, `seed` decides which and `avoidRepeats` (default\n' +
+    'true) steers each cell away from the variant on its left and above, so a coast is not\n' +
+    'a row of identical tiles.\n\n' +
+    '## Re-running after an edit\n\n' +
+    'This pass REWRITES the cells it touches, replacing the placeholder index with\n' +
+    'transition tiles. A second identical call with the same `indices` will find almost\n' +
+    'nothing solid any more and will silently leave the map wrong. To re-run after editing\n' +
+    'terrain, omit `indices` entirely (any non-empty cell counts as terrain) or list every\n' +
+    'transition index you now expect.',
   params: z.object({
     tilemap: tilemapRefSchema,
     set: z.union([z.literal(16), z.literal(47)]).optional().describe('Transition set. Defaults to 47 (47-blob).'),
@@ -646,10 +673,28 @@ export const autotileCommand = defineCommand({
 export const strokeTilemapCommand = defineCommand({
   name: 'stroke_tilemap',
   description:
-    'Paint terrain along a path. This is the tool for a coastline, a cliff edge, a cave wall or a road: give it a few points in TILE coordinates (floats allowed, y grows downward) and it lays a brush of the requested width along a curve through them, breaks the interior up with weighted tile variants, and lets an `edge` mapping finish the border with the right transition tile for each neighbour mask. ' +
-    'The defaults suit terrain: `width: 1` (a diameter, so it covers the cells the path runs through), `brush: "round"`, `smoothing: "catmull-rom"` (which rounds the corners between your points — pass `smoothing: "linear"` for a polyline), `density: 1`, `jitter: 0.12` and `avoidRepeats: true`. `jitter` is a smooth variation of the brush radius, so the edge wanders instead of being an exact offset of the path; it only moves the boundary, never hollows out the middle. `density` thins the interior by sampling cells deterministically, and `seed` decides every choice, so the same call always paints the same terrain. ' +
-    '`tiles` takes a bare index or `{tile, weight}`; three grass tiles with weights 5/3/1 is a meadow, three with equal weights is stripes. Repeat avoidance steers each cell away from the variant on its left and above, which is what stops a stroke from looking rubber-stamped. `replace: false` leaves cells that already hold a tile alone. ' +
-    'With `edge`, the cells the stroke touched become border tiles: the terrain is judged by the variants the stroke laid down, never by the transition indices, so a second stroke over the same map still sees the shape. `transitions` is a mask -> tile list in any order, covering any subset of masks, and repeating a mask gives that silhouette several weighted variants; a mask you leave out keeps the variant that was painted. With `bake`, the changed cells are re-stamped into a pixel layer as you go.',
+    'Paint terrain along a path. Give it points in TILE coordinates (floats allowed, y grows downward) and it lays a weighted brush along a curve through them, breaks the interior into tile variants, and finishes the border with the right transition tile per neighbour mask. This is the tool for a coastline, a cliff edge, a cave wall or a road. Defaults suit terrain: `width: 1`, `brush: "round"`, `smoothing: "catmull-rom"`, `density: 1`, `jitter: 0.12`, `avoidRepeats: true`. `edge` maps masks to border tiles. Undoable as one step.',
+  guide:
+    '## Defaults, and what each one is for\n\n' +
+    '`width: 1` is a *diameter*, so it covers exactly the cells the path runs through.\n' +
+    '`smoothing: "catmull-rom"` rounds the corners between your points - pass\n' +
+    '`"linear"` for a polyline. `jitter: 0.12` is a smooth perturbation of the brush\n' +
+    'radius, so the edge wanders instead of being an exact offset of the path; it only\n' +
+    'moves the boundary and never hollows out the middle. `density` thins the interior by\n' +
+    'sampling cells deterministically, and `seed` decides every choice, so the same call\n' +
+    'always paints the same terrain.\n\n' +
+    '## Weighted variants\n\n' +
+    '`tiles` takes a bare index or `{tile, weight}`. Three grass tiles weighted 5/3/1 is a\n' +
+    'meadow; three with equal weights is stripes. Repeat avoidance steers each cell away\n' +
+    'from the variant on its left and above, which is what stops a stroke from looking\n' +
+    'rubber-stamped. `replace: false` leaves cells that already hold a tile alone.\n\n' +
+    '## Borders\n\n' +
+    'With `edge`, the cells the stroke touched become border tiles. The terrain is judged\n' +
+    'by the variants the stroke laid down, never by the transition indices, so a second\n' +
+    'stroke over the same map still sees the shape. `transitions` is a mask -> tile list\n' +
+    'in any order, covering any subset of masks, and repeating a mask gives that\n' +
+    'silhouette several weighted variants; a mask you leave out keeps the variant that was\n' +
+    'painted. With `bake`, the changed cells are re-stamped into a pixel layer as you go.',
   params: z.object({
     tilemap: tilemapRefSchema,
     points: z
@@ -709,8 +754,7 @@ export const strokeTilemapCommand = defineCommand({
 export const paintTilemapCommand = defineCommand({
   name: 'paint_tilemap',
   description:
-    'Stamp a tilemap into a pixel layer, so the terrain becomes artwork you can export as a PNG. The tilemap itself is unchanged; this is the one-way trip from tiles to pixels. ' +
-    '`blend: "over"` composites per pixel, so a tile with a soft or semi-transparent edge fuses with the artwork underneath instead of replacing it; pass `underlay` to rebuild that ground from another tilemap in the same operation. The default `copy` overwrites, which is what a level drawn on an empty cel wants. `clear: true` wipes the destination pixels of the region first, which matters for a re-paint: cells that are empty in the map would otherwise leave the old pixels behind. `rect` limits the work to a region in tile coordinates.',
+    'Stamp a tilemap into a pixel layer, so terrain becomes artwork you can export as a PNG. This is the one-way trip from tiles to pixels: the tilemap itself is unchanged. `blend: "over"` composites per pixel so a soft tile edge fuses with what is underneath instead of replacing it, and `underlay` rebuilds that ground from another tilemap in the same pass. `clear: true` wipes the destination first, which is what a re-paint needs. Undoable as one step.',
   params: z.object({
     tilemap: tilemapRefSchema,
     underlay: tilemapRefSchema

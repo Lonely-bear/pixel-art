@@ -72,6 +72,7 @@ import { z } from 'zod';
 import { ScriptRuntime } from '@pixel/script';
 import { BUILTIN_PALETTES, type DocumentStore, type PixelDocument } from './session.js';
 import { PIXEL_ART_SKILL } from './skill.js';
+import { advertiseSchema, TOOL_RESULT_ENVELOPE } from './surface.js';
 import { analyzeLandscape } from './quality-landscape.js';
 import { analyzeTilemapQuality } from './quality-tilemap.js';
 import { renderTilemapPreview } from './tilemap-preview.js';
@@ -90,14 +91,20 @@ const versionRef = z
     'Optimistic concurrency guard. The edit is rejected with a `version_conflict` error unless the document is exactly at this version. Pass the `version` returned by your last read or write.',
   );
 
-const spritePointSchema = z.object({ x: z.number(), y: z.number() }).strict();
+const spritePointSchema = z
+  .object({
+    x: z.number().describe('X in pixels, 0-based, origin top-left.'),
+    y: z.number().describe('Y in pixels, 0-based, growing downward.'),
+  })
+  .strict()
+  .describe('A point in canvas pixels.');
 
 const previewRectSchema = z
   .object({
-    x: z.number().int(),
-    y: z.number().int(),
-    w: z.number().int().min(1).max(4096),
-    h: z.number().int().min(1).max(4096),
+    x: z.number().int().describe('Left edge in pixels, 0-based.'),
+    y: z.number().int().describe('Top edge in pixels, 0-based, y grows downward.'),
+    w: z.number().int().min(1).max(4096).describe('Width in pixels.'),
+    h: z.number().int().min(1).max(4096).describe('Height in pixels.'),
   })
   .strict()
   .describe('Crop to this region before upscaling, in canvas pixels. Single-frame previews only.');
@@ -124,22 +131,30 @@ const tilemapDebugSchema = z
     indices: z.boolean().optional().describe('Print tile indices over the image.'),
     showInvalid: z.boolean().optional().describe('Outline indices outside the tileset. Defaults to true.'),
     highlightCells: z
-      .array(z.object({ x: z.number().int(), y: z.number().int() }).strict())
+      .array(
+        z
+          .object({
+            x: z.number().int().describe('Tile column.'),
+            y: z.number().int().describe('Tile row.'),
+          })
+          .strict(),
+      )
       .max(4096)
       .optional()
       .describe('Exact tile cells to outline in magenta.'),
     highlightRect: z
       .object({
-        x: z.number().int(),
-        y: z.number().int(),
-        w: z.number().int().min(1),
-        h: z.number().int().min(1),
+        x: z.number().int().describe('Left tile column.'),
+        y: z.number().int().describe('Top tile row.'),
+        w: z.number().int().min(1).describe('Width in tiles.'),
+        h: z.number().int().min(1).describe('Height in tiles.'),
       })
       .strict()
       .optional()
       .describe('Changed tile region to outline in magenta.'),
   })
-  .strict();
+  .strict()
+  .describe('Overlays drawn on the rendered map: grid lines, tile indices, invalid outlines and the cells that just changed.');
 
 const previewOnionSchema = z
   .object({
@@ -274,7 +289,82 @@ const READ_ONLY_TOOLS = new Set([
   'describe_command',
   'find_workflow',
   'list_documents',
+  'list_plugins',
+  'read_skill',
 ]);
+
+/**
+ * Tools that reach outside the in-memory document: the filesystem, or arbitrary code.
+ *
+ * This is the hint a client uses to decide that a call is not confined to the
+ * document it was asked to edit, and `run_script` and `load_plugin` - the only two
+ * tools that execute code the server did not write - are the reason this set exists
+ * at all rather than being left to the reader of a description string.
+ */
+const OPEN_WORLD_TOOLS = new Set([
+  'run_script',
+  'load_plugin',
+  'open_document',
+  'save_document',
+  'finalize_document',
+  'import_image',
+  'export_png',
+  'export_sheet',
+  'export_tiled',
+  'export_gif',
+]);
+
+/**
+ * Tools that can destroy work rather than add to it.
+ *
+ * Most edits here go through the undo history, so "destructive" means *deleting or
+ * replacing structure the caller may not be able to reconstruct* - dropping a layer,
+ * re-paletting every pixel, closing the only document. It is the flag a client shows a
+ * confirmation for, so it is set where a second call cannot reconstruct the first, and
+ * left off where `undo` genuinely is the answer.
+ */
+const DESTRUCTIVE_TOOLS = new Set([
+  'close_document',
+  'clear_all',
+  'crop_canvas',
+  'merge_layer_down',
+  'prune_palette',
+  'quantize_to_palette',
+  'remove_anchor',
+  'remove_frame',
+  'remove_hitbox',
+  'remove_layer',
+  'remove_map_object',
+  'remove_palette_color',
+  'remove_part',
+  'remove_pose',
+  'remove_tag',
+  'remove_tile_properties',
+  'remove_tilemap',
+  'remove_tween',
+  'resize_canvas',
+  'set_palette',
+]);
+
+/**
+ * The four MCP risk hints, derived rather than hand-written per tool.
+ *
+ * 100 of 127 tools previously shipped an empty `annotations` object, which a client
+ * reads as "unknown" and treats like "safe". Deriving them from three sets means a
+ * new tool is annotated by construction: name it `get_*` and it is read-only and
+ * idempotent, name it `export_*` and it is open-world, and anything that deletes says
+ * so. An explicit override still wins, for the tool whose behaviour does not fit its
+ * name.
+ */
+function toolAnnotations(name: string, override?: Partial<ToolAnnotations>): ToolAnnotations {
+  const readOnly = override?.readOnlyHint ?? READ_ONLY_TOOLS.has(name);
+  return {
+    readOnlyHint: readOnly,
+    destructiveHint: override?.destructiveHint ?? (!readOnly && DESTRUCTIVE_TOOLS.has(name)),
+    idempotentHint: override?.idempotentHint ?? readOnly,
+    openWorldHint: override?.openWorldHint ?? OPEN_WORLD_TOOLS.has(name),
+  };
+}
 
 /**
  * The hand-registered session tools, so `list_commands` can advertise them.
@@ -310,14 +400,14 @@ const SESSION_TOOLS: Array<{ name: string; description: string }> = [
   { name: 'export_sheet', description: 'Spritesheet PNG + Aseprite JSON.' },
   { name: 'export_tiled', description: 'Tilemaps as a Tiled `.tmj` map.' },
   { name: 'export_gif', description: 'Write an animated GIF.' },
-  { name: 'apply_ops', description: 'Run a batch of core commands with optional atomic rollback and inline preview.' },
-  { name: 'run_script', description: 'Run a sandboxed script.' },
-  { name: 'load_plugin', description: 'Load a plugin defining commands.' },
-  { name: 'list_plugins', description: 'List loaded plugins.' },
-  { name: 'read_skill', description: 'The pixel-art craft guide.' },
-  { name: 'list_commands', description: 'This catalogue.' },
-  { name: 'describe_command', description: 'Return one exact command schema and read-only metadata.' },
-  { name: 'find_workflow', description: 'Find task-level pixel-art workflows and recommended command sequences.' },
+  { name: 'apply_ops', description: 'Run any commands from the catalogue in one round trip, with optional atomic rollback and an inline preview.' },
+  { name: 'run_script', description: 'Run trusted JavaScript against the document, collapsing into one undo step, with an optional dry run.' },
+  { name: 'load_plugin', description: 'Load a plugin defining commands. Untrusted: it becomes tools with your document\'s authority.' },
+  { name: 'list_plugins', description: 'The plugins loaded in this session and the commands each registered.' },
+  { name: 'read_skill', description: 'The pixel-art craft guide, served as pixel://skill.' },
+  { name: 'list_commands', description: 'The command catalogue. Looking one up by name also promotes it to a direct tool.' },
+  { name: 'describe_command', description: 'One exact command schema plus its long-form manual; also promotes it to a direct tool.' },
+  { name: 'find_workflow', description: 'Task-level workflows, with their recommended commands promoted to direct tools.' },
 ];
 
 function text(value: string): ContentBlock {
@@ -1516,7 +1606,17 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
     warnings.push({
       code: 'high_edge_contrast',
       severity: rasterSeverity,
-      message: `Mean adjacent luminance delta is ${meanEdge.toFixed(1)}; the edge field is harsh. Run \`antialias\` on the silhouette or internal colour steps.${rasterContext}`,
+      // This one is a judgement call, not a defect, and a hard "run antialias" here
+      // contradicts the craft guide: blending is for curves only, at a low amount, and
+      // it pushes colours off a locked palette. An agent took this message literally
+      // once and would have softened a sprite that was already correct.
+      message:
+        `Mean adjacent luminance delta is ${meanEdge.toFixed(1)}; the edge field is harsh. ` +
+        'A high value is normal for pixel art and is not on its own a defect - hard edges are the medium. ' +
+        'Prefer a one-step ramp at the hottest transition over blending. Only if the harshness is on a ' +
+        'curve and the step is genuinely ugly there, `antialias` with a low `amount` (0.3-0.5) and a `clip` ' +
+        'to the silhouette, and never on a palette-locked document.' +
+        rasterContext,
     });
   }
   if (overexposedRatio > 0.02) {
@@ -2146,6 +2246,92 @@ function compactCommand(command: ReturnType<typeof describeCommands>[number]): C
   };
 }
 
+/**
+ * Command names a piece of prose is actually recommending.
+ *
+ * Workflow steps are written for a reader, so they name commands in backticks
+ * (`stroke_tilemap`) or bare (`Use add_palette_ramp next`). Matching snake_case tokens
+ * against the registry is enough to turn "here is a plan" into "here are your tools",
+ * and a token that is not a real command is simply dropped.
+ */
+function commandsMentioned(text: readonly string[], store: DocumentStore): string[] {
+  const found = new Set<string>();
+  for (const line of text) {
+    for (const token of line.match(/[a-z][a-z0-9]*_[a-z0-9_]+/g) ?? []) {
+      if (store.registry.get(token)) found.add(token);
+    }
+  }
+  return [...found];
+}
+
+/**
+ * The nearest name in a namespace, or undefined when nothing is close.
+ *
+ * A plain edit distance is enough here: the caller only needs to be pointed at the
+ * right list, and a wrong-but-near suggestion is still more useful than none because
+ * the response also says which namespace it came from.
+ */
+function closest(name: string, candidates: readonly string[]): string | undefined {
+  let best: string | undefined;
+  let bestScore = Infinity;
+  for (const candidate of candidates) {
+    const score = editDistance(name, candidate);
+    // More than a third of the name's length off is not a near-miss, it is a guess.
+    if (score <= Math.max(2, Math.ceil(name.length / 3)) && score < bestScore) {
+      best = candidate;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+function editDistance(a: string, b: string): number {
+  let previous = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j++) {
+      current[j] = Math.min(
+        previous[j] + 1,
+        current[j - 1] + 1,
+        previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    previous = current;
+  }
+  return previous[b.length];
+}
+
+/**
+ * What to change after a failed op.
+ *
+ * Three failures account for nearly all of them, and each has one obvious next step:
+ * a name that is not in the catalogue, a parameter the command does not have, and a
+ * layer/frame that does not exist. Anything else is left to the error text, because a
+ * confident wrong suggestion is worse than none.
+ */
+function commandRemediation(command: string, code: string, error: string): string | undefined {
+  if (code === 'unknown_command') {
+    return `Search the catalogue with list_commands {filter: "${command}"}, or read its exact schema with describe_command {name: "..."} before using it.`;
+  }
+  if (code === 'invalid_params') {
+    if (/unrecognized key/i.test(error)) {
+      return `That parameter name does not exist. Call describe_command {name: "${command}"} for the exact list - a near-miss like this is silently expensive elsewhere.`;
+    }
+    if (/required|expected .* received undefined/i.test(error)) {
+      return `A required parameter is missing. describe_command {name: "${command}"} lists which are required.`;
+    }
+    return `Check the shape of the params against describe_command {name: "${command}"}.`;
+  }
+  if (code === 'command_failed' && /unknown (layer|frame|tilemap|tag|part|pose|tile)/i.test(error)) {
+    const what = /unknown (\w+)/i.exec(error)?.[1] ?? 'target';
+    return `That ${what} does not exist. Call get_document to see the real names, then use the name or a 0-based index rather than inventing one.`;
+  }
+  if (code === 'command_failed' && /no tileset/i.test(error)) {
+    return 'Run create_tileset before any tilemap command.';
+  }
+  return undefined;
+}
+
 function writeFile(path: string, bytes: Uint8Array): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, bytes);
@@ -2337,6 +2523,21 @@ interface RawOp {
  */
 const WORKFLOW_CATALOG = [
   {
+    id: 'single-sprite',
+    title: 'Draw one good sprite',
+    keywords: [
+      'sprite', 'draw', 'character', 'prop', 'item', 'creature', 'portrait', 'icon', 'one',
+      'static', 'single frame', 'first', 'lantern', 'sword', 'tree', 'slime', 'hero',
+    ],
+    steps: [
+      'Scaffold with create_sprite_spec: size, layer names, and palette roles so the ramps have somewhere to bind.',
+      'Block the silhouette in ONE flat colour on the base layer, then get_preview before anything else.',
+      'Build material ramps with add_palette_ramp - read its guide first, hue interpolates along the wheel.',
+      'Shade on the layer above with clip, then outline the composite onto a top layer with outline.',
+      'get_preview between passes, and run quality_report before calling it done.',
+    ],
+  },
+  {
     id: 'character-animation',
     title: 'Build and review a multi-part character animation',
     keywords: ['character', 'animation', 'frames', 'attack', 'arm', 'weapon', 'loop'],
@@ -2409,6 +2610,20 @@ const WORKFLOW_CATALOG = [
     ],
   },
   {
+    id: 'tilemap-terrain',
+    title: 'Paint terrain into a tilemap',
+    keywords: [
+      'tilemap', 'tileset', 'terrain', 'coastline', 'coast', 'shore', 'cliff', 'cave',
+      'road', 'water', 'autotile', 'stroke', 'map', 'tiles', 'level',
+    ],
+    steps: [
+      'Build the tileset first with create_tileset, in the fixed tile order autotile expects.',
+      'Fill a region with fill_tilemap, or lay terrain along a path with stroke_tilemap points/tiles and optional edge transitions.',
+      'Let autotile pick the transition tiles afterwards; on a re-run omit indices so the previous pass\'s tiles count as terrain.',
+      'Preview with preview_tilemap, passing the changedCells/changedRect a mutation returned, and bake with paint_tilemap.',
+    ],
+  },
+  {
     id: 'landscape-quality',
     title: 'Diagnose a landscape or tilemap asset',
     keywords: ['landscape', 'tilemap', 'horizon', 'waterline', 'ridge'],
@@ -2442,6 +2657,36 @@ function normalizeOp(raw: RawOp): { command: string; params: Record<string, unkn
 
 /* ---------------------------------------------------------------- register */
 
+/** What a tool declaration carries beyond its schema. */
+interface ToolDeclaration {
+  title: string;
+  description: string;
+  inputSchema: z.ZodObject<z.ZodRawShape>;
+  /**
+   * Defaults to {@link TOOL_RESULT_ENVELOPE}. A tool only overrides it when its result
+   * is worth documenting field by field; `ok()`/`fail()` build every result, so the
+   * envelope is a true statement about all of them.
+   */
+  outputSchema?: z.ZodType;
+  /** Partial hints. Anything omitted is derived from the tool's name. */
+  annotations?: Partial<ToolAnnotations>;
+  /** Free-form declaration metadata, passed straight through to clients. */
+  meta?: Record<string, unknown>;
+}
+
+/**
+ * The entry-point tools, by name, so `describe_command` can describe them too.
+ *
+ * Without this there is no route to the schema of the 33 advertised tools: they are not
+ * in the command registry, so `describe_command` used to answer `unknown_command` for
+ * `apply_ops` and `finalize_document` - precisely the two tools whose arguments are
+ * worth reading. A tool list is not documentation you can query; this is.
+ */
+const DECLARED_TOOLS = new Map<
+  string,
+  { title: string; description: string; params: unknown; annotations: ToolAnnotations }
+>();
+
 /**
  * Register a tool. The SDK's `registerTool` generics are driven by the concrete
  * schema type; we pass schemas through dynamically (including ones built with
@@ -2450,21 +2695,106 @@ function normalizeOp(raw: RawOp): { command: string; params: Record<string, unkn
 function addTool(
   server: McpServer,
   name: string,
-  config: { title: string; description: string; inputSchema: z.ZodObject<z.ZodRawShape>; annotations?: ToolAnnotations },
+  config: ToolDeclaration,
   handler: (args: Record<string, unknown>) => CallToolResult | Promise<CallToolResult>,
 ): void {
   // Strict, like the core command schemas. A mistyped parameter has to be an
   // error rather than a silent fallback to the default: `undo {count: 5}` used
   // to quietly undo a single edit and still report success.
-  const strict = { ...config, inputSchema: config.inputSchema.strict() };
+  const { outputSchema, annotations, meta, ...rest } = config;
+  const strict = { ...rest, inputSchema: config.inputSchema.strict() };
+  const resolved = toolAnnotations(name, annotations);
+  // Kept as JSON Schema, because that is the dialect `describe_command` answers in.
+  DECLARED_TOOLS.set(name, {
+    title: config.title,
+    description: config.description,
+    params: advertiseSchema(z.toJSONSchema(strict.inputSchema, { io: 'input' })),
+    annotations: resolved,
+  });
   (server.registerTool as unknown as (
     n: string,
     c: unknown,
     h: unknown,
-  ) => unknown)(name, strict, handler);
+  ) => unknown)(
+    name,
+    {
+      ...strict,
+      outputSchema: outputSchema ?? TOOL_RESULT_ENVELOPE,
+      annotations: resolved,
+      _meta: { kind: 'session', ...meta },
+    },
+    handler,
+  );
 }
 
-export function registerTools(server: McpServer, store: DocumentStore): void {
+/**
+ * How much of the command catalogue is exposed as first-class tools.
+ *
+ * `lazy` is the default because the full catalogue costs 55K tokens of tool
+ * definitions that sit in the context of every request, and `apply_ops` already runs
+ * any of those commands. A command becomes a tool at the moment it is discovered -
+ * `describe_command`, a `list_commands` exact lookup, a `find_workflow` hit, or an
+ * `apply_ops`/`run_script` that actually issued it - so the promoted set is the set
+ * the session is demonstrably working with, not a guess made up front.
+ *
+ * `eager` keeps the old flat surface. It is what the test suite drives, and it is the
+ * escape hatch if the promotion triggers turn out to miss a path.
+ */
+export type CommandExposure = 'lazy' | 'eager';
+
+export interface RegisterToolsOptions {
+  commands?: CommandExposure;
+}
+
+export function registerTools(
+  server: McpServer,
+  store: DocumentStore,
+  options: RegisterToolsOptions = {},
+): void {
+  const exposure: CommandExposure = options.commands ?? 'lazy';
+  // One server per session, so a stale entry from a previous `registerTools` in the
+  // same process would describe a tool this server does not have.
+  DECLARED_TOOLS.clear();
+
+  /* ------------------------------------------------- on-demand command tools */
+
+  /**
+   * Commands currently promoted to first-class tools.
+   *
+   * `list_commands` reports membership so a model can see which entries it can call
+   * directly and which it has to route through `apply_ops`, instead of guessing from
+   * the fact that a name is absent.
+   */
+  const promoted = new Set<string>();
+  /** Command names a plugin registered, so their tools can be marked untrusted. */
+  const pluginCommands = new Set<string>();
+
+  function notifyToolListChanged(): void {
+    try {
+      server.sendToolListChanged();
+    } catch {
+      // A client that does not support list-changed notifications is not fatal.
+    }
+  }
+
+  /** Promote one command, announcing the new tool list. Returns true if it was new. */
+  function promote(name: string): boolean {
+    if (promoted.has(name)) return false;
+    const command = store.registry.get(name);
+    if (!command) return false;
+    promoted.add(name);
+    registerCommandTool(server, store, command, pluginCommands.has(name) ? 'plugin' : 'core');
+    return true;
+  }
+
+  /** Promote a batch with a single notification. */
+  function promoteAll(names: Iterable<string>): string[] {
+    const added: string[] = [];
+    for (const name of names) if (promote(name)) added.push(name);
+    if (added.length > 0) notifyToolListChanged();
+    return added;
+  }
+
   /* ------------------------------------------------------ session / documents */
 
   addTool(
@@ -2553,41 +2883,63 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Create a declarative sprite scaffold',
       description:
-        'Create a document from one structural spec and optionally configure tags, semantic palette roles and a persistent character rig. This creates no artwork and makes no art-direction decisions beyond the supplied structure.',
+        'Create a document from one structural spec and optionally configure animation tags, semantic palette roles and a persistent character rig - all in a single call, so a character does not cost six round trips of scaffolding. This creates no artwork and makes no art-direction decisions beyond the structure you supply. `create_document` is the smaller version; use this one when the sprite has tags, roles or a rig.',
       inputSchema: z.object({
-        width: z.number().int().min(1).max(4096),
-        height: z.number().int().min(1).max(4096),
-        name: z.string().optional(),
-        layers: z.array(z.string()).min(1),
-        frames: z.number().int().min(1).max(1024).optional(),
-        frameDurationMs: z.number().int().min(1).optional(),
-        palette: z.union([z.array(z.string()), z.string()]).optional(),
-        paletteLocked: z.boolean().optional(),
-        tags: z.array(z.object({
-          name: z.string().min(1),
-          from: z.number().int().min(0),
-          to: z.number().int().min(0),
-          direction: z.enum(['forward', 'reverse', 'pingpong']).optional(),
-          repeat: z.number().int().min(0).optional(),
-        }).strict()).max(64).optional(),
-        paletteRoles: z.array(z.object({
-          role: z.string().min(1),
-          colors: z.array(z.string()).min(2).optional(),
-          from: z.string().optional(),
-          to: z.string().optional(),
-          steps: z.number().int().min(2).max(32).optional(),
-          hueShift: z.number().min(0).max(90).optional(),
-        }).strict()).max(32).optional(),
-        rig: z.object({
-          restFrame: z.union([z.string(), z.number().int()]).optional(),
-          parts: z.array(z.object({
-            name: z.string().min(1),
-            pivot: spritePointSchema,
-            layers: z.array(z.union([z.string(), z.number().int()])).min(1).optional(),
-            parent: z.string().optional(),
-          }).strict()).min(1).max(64),
-        }).strict().optional(),
-        select: z.boolean().optional(),
+        width: z.number().int().min(1).max(4096).describe('Canvas width in pixels. 16-64 is the useful range for a game sprite.'),
+        height: z.number().int().min(1).max(4096).describe('Canvas height in pixels.'),
+        name: z.string().optional().describe('Sprite name. Used in spritesheet frame names and export filenames.'),
+        layers: z.array(z.string()).min(1).describe('Layer names, bottom first, e.g. ["base", "shade", "outline"]. Shade on a layer above the base so ramps and outlines have somewhere to go.'),
+        frames: z.number().int().min(1).max(1024).optional().describe('Number of frames to create. Defaults to 1.'),
+        frameDurationMs: z.number().int().min(1).optional().describe('Duration of each new frame in ms. Defaults to 100.'),
+        palette: z.union([z.array(z.string()), z.string()]).optional().describe('Hex colours, or the name of a built-in palette such as "dawnbringer16". Constraining the palette is the single biggest quality win available.'),
+        paletteLocked: z.boolean().optional().describe('Snap every painted colour to the nearest palette entry. Keeps a sprite inside its palette at the cost of rejecting deliberate off-palette colour.'),
+        tags: z
+          .array(
+            z.object({
+              name: z.string().min(1).describe('Tag name, e.g. "walk" or "attack". This is what an engine reads when importing the sheet.'),
+              from: z.number().int().min(0).describe('First frame of the range, 0-based.'),
+              to: z.number().int().min(0).describe('Last frame of the range, 0-based and inclusive.'),
+              direction: z.enum(['forward', 'reverse', 'pingpong']).optional().describe('Playback direction. Defaults to forward.'),
+              repeat: z.number().int().min(0).optional().describe('How many times the range repeats. 0 means loop forever.'),
+            }).strict(),
+          )
+          .max(64)
+          .optional()
+          .describe('Animation tags, each a named frame range.'),
+        paletteRoles: z
+          .array(
+            z.object({
+              role: z.string().min(1).describe('Semantic role, e.g. "skin", "hair", "cloth", "metal". Roles are what shade_band and add_palette_ramp bind to.'),
+              colors: z.array(z.string()).min(2).optional().describe('Explicit colours for this role, dark to light. Alternative to from/to/steps.'),
+              from: z.string().optional().describe('Dark anchor colour for a generated ramp, e.g. "#5a3b6b".'),
+              to: z.string().optional().describe('Light anchor colour for a generated ramp.'),
+              steps: z.number().int().min(2).max(32).optional().describe('Number of steps in the generated ramp. Defaults to the ramp builder\'s choice.'),
+              hueShift: z.number().min(0).max(90).optional().describe('Degrees to rotate hue across the ramp. Non-zero is what stops a ramp reading as one flat tonal step.'),
+            }).strict(),
+          )
+          .max(32)
+          .optional()
+          .describe('Named palette roles, each optionally a hue-shifted ramp.'),
+        rig: z
+          .object({
+            restFrame: z.union([z.string(), z.number().int()]).optional().describe('Frame the rig treats as its unposed source of truth. Defaults to frame 0. Poses are rendered from it.'),
+            parts: z
+              .array(
+                z.object({
+                  name: z.string().min(1).describe('Part name, e.g. "armL". Poses and transforms address parts by this.'),
+                  pivot: spritePointSchema.describe('Rotation pivot in pixels, absolute canvas coordinates. The single most important number on a part.'),
+                  layers: z.array(z.union([z.string(), z.number().int()])).min(1).optional().describe('Layers this part owns. Omit to bind every layer.'),
+                  parent: z.string().optional().describe('Name of the parent part, for a chain that inherits its transform.'),
+                }).strict(),
+              )
+              .min(1)
+              .max(64)
+              .describe('The parts, in any order; `parent` is what links them into a chain.'),
+          })
+          .strict()
+          .optional()
+          .describe('A persistent character rig, for reusable parts and poseable animation.'),
+        select: z.boolean().optional().describe('Make this the active document. Defaults to true; pass false to keep the current one active.'),
       }),
       annotations: { destructiveHint: false },
     },
@@ -2631,7 +2983,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     'open_document',
     {
       title: 'Open a .pixel document',
-      description: 'Load a sprite document from a `.pixel` file on disk and make it active.',
+      description: 'Load a `.pixel` document from disk and make it the active one. Replaces nothing: the session keeps whatever documents were already open, so a load is safe to get wrong. Prefer `open_document` over `import_image` when the file is a saved document rather than a PNG or Aseprite file.',
       inputSchema: z.object({
         path: z.string().describe('Path to a `.pixel` file.'),
         select: z.boolean().optional().describe('Make the loaded document active. Defaults to true.'),
@@ -3112,18 +3464,9 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         columns: z.number().int().min(1).max(256).optional().describe('Grid columns. Defaults to a near-square arrangement.'),
         padding: z.number().int().min(0).max(64).optional().describe('Pixel gap between cells. Defaults to 1.'),
         margin: z.number().int().min(0).max(64).optional().describe('Transparent border. Defaults to 1.'),
-        onion: z
-          .object({
-            before: z.number().int().min(0).max(8).optional(),
-            after: z.number().int().min(0).max(8).optional(),
-            opacity: z.number().min(0).max(1).optional(),
-            loop: z.boolean().optional(),
-            beforeTint: z.string().optional(),
-            afterTint: z.string().optional(),
-          })
-          .strict()
-          .optional()
-          .describe('Ghost neighbouring positions in the selected timeline/playback order.'),
+        onion: previewOnionSchema.describe(
+          'Ghost neighbouring positions in the selected timeline or playback order, following the tag\'s direction rather than raw frame order.',
+        ),
         layers: previewLayersSchema,
         scale: previewScaleSchema,
         background: previewBackgroundSchema,
@@ -3162,7 +3505,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Preview and debug a tilemap',
       description:
-        'Render a tilemap directly from its tileset, even when it has not been baked into a pixel layer. This is the immediate visual check after set/fill/stroke/autotile. `debug.grid` overlays tile boundaries, `debug.indices` prints every tile index, `debug.highlightCells` marks exact writes and `debug.highlightRect` marks a changed region. Invalid/out-of-range indices are outlined in red. `underlay` composes a base map first so alpha-masked bank/edge tiles can be judged over real ground. `rect` is in tile coordinates. The response also includes structural evidence such as empty ratio, invalid cells, variant distribution, repeated adjacency and connected terrain.',
+        'Render a tilemap straight from its tileset, even when nothing has been baked into a pixel layer - the immediate visual check after any set/fill/stroke/autotile. `debug.grid` overlays tile boundaries, `debug.indices` prints every index, `debug.highlightCells`/`highlightRect` mark exactly what a mutation changed, and out-of-range indices are outlined in red. `underlay` composites a base map first so alpha-masked bank tiles read over real ground. The response also carries structural evidence: empty ratio, invalid cells, variant distribution, connected terrain.',
       inputSchema: z.object({
         document: documentRef,
         tilemap: z.union([z.string(), z.number().int()]).describe('Tilemap id, name or 0-based index.'),
@@ -3172,10 +3515,10 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           .describe('Optional ground/base tilemap rendered first. Alpha-masked edge tiles then blend over it.'),
         rect: z
           .object({
-            x: z.number().int(),
-            y: z.number().int(),
-            w: z.number().int().min(1),
-            h: z.number().int().min(1),
+            x: z.number().int().describe('Left tile column.'),
+            y: z.number().int().describe('Top tile row.'),
+            w: z.number().int().min(1).describe('Width in tiles.'),
+            h: z.number().int().min(1).describe('Height in tiles.'),
           })
           .strict()
           .optional()
@@ -3431,7 +3774,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Measure raster, character and landscape quality',
       description:
-        'Read-only quality report. `assetType: "character"` is the only mode that changes the analysis: it drops full-width-band and landscape warnings (a figure is not a horizon) and, unless you narrow it, runs a cross-frame pass over every frame reporting silhouette jumps, centroid drift, palette flicker, canvas-edge clipping and loop closure, each with a real warning entry. Every other `assetType` value runs the same single-frame defect/presence/structure diagnostics and is recorded in the result as a label (`assetTypeIsLabel: true`); pass `auto` to let the report infer one - a rig or multiple frames implies character. Use `tag` for real playback order or `frames` for timeline/range/list analysis. `intentionalDetailRects` exempts eyes, teeth, hair, fabric and weapon highlights from isolated/outlier/edge/highlight warnings only; it never suppresses the light-source probe.',
+        'Read-only quality report, and the step that decides whether the piece is finished. It has two halves and both matter: `defects` says what is wrong, `presence` says whether the piece still has light, depth and form - a clean defect score with a narrow `presence.valueRange` means the work was sanded flat, not completed. `assetType: "character"` is the only value that changes the analysis, adding cross-frame stability over every frame. Fix what the report names, then re-read it.',
       inputSchema: z.object({
         document: documentRef,
         assetType: z
@@ -3479,10 +3822,10 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         textureRects: z
           .array(
             z.object({
-              x: z.number().int(),
-              y: z.number().int(),
-              w: z.number().int().min(1),
-              h: z.number().int().min(1),
+              x: z.number().int().describe('Left edge in pixels, 0-based.'),
+              y: z.number().int().describe('Top edge in pixels, 0-based, y grows downward.'),
+              w: z.number().int().min(1).describe('Width in pixels.'),
+              h: z.number().int().min(1).describe('Height in pixels.'),
             }),
           )
           .max(32)
@@ -3496,13 +3839,18 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
               'everywhere instead.',
           ),
         intentionalDetailRects: z
-          .array(z.object({
-            x: z.number().int(),
-            y: z.number().int(),
-            w: z.number().int().min(1),
-            h: z.number().int().min(1),
-            kind: z.enum(['eye', 'teeth', 'weapon', 'hair', 'fabric', 'other']).optional(),
-          }).strict())
+          .array(
+            z.object({
+              x: z.number().int().describe('Left edge in pixels, 0-based.'),
+              y: z.number().int().describe('Top edge in pixels, 0-based, y grows downward.'),
+              w: z.number().int().min(1).describe('Width in pixels.'),
+              h: z.number().int().min(1).describe('Height in pixels.'),
+              kind: z
+                .enum(['eye', 'teeth', 'weapon', 'hair', 'fabric', 'other'])
+                .optional()
+                .describe('What kind of deliberate detail this is, recorded in the report so the exemption is auditable rather than a blanket suppression.'),
+            }).strict(),
+          )
           .max(64)
           .optional()
           .describe('Designed high-contrast details. These regions are exempt from isolated-pixel, colour-outlier, clipped-highlight and edge-contrast warnings.'),
@@ -3704,7 +4052,8 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     'redo',
     {
       title: 'Redo',
-      description: 'Redo previously undone edits. Pass `steps` to redo more than one.',
+      description:
+        'Redo the edits `undo` just reverted, in the same order. Pass `steps` for more than one. Stopped early at the end of the redo stack, and the response says how many actually ran plus `canUndo`/`canRedo` for the next decision.',
       inputSchema: z.object({
         document: documentRef,
         steps: z.number().int().min(1).max(100).optional().describe('How many edits to redo. Defaults to 1.'),
@@ -3733,7 +4082,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Apply a batch of commands',
       description:
-        'Run several commands in one round trip. Far cheaper than one call per edit when you are generating a sprite or all the frames of an animation. Each op is `{command, params}` - or put the params inline: `{command: "draw_rect", layer: "base", rect: {...}, color: "#f00", fill: true}`. Set `defaultLayer`/`defaultFrame` once instead of repeating them in every op. `atomic: true` restores the exact pre-batch state on any failure. Returns a per-op result, so a failure tells you exactly which op and why. Pass `preview: true` and use `previewOptions: {scale: 4, frame}` for one frame, `{frames: "all", onion}` for a complete animation, or `{tilemap: "Ground", debug: {grid: true, indices: true}}` for an unbaked tile grid.',
+        'Run any commands from the catalogue in one round trip - the cheapest way to build a sprite or every frame of an animation. An op is `{command, params}`, or the params inline: `{command: "draw_rect", layer: "base", rect: {…}, color: "#f00", fill: true}`. Set `defaultLayer`/`defaultFrame` once instead of per op, `layer`/`frame` fall back to the bottom layer and frame 0, and `atomic: true` restores the exact pre-batch state if any op fails. Every op attempted is reported, so a failure names the op and why. Add `preview: true` with `previewOptions: {scale: 4, frame}` for one frame, `{frames: "all", onion}` for an animation, or `{tilemap, debug}` for an unbaked grid. Each command you issue is promoted to a tool you can then call directly; `list_commands` is how you find a command in the first place.',
       inputSchema: z.object({
         document: documentRef,
         expectedVersion: versionRef,
@@ -3818,6 +4167,8 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
       const results: Array<Record<string, unknown>> = [];
       const failures: Array<Record<string, unknown>> = [];
       const advisories: Array<{ index: number; command: string; message: string }> = [];
+      /** Commands this batch actually issued, promoted to direct tools at the end. */
+      const issued = new Set<string>();
       const beforeVersion = doc.editor.version;
       let applied = 0;
       let failed = 0;
@@ -3849,6 +4200,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
 
           const command = store.registry.get(op.command);
           if (command) {
+            issued.add(op.command);
             // An explicit default beats the implicit one, which beats nothing.
             const required = requiredArgsOf(command);
             if (required.has('layer') && op.params.layer === undefined && defaults.layer !== undefined) {
@@ -3876,8 +4228,12 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           } else {
             failed++;
             const error = briefError(result.error);
-            results.push({ index: i, command: op.command, ok: false, code: result.code, error });
-            failures.push({ index: i, command: op.command, code: result.code, error });
+            // A batch failure is the most likely mistake an agent makes here, so each
+            // one carries the specific next step. `describe_command` worked this out
+            // from the registry; the advice below is the same for every caller.
+            const remediation = commandRemediation(op.command, result.code, error);
+            results.push({ index: i, command: op.command, ok: false, code: result.code, error, remediation });
+            failures.push({ index: i, command: op.command, code: result.code, error, remediation });
             if (stopOnError) {
               stoppedAt = i;
               break;
@@ -3904,6 +4260,10 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
       // it out loud: ops after `stoppedAt` never ran.
       const skipped = stoppedAt === null ? 0 : rawOps.length - stoppedAt - 1;
 
+      // Issuing a command is the strongest possible signal that this session works in
+      // those terms, so the tools it used become directly callable.
+      const promotedTools = promoteAll(issued);
+
       if (atomic && failed > 0) {
         return ok({
           ok: false,
@@ -3917,6 +4277,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           document: store.summary(doc),
           failures,
           advisories,
+          promotedTools,
         });
       }
 
@@ -3948,6 +4309,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           ...(failed > 0 ? { failures } : {}),
           ...(advisories.length > 0 ? { advisories } : {}),
           ...(quiet ? {} : { results }),
+          ...(promotedTools.length > 0 ? { promotedTools } : {}),
           ...(previewMeta ? { preview: previewMeta } : {}),
           ...(previewError
             ? { previewError, editCommitted: applied > 0 }
@@ -4258,11 +4620,11 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'List all commands',
       description:
-        'Progressive command discovery. The default response is one compact line per command; use `name` for an exact command, `param` to search parameter names, `filter` for a name/description substring, and `verbose: true` for full JSON Schemas. Every command in `commands` can run through `apply_ops`; `sessionTools` are called directly.',
+        'The full command catalogue, one compact line per command. This is how you find out what exists: the tool list is deliberately small, and a command becomes a directly callable tool the moment you look it up here by `name`, describe it, or run it. Use `param` to search parameter names, `filter` for a name/description substring, and `verbose: true` for full JSON Schemas. Every command in `commands` runs through `apply_ops` whether or not it is a tool yet; `sessionTools` are always called directly.',
       inputSchema: z.object({
-        name: z.string().min(1).optional().describe('Return only this exact command/session-tool name.'),
+        name: z.string().min(1).optional().describe('Return only this exact command/session-tool name. Looking a command up by name also promotes it to a direct tool.'),
         param: z.string().min(1).optional().describe('Only return commands whose schema contains a parameter with this name.'),
-        filter: z.string().optional().describe('Only return entries whose name or description contains this text.'),
+        filter: z.string().optional().describe('Only return entries whose name or description contains this text. Does not promote: browsing is not choosing.'),
         limit: z.number().int().min(1).max(256).optional().describe('Maximum command entries to return after filtering.'),
         verbose: z
           .boolean()
@@ -4308,8 +4670,18 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
       const truncated = limit !== undefined && totalMatched > limit;
       if (limit !== undefined) catalog = catalog.slice(0, limit);
 
+      // An exact lookup is a decision to use this command, so it earns a tool. A
+      // `filter` browse is not: promoting on a substring match would pull the whole
+      // catalogue into the tool list one "draw" at a time.
+      const promotedTools = exactName ? promoteAll([exactName]) : [];
+
       const hint =
-        'Run anything in `commands` through apply_ops, e.g. {"ops": [{"command": "dither_fill", "params": {...}}]}. `sessionTools` are called directly as tools. Use name for an exact lookup, param for parameter-name search, and verbose: true for full JSON Schemas.';
+        'Run anything in `commands` through apply_ops. Both op shapes work: {"ops": [{"command": "dither_fill", "params": {...}}]} ' +
+        'or the params inline, {"ops": [{"command": "draw_rect", "layer": "base", "rect": {...}, "color": "#f00", "fill": true}]}. ' +
+        '`tool: true` means you can also call it directly as a tool; `tool: false` means route it through apply_ops. ' +
+        'Looking a command up by `name`, calling describe_command on it, or running it promotes it to a direct tool. ' +
+        'describe_command also describes the entry-point tools, so it is the way to read apply_ops or finalize_document\'s full parameter list. ' +
+        'Use param for parameter-name search and verbose: true for full JSON Schemas.';
       const build = {
         ...SKILL_FINGERPRINT,
         commandCount: registryCommands.length,
@@ -4322,6 +4694,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           truncated,
           commands: catalog,
           sessionTools,
+          promotedTools,
           build,
           hint,
         });
@@ -4331,8 +4704,10 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         count: catalog.length,
         totalMatched,
         truncated,
-        commands: catalog.map(compactCommand),
+        commands: catalog.map((command) => ({ ...compactCommand(command), tool: promoted.has(command.name) })),
         sessionTools,
+        promotedTools,
+        promotedCount: promoted.size,
         // The registry and the guide are both a snapshot of what this process loaded
         // at startup. If either disagrees with a freshly built server, the MCP server
         // is running a stale build and needs restarting - everything here still works,
@@ -4347,16 +4722,61 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     server,
     'describe_command',
     {
-      title: 'Describe one command',
-      description: 'Return the exact JSON Schema, description and read-only metadata for one registered core or plugin command.',
-      inputSchema: z.object({ name: z.string().min(1) }),
+      title: 'Describe one command or tool',
+      description:
+        'The exact schema and documentation for one command or one of the entry-point tools. Use it for a command you know only by name - it also promotes that command to a tool you can call directly. It is also the only way to read the full parameter list of a tool like `apply_ops` or `finalize_document` without reading the tool list.',
+      inputSchema: z.object({
+        name: z.string().min(1).describe('A command name from `list_commands`, or a tool name from the tool list.'),
+      }),
       annotations: { readOnlyHint: true },
     },
     (args) => {
       const name = args.name as string;
       const command = store.registry.get(name);
-      if (!command) return fail(`Unknown command: ${name}`);
-      return ok({ ok: true, command: describeCommand(command) });
+      if (command) {
+        const promotedTools = promoteAll([name]);
+        return ok({
+          ok: true,
+          kind: 'command',
+          command: describeCommand(command),
+          ...(command.guide ? { guideUri: `pixel://guide/${command.name}` } : {}),
+          // Naming it explicitly is the difference between a model that knows it may
+          // call `draw_line` next and one that keeps routing everything through
+          // apply_ops out of habit.
+          promotedTools,
+          nowATool: true,
+        });
+      }
+
+      // A tool, not a command. The old answer here was `unknown_command` with a
+      // remediation that told the caller to search the command catalogue for a tool
+      // that was never in it.
+      const declared = DECLARED_TOOLS.get(name);
+      if (declared) {
+        return ok({
+          ok: true,
+          kind: 'tool',
+          tool: { name, ...declared },
+          note: `"${name}" is an entry-point tool, always callable by name. Commands are the rest of the catalogue; use list_commands for those.`,
+        });
+      }
+
+      // Point at whichever namespace the name actually resembles. Sending a caller
+      // to search the command catalogue for a misspelled *tool* is advice that cannot
+      // possibly work, and it is the advice this used to give unconditionally.
+      const commandNames = store.registry.list().map((c) => c.name);
+      const toolNames = [...DECLARED_TOOLS.keys()];
+      const toolClosest = closest(name, toolNames);
+      const commandClosest = closest(name, commandNames);
+      const looksLikeTool = toolClosest !== undefined && (commandClosest === undefined || toolClosest <= commandClosest);
+      const didYouMean = looksLikeTool ? toolClosest : commandClosest;
+      return fail(`Unknown command or tool: ${name}`, {
+        code: 'unknown_command',
+        ...(didYouMean !== undefined ? { didYouMean } : {}),
+        remediation: looksLikeTool
+          ? `"${name}" is not a name in either namespace; the closest tool is "${toolClosest}". The 33 entry-point tools are always in the tool list.`
+          : `Search the command catalogue with list_commands {filter: "${name}"}, or read the entry-point tools from the tool list.`,
+      });
     },
   );
 
@@ -4365,7 +4785,8 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     'find_workflow',
     {
       title: 'Find a task workflow',
-      description: 'Search task-level workflows that combine several commands, instead of returning only low-level primitives.',
+      description:
+        'Search task-level workflows that combine several commands, instead of returning only low-level primitives. Each workflow names the commands it recommends, and the strongest match has those commands promoted to direct tools - so one question like "paint a coastline" is enough to get the right tools into your tool list.',
       inputSchema: z.object({
         goal: z.string().min(1).describe('Natural-language task, e.g. "create an attack animation" or "export engine assets".'),
         limit: z.number().int().min(1).max(8).optional().describe('Maximum workflows to return. Defaults to 3.'),
@@ -4382,14 +4803,30 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
       }).filter((workflow) => workflow.score > 0 || tokens.length === 0)
         .sort((left, right) => right.score - left.score)
         .slice(0, (args.limit as number | undefined) ?? 3);
-      return ok({ ok: true, goal: args.goal, count: scored.length, workflows: scored });
+      // A workflow is a recommendation to use these commands, so promote them - but
+      // only from the best match, or one broad question would sweep the catalogue in.
+      const promotedTools = promoteAll(commandsMentioned(scored[0]?.steps ?? [], store));
+      return ok({
+        ok: true,
+        goal: args.goal,
+        count: scored.length,
+        workflows: scored,
+        promotedTools,
+        hint: 'Any command named in a step runs through apply_ops; the ones in `promotedTools` are also callable directly as tools.',
+      });
     },
   );
 
   /* -------------------------------------------- generated command tools */
 
-  for (const command of store.registry.list()) {
-    registerCommandTool(server, store, command);
+  // In `lazy` mode nothing is registered here on purpose: the catalogue is reachable
+  // through `list_commands`/`describe_command`/`apply_ops`, and a command joins the
+  // tool list the first time this session actually touches it. See `CommandExposure`.
+  if (exposure === 'eager') {
+    for (const command of store.registry.list()) promoted.add(command.name);
+    for (const command of store.registry.list()) {
+      registerCommandTool(server, store, command, 'core');
+    }
   }
 
   /* ------------------------------------------------------------- scripting */
@@ -4406,7 +4843,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Run a sandboxed script',
       description:
-        'Run trusted JavaScript against the current document in a constrained `node:vm` context; it is not a security boundary for hostile code. `exec(command, params)` / `tryExec(...)` drive the same command bus as the tools; `draw.*`, `strokeTilemap`, `paintTilemap`, `document()`, `tilemaps()`, `layers()`, `frames()`, `tags()`, `palette()`, `getPixel(x, y)` and `sample(x, y)` provide higher-level editing and state reads. The whole script collapses into one undo step. Set `dryRun: true` to execute and validate against an isolated document snapshot without committing it. Pass `preview: true` and `previewOptions` (including `frames: "all"` and onion skin) to return the edited or dry-run result as a PNG in the same response. Errors include source-relative line/column information when available.',
+        'Run trusted JavaScript against the current document in a constrained `node:vm` context. It is a convenience, not a security boundary: only run source you have read. `exec(command, params)` and `tryExec(...)` drive the same command bus as the tools, and `draw.*`, `strokeTilemap`, `paintTilemap`, `document()`, `layers()`, `frames()`, `tags()`, `palette()`, `getPixel(x,y)` and `sample(x,y)` cover most editing without spelling out params. The whole script is one undo step. `dryRun: true` executes against an isolated snapshot so you can validate and preview without committing, which is the cheap way to try a procedural field. Add `preview: true` with `previewOptions` (`{scale: 4}`, or `{frames: "all", onion}` to review a whole animation) to get a PNG back in the same response. Failures carry line/column. Every command the script issues is promoted to a direct tool. See pixel://script-guide.',
       inputSchema: z.object({
         document: documentRef,
         expectedVersion: versionRef,
@@ -4434,6 +4871,9 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           .optional()
           .describe('Configure the inline preview. Requires `preview: true`; `{scale: 4}` is the normal sprite view, `{frames: "all", onion}` checks a complete animation, and `{tilemap, debug}` previews an unbaked map.'),
       }),
+      // Executes caller-supplied code. `openWorldHint` is the only honest signal here:
+      // a client that gates on it should not silently auto-approve this one.
+      annotations: { openWorldHint: true },
     },
     (args) => {
       let doc: PixelDocument;
@@ -4470,12 +4910,16 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
       const outcome = runtime.run(args.source as string, targetEditor);
       const changed = targetEditor.version !== targetVersion;
       if (!dryRun && changed) store.touch(doc);
+      // A dry run still counts: finding out what a script touches is exactly what a
+      // dry run is for, and promoting from it means the follow-up edit has a tool.
+      const promotedTools = promoteAll(outcome.commands);
 
       if (!outcome.ok) {
         return fail(outcome.error ?? 'The script failed.', {
           code: outcome.code,
           errorInfo: outcome.errorInfo,
           logs: outcome.logs,
+          promotedTools,
           dryRun,
           committed: false,
           changed: false,
@@ -4508,6 +4952,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           committed: !dryRun && changed,
           version: dryRun ? liveVersion : doc.editor.version,
           document: store.summary(doc),
+          promotedTools,
           ...(preview ? { preview } : {}),
           ...(previewError ? { previewError, editCommitted: !dryRun && changed } : {}),
         },
@@ -4522,12 +4967,14 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Load a plugin',
       description:
-        'Load a plugin script that calls `defineCommand({ name, description, params, run })`. Every command it defines becomes a real MCP tool, is callable from scripts via `exec`, and appears in `list_commands`. Read the source from `path` or pass it inline as `source`.',
+        'Load a plugin script that calls `defineCommand({ name, description, params, run })`. Every command it defines joins the registry: runnable from scripts via `exec`, routable through `apply_ops`, listed by `list_commands`, and registered as a tool. This is code the server did not write, running against your document with the same authority as the built-in commands, so its tools are marked `openWorldHint` and `destructiveHint` in the declaration - read the source before loading it.',
       inputSchema: z.object({
         source: z.string().optional().describe('Plugin source. Provide this or `path`.'),
         path: z.string().optional().describe('Path to a plugin .js file to read.'),
         name: z.string().optional().describe('Plugin name, shown by `list_plugins`. Defaults to the file name.'),
       }),
+      // Reads a file and installs code. Both halves are outside the document.
+      annotations: { openWorldHint: true },
     },
     (args) => {
       const filePath = args.path as string | undefined;
@@ -4538,37 +4985,40 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         try {
           source = readFileSync(filePath, 'utf8');
         } catch (error) {
-          return fail(`Could not read plugin file: ${briefError(error)}`);
+          return fail(`Could not read plugin file: ${briefError(error)}`, {
+            code: 'invalid_params',
+            remediation: 'Check the path, or pass the plugin inline as `source`.',
+          });
         }
       }
-      if (!source) return fail('load_plugin needs either `source` or `path`.');
+      if (!source) {
+        return fail('load_plugin needs either `source` or `path`.', {
+          code: 'invalid_params',
+          remediation: 'Pass the plugin text as `source`, or a readable file as `path`.',
+        });
+      }
 
       const outcome = scriptRuntime.loadPlugin(source, { name, registry: store.registry });
       if (!outcome.ok) {
         return fail(outcome.error ?? 'The plugin failed to load.', {
+          code: 'plugin_load_failed',
           errorInfo: outcome.errorInfo,
           logs: outcome.logs,
         });
       }
 
-      for (const commandName of outcome.commands) {
-        const command = store.registry.get(commandName);
-        if (command) registerCommandTool(server, store, command);
-      }
+      // A plugin is an explicit, deliberate act, so its commands are exposed
+      // immediately rather than on discovery - the caller asked for this code by name.
+      for (const commandName of outcome.commands) pluginCommands.add(commandName);
+      const promotedTools = promoteAll(outcome.commands);
       loadedPlugins.set(name, outcome.commands);
-      if (outcome.commands.length > 0) {
-        try {
-          server.sendToolListChanged();
-        } catch {
-          // A client that does not support list-changed notifications is not fatal.
-        }
-      }
 
       return ok({
         ok: true,
         name,
         commands: outcome.commands,
         logs: outcome.logs,
+        promotedTools,
         toolCount: store.registry.list().length,
       });
     },
@@ -4579,7 +5029,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     'list_plugins',
     {
       title: 'List loaded plugins',
-      description: 'List the plugins loaded in this session and the commands each one registered.',
+      description: 'The plugins loaded in this session and the commands each one registered, so you can tell which editing tools came from a plugin rather than from the editor. A plugin\'s commands carry `openWorldHint` in their declaration - treat them as code you have not read.',
       inputSchema: z.object({}),
       annotations: { readOnlyHint: true },
     },
@@ -4626,7 +5076,47 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
  */
 const ALL_LAYERS_COMMANDS = new Set(['translate', 'squash']);
 
-function registerCommandTool(server: McpServer, store: DocumentStore, command: Command): void {
+/** Acronyms that must not be title-cased character by character. */
+const TITLE_ACRONYMS = new Set(['png', 'gif', 'rgb', 'id', 'url', 'json', 'tmj', 'cel', 'cels']);
+
+/**
+ * `draw_polyline` -> `Draw Polyline`.
+ *
+ * The generated `title` used to be `name.replace(/_/g, ' ')`, which reached clients as
+ * a lowercase run-on. Titles are what a UI shows in a tool picker and what several
+ * clients route on, so they are worth the three lines.
+ */
+function humanize(name: string): string {
+  return name
+    .split('_')
+    .filter(Boolean)
+    .map((word) => (TITLE_ACRONYMS.has(word) ? word.toUpperCase() : word[0].toUpperCase() + word.slice(1)))
+    .join(' ');
+}
+
+/**
+ * The result shape every command tool returns, spelled out rather than left to the
+ * shared envelope: for a promoted command this schema is often the only declaration
+ * the model has, and `command` plus `summary` are the two fields it actually reads.
+ */
+const COMMAND_OUTPUT_SCHEMA = z.looseObject({
+  ok: z.literal(true).describe('Always true; a failed call returns isError with `error` and `code` instead.'),
+  command: z.string().describe('The command that ran.'),
+  version: z.number().int().describe('Document version after the edit. Send it back as `expectedVersion` on your next write.'),
+  // A command summary is whatever that command found worth reporting: an object for
+  // most (`{painted: 16}`), a sentence for a few. Both are legal, so both are declared.
+  summary: z
+    .union([z.string(), z.record(z.string(), z.unknown())])
+    .optional()
+    .describe('What the command changed, in its own terms: an object of counts, or a sentence.'),
+});
+
+function registerCommandTool(
+  server: McpServer,
+  store: DocumentStore,
+  command: Command,
+  source: 'core' | 'plugin' = 'core',
+): void {
   const base = command.params as unknown as z.ZodObject<z.ZodRawShape>;
   if (typeof base?.extend !== 'function') return;
 
@@ -4652,15 +5142,32 @@ function registerCommandTool(server: McpServer, store: DocumentStore, command: C
   }
 
   const inputSchema = base.extend(shape);
+  const guideHint = command.guide
+    ? ` Full manual: \`describe_command\` or pixel://guide/${command.name}.`
+    : '';
 
   addTool(
     server,
     command.name,
     {
-      title: command.name.replace(/_/g, ' '),
-      description: command.description,
+      title: humanize(command.name),
+      // Undo is a single editor-level step, so say so: "reversible" is the first
+      // question a caller has about a mutating command.
+      description: `${command.description} Undoable as one step.${guideHint}`,
       inputSchema,
-      annotations: command.readOnly ? { readOnlyHint: true } : { destructiveHint: false },
+      outputSchema: COMMAND_OUTPUT_SCHEMA,
+      annotations: {
+        readOnlyHint: command.readOnly === true,
+        // A promoted plugin command is code this server did not write, running with
+        // the caller's document. It is neither read-only nor confined, and the client
+        // is the only thing standing between it and the user's files.
+        ...(source === 'plugin' ? { openWorldHint: true, destructiveHint: true } : {}),
+      },
+      meta: {
+        kind: 'command',
+        source,
+        ...(command.guide ? { guide: `pixel://guide/${command.name}` } : {}),
+      },
     },
     (args) => {
       const { document: documentId, expectedVersion, ...params } = args;
@@ -4668,15 +5175,18 @@ function registerCommandTool(server: McpServer, store: DocumentStore, command: C
       try {
         doc = store.require(documentId as string | undefined);
       } catch (error) {
-        return fail((error as Error).message);
+        return fail((error as Error).message, {
+          code: 'no_document',
+          remediation: 'Create one with create_document, or pass the id of an open document as `document`.',
+        });
       }
 
       const sprite = doc.editor.sprite;
       if (required.has('layer') && params.layer === undefined && !sprite.layers[0]) {
-        return fail('This document has no layers.');
+        return fail('This document has no layers.', { code: 'no_layers', command: command.name });
       }
       if (required.has('frame') && params.frame === undefined && sprite.frames.length === 0) {
-        return fail('This document has no frames.');
+        return fail('This document has no frames.', { code: 'no_frames', command: command.name });
       }
       fillDefaults(sprite, command, params);
 
@@ -4684,7 +5194,15 @@ function registerCommandTool(server: McpServer, store: DocumentStore, command: C
         expectedVersion: expectedVersion as number | undefined,
       });
       if (!result.ok) {
-        return fail(result.error, { code: result.code, command: command.name });
+        const error = briefError(result.error);
+        return fail(result.error, {
+          code: result.code,
+          command: command.name,
+          remediation:
+            result.code === 'version_conflict'
+              ? 'Re-read the document and retry with the version it reports now.'
+              : commandRemediation(command.name, result.code, error),
+        });
       }
       if (!command.readOnly) store.touch(doc);
       return ok({

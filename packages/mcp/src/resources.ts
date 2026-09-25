@@ -203,6 +203,40 @@ export function registerResources(server: McpServer, store: DocumentStore): void
   );
 
   server.registerResource(
+    'command-guide',
+    new ResourceTemplate('pixel://guide/{command}', {
+      // Advertised with one example so a client can discover the manual without
+      // having to be told the URI exists.
+      list: () => ({ resources: [{ uri: 'pixel://guide/autotile', name: 'autotile' }] }),
+    }),
+    {
+      title: 'Command manual',
+      description:
+        'The long-form manual for one command: conventions, ordering rules, re-run hazards and worked defaults. This is where the detail behind a tool description lives, so it can be read at the moment it is needed instead of sitting in every request. `describe_command` returns the same text.',
+      mimeType: 'text/markdown',
+    },
+    (uri, variables) => {
+      const name = String(variables.command);
+      const command = store.registry.get(name);
+      if (!command) {
+        throw new Error(
+          `No command named "${name}". Call list_commands to see the catalogue; a command with no guide returns just its description.`,
+        );
+      }
+      const header = `# ${command.name}\n\n${command.description}\n`;
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: 'text/markdown',
+            text: command.guide ? `${header}\n${command.guide}` : `${header}\n_No long-form guide: the tool description and \`describe_command\` schema are the whole story._`,
+          },
+        ],
+      };
+    },
+  );
+
+  server.registerResource(
     'skill',
     SKILL_URI,
     {

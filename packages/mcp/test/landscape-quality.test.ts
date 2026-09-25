@@ -17,7 +17,9 @@ let client: Client;
 let pixel: PixelServer;
 
 beforeEach(async () => {
-  pixel = createPixelServer({ initialDocument: null });
+  // Eager: this suite calls command tools directly. The lazy surface, and the
+  // promotion paths that replace it, are covered in tool-surface.test.ts.
+  pixel = createPixelServer({ initialDocument: null, commands: 'eager' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   client = new Client({ name: 'landscape-calibration-test', version: '1.0.0' });
   await Promise.all([

@@ -427,7 +427,17 @@ export const fillCommand = defineCommand({
 export const ditherFillCommand = defineCommand({
   name: 'dither_fill',
   description:
-    'Fill a region with a named dither pattern. This is the intended way to shade: pick a pattern such as `bayer4` or `checker` and a coverage level instead of emitting individual pixels. Pass `shape: {ellipse}` or `shape: {polygon}` when the band should follow a curve; a plain `rect` (or nothing, for the whole cel) fills a box. `level` is resolved to the pattern\'s actual coverage step and both requested/resolved values are returned. `replace: true` clears the pixels this region covers solid first, then stipples them; the summary warns that an independent layer\'s unpainted pixels become transparent. Patterns: checker, checker-inv, bayer4, bayer8, dots, sparse, dense, horizontal, vertical, diagonal.',
+    'Fill a region with a named dither pattern - the intended way to shade, instead of emitting individual pixels. Pick a pattern (`bayer4`, `checker`, `dots`, `horizontal`, ...) and a coverage `level`; use `shape: {ellipse}` or `{polygon}` when the band should follow a curve, a plain `rect` for a box. The summary reports the pattern-resolved level, so ask for 0.3 and get told what it really became. Undoable as one step.',
+  guide:
+    '## Patterns\n\n' +
+    'checker, checker-inv, bayer4, bayer8, dots, sparse, dense, horizontal, vertical,\n' +
+    'diagonal. A cluster level (`cluster2`/`cluster4`) quantises to sixteenths, so a\n' +
+    'requested `level` snaps to the nearest one the pattern can actually draw - which is\n' +
+    'why both the requested and the resolved value come back.\n\n' +
+    '## replace\n\n' +
+    '`replace: true` clears the pixels this region covers solid first, then stipples them.\n' +
+    'The summary warns when an independent layer\'s unpainted pixels thereby become\n' +
+    'transparent, which is the usual way a dither band eats the silhouette under it.',
   params: z.object({
     layer: layerRefSchema,
     frame: frameRefSchema,
@@ -478,7 +488,21 @@ export const ditherFillCommand = defineCommand({
 export const outlineCommand = defineCommand({
   name: 'outline',
   description:
-    'Trace a silhouette. `scope: "cel"` (default) traces what is already drawn on this layer; `scope: "composite"` traces the whole frame as the other layers define it, so a contour can be drawn onto its own layer. `outside` grows the shape (the usual pixel art outline), `inside` eats into it, `both` does both.',
+    'Trace a silhouette. `scope: "cel"` (default) traces what is already drawn on this layer; `scope: "composite"` traces the whole frame as the other layers define it, so a contour can be drawn onto its own layer - that is the combination you want for a dedicated outline layer. `outside` grows the shape (the usual pixel art outline), `inside` eats into it, `both` does both. Undoable as one step.',
+  guide:
+    '## The one that catches people\n\n' +
+    '`scope: "composite"` **excludes the layer being drawn into**. That is deliberate: the\n' +
+    'usual workflow is a silhouette on a bottom layer and shading above it, and if the\n' +
+    'target layer counted towards its own silhouette the contour would appear the moment\n' +
+    'anything was drawn on it. So on an outline layer, use `composite` and it traces the\n' +
+    'artwork underneath. To trace a layer against itself, use `scope: "cel"`.\n\n' +
+    '## Selective, not global\n\n' +
+    'A contour on every edge reads as a sticker. Turn it off per region with `rect` (the\n' +
+    'usual move: outline the silhouette, skip the internal seams), and lower\n' +
+    '`alphaThreshold` if a faint glow is being traced as a hard edge. `amount` controls how\n' +
+    'much the contour is darkened relative to the colour it replaced.\n\n' +
+    'If the outline comes out as a halo of detached dots, the silhouette it traced is\n' +
+    'itself speckled - fix the source with `despeckle` and outline again.',
   params: z.object({
     layer: layerRefSchema,
     frame: frameRefSchema,

@@ -11,9 +11,10 @@
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { DocumentStore, type CreateDocumentOptions } from './session.js';
-import { registerTools } from './tools.js';
+import { registerTools, type CommandExposure } from './tools.js';
 import { registerResources } from './resources.js';
 import { registerPrompts } from './prompts.js';
+import { installToolSurface } from './surface.js';
 import { PIXEL_ART_SKILL, SKILL_SUMMARY } from './skill.js';
 import { SERVER_NAME, SERVER_VERSION } from './version.js';
 
@@ -57,6 +58,20 @@ export const SERVER_INSTRUCTIONS = `dotloom-mcp is a pixel-art editor for game a
 You edit a **document** - a sprite with layers, frames, animation tags and a palette.
 Documents live in this session and are addressed by id; one is active, and every
 tool defaults to it, so most calls need only the arguments they actually change.
+A fresh session already has one 32x32 scratch document open and active, so a batch
+that works is not proof the document you meant is the one you edited - check
+\`list_documents\`, or name your \`document\`, when it matters.
+
+The tool list is deliberately small. \`apply_ops\`, \`run_script\`, \`list_commands\`,
+\`describe_command\` and \`find_workflow\` are the entry points; the ~90 drawing,
+structure, palette, rig and tilemap **commands** are not in the list until this session
+touches one. Any of them runs through \`apply_ops\` at any time, and looking a command
+up (\`list_commands\` {name}, or \`describe_command\`), running it, or getting it back
+from \`find_workflow\` promotes it to a tool you can call directly from then on. The
+response says which ones (\`promotedTools\`), and \`list_commands\` marks each entry
+\`tool: true\` once it is callable directly. \`describe_command\` also describes the
+entry-point tools themselves, which is where to read the full parameter list of
+\`apply_ops\`, \`finalize_document\` or \`run_script\`.
 
 Workflow that works:
 1. \`create_document\` returns the complete layer/frame/palette structure. Use
@@ -91,9 +106,13 @@ Layers are indexed from the **bottom** (index 0 is the bottom layer); refer to
 them by name where you can. Rectangles are \`{x, y, w, h}\` with \`w\`/\`h\` as counts.
 Drawing outside the canvas is clipped, never an error.
 
-Concurrency: every read returns a \`version\`. Pass it back as \`expectedVersion\`
-on a write to be told about conflicting edits instead of silently overwriting
-someone else's work.
+Two arguments are accepted by every tool and so are not repeated in every schema:
+\`document\` (id or name; omit to use the active one) and \`expectedVersion\` (the
+\`version\` from your last read or write; a mismatch fails with \`version_conflict\`
+instead of overwriting someone else's edit).
+
+Failures come back as \`{ok: false, error, code, remediation?}\`. Branch on \`code\`, not
+on the message text, and follow \`remediation\` when it is there.
 
 Before drawing anything non-trivial, call \`read_skill\` or read \`pixel://skill\`.
 ${SKILL_SUMMARY}`;
@@ -108,6 +127,15 @@ export interface PixelServerOptions {
    * without spending a call. Pass `null` to start empty.
    */
   initialDocument?: CreateDocumentOptions | null;
+  /**
+   * How much of the command catalogue ships as first-class tools.
+   *
+   * `lazy` (default) registers a command the first time the session uses it, which
+   * keeps the tool list around 30 tools instead of 127. `eager` restores the flat
+   * catalogue; the test suite drives that mode, and it is the escape hatch if a
+   * promotion path turns out to be missing.
+   */
+  commands?: CommandExposure;
 }
 
 export interface PixelServer {
@@ -129,7 +157,12 @@ export function createPixelServer(options: PixelServerOptions = {}): PixelServer
     },
   );
 
-  registerTools(server, store);
+  // Before the first registerTool, so the SDK's own tools/list handler is installed
+  // already wrapped: validation keeps the full strict schema, the advertised form
+  // does not repeat it.
+  installToolSurface(server);
+
+  registerTools(server, store, { commands: options.commands });
   registerResources(server, store);
   registerPrompts(server);
 

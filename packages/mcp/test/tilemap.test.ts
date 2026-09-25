@@ -27,7 +27,9 @@ let tempDir: string;
 
 beforeEach(async () => {
   tempDir = mkdtempSync(join(tmpdir(), 'pixel-mcp-tilemap-'));
-  pixel = createPixelServer({ initialDocument: null });
+  // Eager: this suite calls command tools directly. The lazy surface, and the
+  // promotion paths that replace it, are covered in tool-surface.test.ts.
+  pixel = createPixelServer({ initialDocument: null, commands: 'eager' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   client = new Client({ name: 'tilemap-test-client', version: '1.0.0' });
   await Promise.all([client.connect(clientTransport), pixel.server.connect(serverTransport)]);

@@ -46,7 +46,9 @@ let tempDir: string;
 
 beforeEach(async () => {
   tempDir = mkdtempSync(join(tmpdir(), 'pixel-mcp-'));
-  pixel = createPixelServer({ initialDocument: null });
+  // Eager: this suite calls command tools directly. The lazy surface, and the
+  // promotion paths that replace it, are covered in tool-surface.test.ts.
+  pixel = createPixelServer({ initialDocument: null, commands: 'eager' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   client = new Client({ name: 'test-client', version: '1.0.0' });
   await Promise.all([
@@ -109,9 +111,16 @@ describe('tool surface', () => {
     const schema = rect?.inputSchema as { properties?: Record<string, unknown> };
     expect(Object.keys(schema.properties ?? {})).toContain('rect');
     expect(Object.keys(schema.properties ?? {})).toContain('color');
-    // The targeting arguments every generated tool gains.
-    expect(Object.keys(schema.properties ?? {})).toContain('document');
-    expect(Object.keys(schema.properties ?? {})).toContain('expectedVersion');
+    // `document` and `expectedVersion` are deliberately *not* advertised: they are
+    // optional on every tool, so restating them 127 times cost 9.4K tokens to say
+    // "operate on the active document". They are still accepted, and the server
+    // instructions are where they are documented. tool-surface.test.ts asserts both
+    // halves of that contract.
+    expect(Object.keys(schema.properties ?? {})).not.toContain('document');
+    expect(Object.keys(schema.properties ?? {})).not.toContain('expectedVersion');
+    // And a command now says what it costs, and where its manual is.
+    expect(rect?.description).toContain('Undoable as one step');
+    expect(rect?.outputSchema).toBeTruthy();
   });
 
   it('lists commands compactly by default and in full on request', async () => {

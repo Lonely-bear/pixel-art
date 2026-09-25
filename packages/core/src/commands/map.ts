@@ -209,7 +209,7 @@ export const updateMapObjectCommand = defineCommand({
 
 export const removeMapObjectCommand = defineCommand({
   name: 'remove_map_object',
-  description: 'Delete a map object by id or index.',
+  description: 'Delete a map object by id or index, including its custom properties. Map objects are gameplay markers, not tiles, so nothing is repainted; `get_map_objects` lists what is there first.',
   params: z.object({ object: objectRefSchema }),
   apply(ctx, p) {
     const objects = ctx.sprite.mapObjects ?? [];

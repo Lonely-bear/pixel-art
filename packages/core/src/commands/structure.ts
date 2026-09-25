@@ -223,7 +223,7 @@ export const mergeLayerDownCommand = defineCommand({
 export const addFrameCommand = defineCommand({
   name: 'add_frame',
   description:
-    'Append (or insert) a frame. Pass `duplicateOf` to seed the new frame with copies of another frame\'s cels — the usual way to build an animation.',
+    'Append (or insert) a frame. Pass `duplicateOf` to seed the new frame with copies of another frame\'s cels �?the usual way to build an animation.',
   params: z.object({
     index: z.number().int().optional().describe('Insert position. Omit to append at the end.'),
     durationMs: z.number().int().min(1).optional().describe('Frame duration in milliseconds. Defaults to 100.'),
@@ -298,7 +298,7 @@ export const duplicateFrameCommand = defineCommand({
 
 export const updateFrameCommand = defineCommand({
   name: 'update_frame',
-  description: 'Change a frame\'s duration in milliseconds.',
+  description: 'Change one frame\'s duration in milliseconds. For a whole tag at once prefer `set_frame_durations`, which is one call and one undo step instead of one per frame.',
   params: z.object({
     frame: frameRefSchema,
     durationMs: z.number().int().min(1),
@@ -386,7 +386,7 @@ export const setFrameDurationsCommand = defineCommand({
 
 export const reorderFrameCommand = defineCommand({
   name: 'reorder_frame',
-  description: 'Move a frame to a new index.',
+  description: 'Move one frame to a new 0-based index, shifting the rest. Animation tags follow their frames, so this can change what a tag covers; check `get_document` if a tag matters.',
   params: z.object({
     frame: frameRefSchema,
     index: z.number().int(),
@@ -423,7 +423,7 @@ export const setPaletteCommand = defineCommand({
 
 export const setPaletteColorCommand = defineCommand({
   name: 'set_palette_color',
-  description: 'Change a single palette entry by index.',
+  description: 'Change one palette entry by index, leaving the others alone. This does not repaint existing pixels: call `quantize_to_palette` afterwards if the artwork has to follow the new colour.',
   params: z.object({
     index: z.number().int().min(0),
     color: colorSchema,
@@ -472,7 +472,36 @@ function resolveMaterialColor(sprite: Sprite, input: z.infer<typeof colorSchema>
 export const addPaletteRampCommand = defineCommand({
   name: 'add_palette_ramp',
   description:
-    'Generate a hue-shifted colour ramp between two anchors and add it to the palette (or replace the palette with it). `hueShift` pulls the dark end toward blue and the light end toward amber by that many degrees; `shadowHue`/`highlightHue` set absolute endpoint hues instead. `saturationBoost` adds richness in the middle. This is the fastest way to build a coherent 3-8 step ramp for a material without hand-picking every colour.',
+    'Generate a hue-shifted colour ramp between two anchors and add it to the palette (or replace the palette with it). The fastest way to build a coherent 3-8 step ramp for a material without hand-picking every colour. READ THE GUIDE BEFORE YOUR FIRST CALL: hue interpolates along the HSL wheel, so a dark-cool to light-warm pair swings through every hue between them unless you keep the two anchors close. Undoable as one step.',
+  guide:
+    '## The trap: hue interpolates along the wheel\n\n' +
+    'The dark end is pulled toward blue/violet and the light end toward amber by `hueShift`\n' +
+    'degrees (default 20), and the steps in between are interpolated **through the hue\n' +
+    'wheel in the direction that is shorter**. That is right for a material whose two\n' +
+    'anchors are already close on the wheel, and wrong for almost everything else.\n\n' +
+    'A plum-to-tan ramp (`#2b1f3d` -> `#e8b98a`, hue 244 -> 50) is 166 degrees apart, so it\n' +
+    'produces:\n\n' +
+    '    #211f3d  #652a78  #b92e7a  #db6552  #e8d88a\n' +
+    '    hue 244     288       331        15        50\n\n' +
+    'Every material is magenta in the middle. That is not a bug in the call, it is what\n' +
+    'the arithmetic says, and no parameter value hides it.\n\n' +
+    '## Three ways out\n\n' +
+    '1. **Keep the anchors close** and let `hueShift` do the work. Pick a dark and a light\n' +
+    '   of the same material - a deep red and a pale orange, not a purple and a beige -\n' +
+    '   and the ramp stays a ramp.\n' +
+    '2. **Build it as two short ramps** when the material genuinely spans the wheel: a\n' +
+    '   cool dark ramp and a warm light ramp, then leave the middle to a third accent.\n' +
+    '   Two ramps with a small hue delta beat one ramp with a large one.\n' +
+    '3. **Pin the endpoints** with `shadowHue` and `highlightHue`, which set absolute\n' +
+    '   hues instead of nudging them.\n\n' +
+    '## Other things worth knowing\n\n' +
+    '- `saturationBoost` adds richness in the middle of the ramp; keep it small.\n' +
+    '- `mode: "replace"` swaps the whole palette for this one ramp. `name` renames the\n' +
+    '  palette, whatever mode you are in - so naming five ramps in a row leaves the\n' +
+    '  document\'s palette called after the last one.\n' +
+    '- `role` tags the ramp\'s indices (skin, leather, metal...), which is what\n' +
+    '  `ensure_palette_role` and `shade_band` bind to later. Tag it now if you know what\n' +
+    '  the material is.',
   params: z.object({
     from: colorSchema.describe('Dark anchor colour.'),
     to: colorSchema.describe('Light anchor colour.'),
@@ -841,7 +870,7 @@ export const addTagCommand = defineCommand({
 
 export const removeTagCommand = defineCommand({
   name: 'remove_tag',
-  description: 'Delete an animation tag.',
+  description: 'Delete an animation tag. The frames it named are untouched, and `upsert_tags` is the non-destructive way to reshape a tag rather than dropping and rebuilding it.',
   params: z.object({ tag: tagRefSchema }),
   apply(ctx, p) {
     const tag = resolveTag(ctx.sprite, p.tag);
@@ -853,7 +882,7 @@ export const removeTagCommand = defineCommand({
 
 export const updateTagCommand = defineCommand({
   name: 'update_tag',
-  description: 'Change an animation tag\'s name, range, direction or repeat count.',
+  description: 'Change an animation tag\'s name, range, direction or repeat count. Only the fields you pass are touched, so this is the safe way to retime or rename a tag. Undoable as one step.',
   params: z.object({
     tag: tagRefSchema,
     name: z.string().optional(),
@@ -968,7 +997,7 @@ export const upsertTagsCommand = defineCommand({
 
 export const renameSpriteCommand = defineCommand({
   name: 'rename_sprite',
-  description: 'Set the sprite name.',
+  description: 'Set the sprite name. Purely metadata: it does not rename layers, frames or tags, and it is what spritesheet frame names and export filenames are built from.',
   params: z.object({ name: z.string() }),
   apply(ctx, p) {
     const previous = ctx.sprite.name;
@@ -979,7 +1008,7 @@ export const renameSpriteCommand = defineCommand({
 
 export const getLayerCommand = defineCommand({
   name: 'get_layer',
-  description: 'Read one layer\'s properties. Read-only.',
+  description: 'Read one layer\'s name, visibility, lock, opacity, blend mode and paint order. Read-only and free of side effects, so it costs no undo step; `get_document` returns the same information for every layer at once.',
   readOnly: true,
   params: z.object({ layer: layerRefSchema }),
   apply(ctx, p) {

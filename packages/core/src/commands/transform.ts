@@ -121,7 +121,14 @@ function reflectionOffset(
 export const mirrorCommand = defineCommand({
   name: 'mirror',
   description:
-    'Mirror a cel about an arbitrary line instead of the canvas centre. `axis: "horizontal"` mirrors left/right about a vertical line, `"vertical"` mirrors top/bottom about a horizontal one. `about` is the line position in pixels and defaults to the canvas centre; pass the waterline row to build a lake reflection in one call. For a physical-looking reflection, vertical mirrors also accept `compress` (non-linear vertical compression, 0-1), seeded `wobble` (horizontal displacement in pixels that grows with depth), and optional depth `attenuate`. `copyTo` writes the mirrored copy into another layer and leaves the source untouched - which is what a reflection needs - and otherwise merges into it. Omit `copyTo` to mirror in place.',
+    'Mirror a cel about an arbitrary line instead of the canvas centre. `axis: "horizontal"` mirrors left/right, `"vertical"` top/bottom, and `about` is the line position in pixels (default: canvas centre) - pass the waterline row to build a lake reflection in one call. `copyTo` writes the mirrored copy into another layer and leaves the source alone, which is what a reflection needs; without it the mirror merges in place. Undoable as one step.',
+  guide:
+    '## Making a reflection look physical\n\n' +
+    'An exact mirror reads as a duplicate, not as water. A vertical mirror therefore also\n' +
+    'accepts `compress` (non-linear vertical compression, 0-1), seeded `wobble` (horizontal\n' +
+    'displacement in pixels that grows with distance from the line) and optional depth\n' +
+    '`attenuate`. The same two arguments on `ridge_line`/`shade_band` are what build the\n' +
+    'source contour - this command reflects, it does not generate one.',
   params: z.object({
     layer: layerRefSchema.optional().describe('Layer to mirror. Omit for every layer.'),
     frame: frameRefSchema.optional().describe('Frame to mirror. Omit for every frame.'),

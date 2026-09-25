@@ -32,7 +32,22 @@ export type CommandSummary = Record<string, unknown>;
 
 export interface Command<P = any> {
   name: string;
+  /**
+   * The tool contract: what it does, when to reach for it, what it costs.
+   *
+   * Kept short on purpose. A tool description sits in the context of every single
+   * request for the life of the session, so a command that needs a paragraph of
+   * conventions does not get one here - it gets a `guide`, read on demand.
+   */
   description: string;
+  /**
+   * Long-form manual: conventions, ordering rules, re-run hazards, worked defaults.
+   *
+   * Served as `pixel://guide/{command}` and returned by `describe_command`. It is
+   * knowledge an agent should *pull* at the moment it needs it, not text it should
+   * carry from the first tool call.
+   */
+  guide?: string;
   params: z.ZodType;
   /**
    * A read-only command inspects the document and returns a summary without
@@ -46,6 +61,7 @@ export interface Command<P = any> {
 export function defineCommand<S extends z.ZodObject<z.ZodRawShape>>(spec: {
   name: string;
   description: string;
+  guide?: string;
   params: S;
   readOnly?: boolean;
   apply(ctx: CommandContext, params: z.infer<S>): CommandSummary | void;
@@ -86,7 +102,13 @@ export const ditherPatternSchema = z.enum(
 );
 
 export const pointSchema = z
-  .object({ x: z.number().int(), y: z.number().int() })
+  .object({
+    // Described here rather than per call site: this is the single point shape the
+    // whole command surface uses, and an undescribed `x` inside a nested object is
+    // exactly where a model starts guessing (pixels or tiles? inclusive or exclusive?).
+    x: z.number().int().describe('X position, 0-based, in the unit the parent command documents (pixels unless it says tiles).'),
+    y: z.number().int().describe('Y position, 0-based, growing downward.'),
+  })
   .strict();
 
 export const rectSchema = z

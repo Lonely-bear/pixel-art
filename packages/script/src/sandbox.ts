@@ -79,6 +79,15 @@ export interface ScriptRunResult {
   /** The value the script returned (JSON-serialisable), or `null`. */
   result: unknown;
   logs: string[];
+  /**
+   * Distinct commands this script actually issued, in first-seen order.
+   *
+   * The MCP surface uses this to promote the commands a session really works in to
+   * first-class tools, so the tool list tracks the work rather than the whole
+   * catalogue. A dry run reports the same list, which is the point: a dry run is how
+   * you find out what a script is going to touch.
+   */
+  commands: string[];
   /** Present only when `ok` is false. */
   error?: string;
   /** Machine-readable command/script error code when one is available. */
@@ -300,6 +309,14 @@ export class ScriptRuntime {
   private readonly context: Context;
   private readonly timeoutMs: number;
   private readonly stack: Executor[] = [];
+  /**
+   * Commands issued by the script currently running, first-seen order.
+   *
+   * Reset per `run` so a second script does not inherit the first one's footprint.
+   * A failure still reports what it got through, which is what makes the list useful
+   * for recovery: the command that threw is in it.
+   */
+  private issued: string[] = [];
 
   constructor(options: ScriptRuntimeOptions = {}) {
     this.timeoutMs = options.timeoutMs ?? DEFAULT_SCRIPT_TIMEOUT_MS;
@@ -316,6 +333,7 @@ export class ScriptRuntime {
   /** Run a script against a document. Every command it issues collapses into one undo step. */
   run(source: string, editor: Editor): ScriptRunResult {
     runInContext('globalThis.__logs = [];', this.context, { filename: 'pixel:log-reset' });
+    this.issued = [];
     this.stack.push(editorExecutor(editor));
     try {
       // The transaction is what makes a 50-command script a single Ctrl+Z, and what rolls
@@ -323,7 +341,7 @@ export class ScriptRuntime {
       return editor.transaction('script', () => {
         const code = `globalThis.__result = (function () {\n"use strict";\n${source}\n})();`;
         runInContext(code, this.context, { filename: 'pixel:script', timeout: this.timeoutMs });
-        return { ok: true, result: this.read('globalThis.__result'), logs: this.logs() };
+        return { ok: true, result: this.read('globalThis.__result'), logs: this.logs(), commands: [...this.issued] };
       });
     } catch (error) {
       const errorInfo = this.describeErrorInfo(error, {
@@ -335,6 +353,7 @@ export class ScriptRuntime {
         ok: false,
         result: null,
         logs: this.logs(),
+        commands: [...this.issued],
         error: errorInfo.message,
         code: errorInfo.code,
         errorInfo,
@@ -468,6 +487,7 @@ export class ScriptRuntime {
       case 'exec': {
         if (!executor) return { ok: false, error: 'No document is available', code: 'no_document' };
         const commandName = String(payload?.command ?? '');
+        if (!this.issued.includes(commandName)) this.issued.push(commandName);
         const command = executor.registry.get(commandName);
         const params = command
           ? fillScriptDefaults(command, payload?.params ?? {}, executor.sprite())

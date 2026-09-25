@@ -138,6 +138,12 @@ render. Break them and no amount of extra shading recovers the result.
   reading as texture. If one \`dither_fill\` covers more than roughly 1500 px at a level
   under 0.5, the tool will warn: shrink the rect, switch to \`cluster4\`, or paint the
   step solid and dither only its edge.
+- **Small canvases get solid steps, not dither.** That 3-5px rule assumes a canvas of
+  64px or more. Below about 64px, a 3px dithered band is a tenth of the sprite's width
+  and the pattern itself becomes the read — a checkerboard ladder down the figure, which
+  is exactly failure mode 2 above. On a 16x16 to 32x32 sprite, build the transition from
+  two or three solid steps with a jittered boundary, and reserve dither for one narrow
+  seam if you want it at all.
 - **Gradients.** Do not build one out of a stack of full-width dither rows. Use
   \`banded_gradient\` (one batch command, vertical/horizontal/diagonal/radial,
   \`banded: true\`) for the field, then hand-dither only the seams you want soft. A sky
@@ -285,6 +291,8 @@ render. Break them and no amount of extra shading recovers the result.
   fixing and inspecting a detail is one call.
 - \`get_pixels\` returns a region as hex rows when you need exact coordinates. It is
   capped at 32x32 per call, so use it for sampling, not for reading a whole canvas.
+  It reads the **composited frame** and takes no \`layers\` argument; to sample one layer
+  in isolation use \`get_preview\` with \`layers\`, or a layer command.
   For "which colours does this actually contain", use \`histogram\`, which returns the
   count per colour in one call.
 - When an image and your expectations disagree, believe the data first: \`get_pixels\`
@@ -339,6 +347,12 @@ render. Break them and no amount of extra shading recovers the result.
   silhouette jumps, centroid drift, palette flicker and loop closure across frames.
   Declare eyes, teeth, hair, fabric and weapon highlights as
   \`intentionalDetailRects\`, not as global texture that weakens real defect checks.
+  One trap to know: \`intentionalDetailRects\` exempts a region from the defect checks but
+  **not** from the light-source probe, and declaring a brightly lit area as "intentional
+  detail" still counts its pixels as scattered highlight, which is what collapses
+  \`lightConcentration\` and raises \`no_light_source\`. Keep the lantern flame itself out
+  of those rects. If the scatter is genuinely texture — glitter, grain, foliage — that is
+  what \`textureRects\` is for, and it does exclude the light-source check.
 - Before removing palette slots, use \`prune_palette {dryRun: true}\`; it scans every
   selected raw cel (including hidden layers), remaps semantic roles, and returns an
   old-to-new index map.
@@ -366,6 +380,12 @@ render. Break them and no amount of extra shading recovers the result.
   layer. Prefer names; they survive reordering.
 - Frames are referenced by id or index.
 - Drawing outside the canvas is silently clipped, never an error.
+- \`document\` and \`expectedVersion\` are accepted by every tool and so are not listed in
+  every schema. Omit \`document\` for the active document; pass \`expectedVersion\` with the
+  \`version\` from your last read or write and a conflicting edit fails instead of
+  overwriting.
+- A failed call returns \`{ok: false, error, code, remediation?}\`. Branch on \`code\`, and
+  do what \`remediation\` says rather than re-reading the whole schema.
 - \`draw_ellipse\` is **inscribed in its rect** - the ellipse touches all four sides, so
   \`{x:5, y:8, w:22, h:22}\` is a full circle whose bottom edge is \`y = 29\`. A flat-bottomed
   dome is not an ellipse: either use an ellipse whose bottom equals the baseline, or cut
@@ -374,6 +394,26 @@ render. Break them and no amount of extra shading recovers the result.
   different: it has **no** top-level colour, and every entry in \`pixels\` carries its own
   \`color\` (which may be \`null\` to erase). That is how you draw several colours, or erase
   some pixels and paint others, in one call.
+
+## 9b. Finding commands
+
+The tool list is deliberately small. Roughly ninety drawing, structure, palette, rig and
+tilemap **commands** are not in it until you touch one, and nothing is lost:
+
+- \`list_commands\` is the catalogue - one line per command, or \`verbose: true\` for full
+  schemas. \`filter\` to browse, \`param\` to search by parameter name.
+- \`apply_ops\` and \`run_script\` run **any** command from the catalogue, inline, without
+  it ever being a tool. This is the normal path for a batch.
+- The moment you look a command up by name, \`describe_command\` it, get it back from
+  \`find_workflow\`, or actually run it, it is promoted to a tool you can call directly -
+  the response tells you which (\`promotedTools\`). Prefer the promoted tool for the rest
+  of the session; it is one call instead of a wrapped op.
+- \`describe_command\` is also where the long-form manual lives, for the commands whose
+  conventions are easy to get wrong (\`autotile\`, \`stroke_tilemap\`, \`dither_fill\`).
+  The same text is at \`pixel://guide/{command}\`.
+
+So: browse with \`list_commands\`, batch with \`apply_ops\`, and go direct once a command
+has been promoted.
 
 ## 10. Working with a game engine
 
@@ -545,7 +585,9 @@ export const SKILL_SUMMARY =
   'durations/tags with set_frame_durations/upsert_tags. For reusable character parts, use ' +
   'a persistent rig plus preview_pose and explicit-frame pose baking; quality_report ' +
   'assetType:character checks silhouette stability across frames. Finish with one ' +
-  'finalize_document export plan. Read pixel://skill ' +
+  'finalize_document export plan. The tool list is small on purpose: list_commands is the ' +
+  'catalogue, apply_ops runs any of it, and a command you look up or run is promoted to a ' +
+  'direct tool. Read pixel://skill ' +
   'before drawing anything non-trivial.';
 
 /** URI of the scripting/plugin guide resource. */

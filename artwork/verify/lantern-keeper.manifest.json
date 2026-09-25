@@ -1,0 +1,49 @@
+{
+  "format": "dotloom-mcp/export-manifest",
+  "version": 1,
+  "source": {
+    "path": "D:\\AI项目\\pixel-art\\artwork\\verify\\lantern-keeper.pixel",
+    "name": "lantern-keeper",
+    "width": 32,
+    "height": 32,
+    "documentVersion": 57,
+    "bytes": 2119,
+    "sha256": "f2a939e13fcb1a222ac8975fac8c04edbc10fc51a70d9e07f3e69a5829da5a71"
+  },
+  "frames": [
+    {
+      "index": 0,
+      "id": "frm_muh90stk000c9dj85",
+      "durationMs": 100
+    }
+  ],
+  "tags": [],
+  "outputs": [
+    {
+      "type": "png",
+      "path": "D:\\AI项目\\pixel-art\\artwork\\verify\\lantern-keeper.png",
+      "bytes": 465,
+      "width": 32,
+      "height": 32,
+      "sha256": "54b0a8061792b8d022f03d0ae39592e5f143e3c128f34a78a6b11e21544f26c3",
+      "details": {
+        "frame": 0,
+        "frameId": "frm_muh90stk000c9dj85",
+        "scale": 1
+      }
+    },
+    {
+      "type": "png",
+      "path": "D:\\AI项目\\pixel-art\\artwork\\verify\\lantern-keeper@8x.png",
+      "bytes": 6267,
+      "width": 256,
+      "height": 256,
+      "sha256": "b91692439bf54222ad6c1cb1131c1ece8c49decc06ba6c510b5cc03bb04efa67",
+      "details": {
+        "frame": 0,
+        "frameId": "frm_muh90stk000c9dj85",
+        "scale": 8
+      }
+    }
+  ]
+}

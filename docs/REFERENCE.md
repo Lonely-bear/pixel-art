@@ -226,26 +226,59 @@ To connect to a running desktop app instead of the standalone server, append
 
 ### What it exposes
 
-- **A generated tool catalog plus session tools.** Every core command is generated straight from its zod schema, alongside
-  hand-written session and perception tools: `create_document`, `create_sprite_spec`, `open_document`,
-  `save_document`, `finalize_document`, `import_image` (PNG or Aseprite), `select_document`, `close_document`,
-  `list_documents`, `get_document`, `get_preview`, `preview_pose`, `preview_animation`, `preview_tilemap`, `get_pixels`, `quality_report`, `get_palette`, `get_history`,
-  `undo`, `redo`, `apply_ops`, `export_png`, `export_sheet`, `export_tiled`, `export_gif`,
-  `list_commands`, `read_skill`, and the scripting tools `run_script`, `load_plugin`,
-  `list_plugins`. Loading a plugin registers its commands as real tools on the fly.
+- **A small declared surface plus an on-demand command catalog.** The advertised list is 33 tools
+  — the session, perception, export and discovery tools: `create_document`, `create_sprite_spec`,
+  `open_document`, `save_document`, `finalize_document`, `import_image` (PNG or Aseprite),
+  `select_document`, `close_document`, `list_documents`, `get_document`, `get_preview`, `preview_pose`,
+  `preview_animation`, `preview_tilemap`, `get_pixels`, `histogram`, `quality_report`, `get_palette`,
+  `get_history`, `undo`, `redo`, `apply_ops`, `export_png`, `export_sheet`, `export_tiled`, `export_gif`,
+  `list_commands`, `describe_command`, `find_workflow`, `read_skill`, and the scripting tools
+  `run_script`, `load_plugin`, `list_plugins`.
+
+  The ~90 core commands (`draw_rect`, `autotile`, `create_tileset`, `add_palette_ramp`, …) are **not**
+  in that list up front: shipping all 127 cost ~55K tokens of tool definitions in the context of every
+  request. They are reachable three ways, and all of them *promote* the command to a real tool once this
+  session touches it:
+
+  | Trigger | Result |
+  | --- | --- |
+  | `list_commands { name: "autotile" }` | exact lookup promotes it |
+  | `describe_command { name: "autotile" }` | returns the schema **and** promotes it |
+  | `find_workflow { goal: "..." }` | promotes the commands the top match recommends |
+  | `apply_ops` / `run_script` | promotes every command the batch actually issued (a `dryRun` counts) |
+
+  Responses name what was promoted in `promotedTools`, and `list_commands` marks each catalogue entry
+  `tool: true` once it is directly callable. So the tool list tracks the work rather than guessing up
+  front. `apply_ops` runs any command inline with or without promotion, so nothing is unavailable.
+  Pass `commands: 'eager'` to `createPixelServer` for the old flat 127-tool surface.
+
   `list_commands` returns the runnable command catalogue plus a `sessionTools` list, so
   `undo`/`redo`/`get_history`, `apply_ops`, and the perception/export tools are discoverable
   from one call. Its compact response includes `readOnly`; use exact `name`, parameter-name
   `param`, substring `filter`, and optional `limit` for progressive discovery, then
-  `verbose: true` for full schemas. `describe_command {name}` returns one exact live
-  schema, while `find_workflow {goal}` searches task-level command sequences. `undo`/`redo`
+  `verbose: true` for full schemas. A substring `filter` browses without promoting, on purpose —
+  otherwise one "draw" query would sweep the catalog in. `describe_command {name}` returns one exact
+  live schema plus the command's long-form `guide` (also at `pixel://guide/{command}`) when it has one,
+  while `find_workflow {goal}` searches task-level command sequences. `undo`/`redo`
   take `steps` (alias `count`). `create_document` takes `select: false`
   to build a scratch document without stealing focus, `select_document` accepts an id or a
   name, and `get_preview` takes `rect` to crop-zoom a detail. Document summaries expose
   both `active` and `activeDocumentId`; an explicit `get_document {document}` reads without
   changing the session focus.
+- **Declarations that are dialled in, not repeated.** Two arguments, `document` and `expectedVersion`,
+  are accepted by every tool and are *not* advertised in every schema — they were 9.4K tokens of
+  "operate on the active document" restated 127 times, and the server instructions say it once instead.
+  Safe-integer bounds from zod (`minimum: -9007199254740991`) are stripped from the advertised form:
+  521 occurrences, 28.7KB, none of them actionable. Validation still runs against the full strict
+  schema, so nothing is loosened — only the advertisement changed. Every tool declares all four risk
+  hints (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), so a client can gate
+  on them: `run_script` and `load_plugin` are the two marked `openWorldHint` because they execute
+  code this server did not write, and a promoted plugin command is marked both open-world and
+  destructive.
 - **Static resources and document templates.** `pixel://documents`, `pixel://commands`,
   `pixel://skill` (a pixel-art craft guide), `pixel://script-guide` (the sandbox/plugin API),
+  `pixel://guide/{command}` (a command's long-form manual — the detail behind a short tool
+  description, pulled at the moment it is needed),
   plus document and preview templates — the preview is a real `image/png` blob, so multimodal models
   can *see* the art. The preview template takes the same view options as `get_preview` as
   query parameters: `?frame=N`, `?frames=all`, `?scale=N`, `?layers=a,b`, `?onion=N`
@@ -269,8 +302,14 @@ To connect to a running desktop app instead of the standalone server, append
    animation with neighbouring-frame ghosts. `run_script` supports the same inline preview.
 3. **`expectedVersion` gives optimistic concurrency.** Read a version, pass it back on the
    next write, and a stale edit fails with `version_conflict` instead of clobbering someone
-   else's work. Read-only commands never bump the version or eat your redo stack.
-4. **`clip` is the constraint that makes drawing tractable.** `clip: "composite"` paints
+   else's work. Read-only commands never bump the version or eat your redo stack. It is
+   accepted on every tool without being advertised in every schema, so read it from the server
+   instructions, not from a tool's parameter list.
+4. **Failures are a contract, not prose.** A failed call returns `{ok: false, error, code, remediation?}`.
+   Branch on `code` (`version_conflict`, `invalid_op`, `unknown_command`, …) and follow `remediation`
+   when present. Every tool declares an `outputSchema` covering this envelope, so a client can validate
+   the result instead of parsing prose.
+5. **`clip` is the constraint that makes drawing tractable.** `clip: "composite"` paints
    only where the *other* layers already have pixels, so a shadow, highlight or dither band
    cannot spill into the transparent corners of its bounding box. `clip: "cel"` clips
    against the layer being painted, and `clip: {layer: "hair"}` / `{layers: [...]}` clip to
@@ -279,21 +318,21 @@ To connect to a running desktop app instead of the standalone server, append
    `warning`. Paired with `scope: "composite"` on `outline` and `measure_region`, it removes
    the whole class of "must stay inside the silhouette" bugs; `outline` also takes
    `alphaThreshold` so a faint glow is not traced as a hard contour.
-5. **Dithering is a write rule, not a special command.** `dither_fill` takes a `shape`
+6. **Dithering is a write rule, not a special command.** `dither_fill` takes a `shape`
    (`{rect}`, `{ellipse}` or `{polygon}`) so a transition band can follow a curve instead of
    being a box, and every paint command (`draw_rect`, `draw_ellipse`, `draw_polygon`,
    `draw_line`, `fill`, `draw_pixels`) also accepts `pattern` and `level`. A dithered shape
    lands on exactly the pixels a solid one would, and it composes with `clip`. On large
    canvases prefer `cluster2`/`cluster4`: the same coverage lands as 2×2/4×4 blocks instead
    of digital 1px stipple.
-6. **`finalize_document` closes the production loop in one call.** It saves the editable
+7. **`finalize_document` closes the production loop in one call.** It saves the editable
    `.pixel` source and renders a typed output plan: individual PNGs, all-frame PNGs,
    spritesheet + Aseprite JSON, tag-aware GIF, pose renders, and timeline/playback contact
    sheets. Every output is rendered before any file is written. An optional manifest records
    source version, frame durations, tags, actual output paths/sizes, and SHA-256 hashes;
    `incremental: true` reuses that manifest to skip unchanged source/output files. The legacy
    PNG-only `exports` array remains accepted.
-7. **`quality_report` is asset-aware where it matters.** Only `character` changes the
+8. **`quality_report` is asset-aware where it matters.** Only `character` changes the
    analysis: it suppresses full-width-band/landscape findings (a figure is not a horizon)
    and defaults to all-frame analysis reporting silhouette overlap, centroid drift, palette
    Jaccard, canvas-edge contact and last-to-first loop closure - each with a real `warning`
@@ -306,7 +345,7 @@ To connect to a running desktop app instead of the standalone server, append
    `intentionalDetailRects` exempts eyes, teeth, hair, fabric and weapon highlights from
    isolated/outlier/edge/highlight checks only; it deliberately does not suppress the
    light-source probe.
-8. **`add_palette_ramp` builds hue-shifted material ramps.** Give it a dark and a light
+9. **`add_palette_ramp` builds hue-shifted material ramps.** Give it a dark and a light
    anchor plus a step count, and it generates the intermediate colours in HSL, pulling the
    dark end toward blue/violet and the light end toward amber by `hueShift` degrees
    (default 20). `shadowHue`/`highlightHue` set absolute endpoint hues, `saturationBoost`
@@ -317,14 +356,14 @@ To connect to a running desktop app instead of the standalone server, append
    optional layer/region limits. `prune_palette` scans the raw cels in a document/frame/tag
    scope (including hidden layers), defaults to dry-run, protects explicit `keep` indices,
    and returns an old-to-new index map before removing genuinely unused slots.
-9. **Binary and generative primitives avoid per-pixel JSON overhead.** `put_pixels` writes
+10. **Binary and generative primitives avoid per-pixel JSON overhead.** `put_pixels` writes
    a base64 RGBA8888 rectangle in one command, with the script convenience API
    `putPixels(rect, data, options?)`; the core raster API also exposes
    `putPixels(buffer, rect, rgba, options?)` for an in-memory `Uint8Array`/`Uint8ClampedArray`.
    `banded_gradient`, `noise_fill` (value noise/fBm via `octaves`), `ridge_line`
    (seeded ridged fBm terrain contours) and `scatter` generate deterministic fields in
    one batch command, with palette-aware colours, clipping and safety limits.
-10. **Landscape diagnostics do not stop at the alpha skyline.** `quality_report` adds
+11. **Landscape diagnostics do not stop at the alpha skyline.** `quality_report` adds
    `structure.landscape` (also exposed as top-level `landscape`) for full-bleed scenes:
    it locates internal horizon/ridge/waterline candidates, reports boundary regularity,
    and looks for a coherent or bright-path vertical/diagonal guide. It is evidence for

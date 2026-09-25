@@ -334,7 +334,7 @@ export const removePartCommand = defineCommand({
 
 export const getRigCommand = defineCommand({
   name: 'get_rig',
-  description: 'Read the persistent rig, parts, poses, tweens, anchors and hitboxes.',
+  description: 'Read the persistent rig: parts with their pivots and parents, saved poses and tweens, named anchors and hitboxes. Read-only, and the cheapest way to learn the current names in a rig before editing it.',
   readOnly: true,
   params: z.object({}),
   apply(ctx) {
@@ -390,7 +390,7 @@ export const savePoseCommand = defineCommand({
 
 export const removePoseCommand = defineCommand({
   name: 'remove_pose',
-  description: 'Remove a pose and any tweens that reference it.',
+  description: 'Remove a pose and any tweens that reference it, so a tween chain is never left pointing at a pose that no longer exists. Use `bake_pose`/`tween_pose` to apply a pose rather than discard it.',
   params: z.object({ pose: poseRefSchema }),
   apply(ctx, p) {
     const rig = requireRig(ctx.sprite);
@@ -403,7 +403,7 @@ export const removePoseCommand = defineCommand({
 
 export const saveTweenCommand = defineCommand({
   name: 'save_tween',
-  description: 'Create or update a reusable pose-to-pose tween definition.',
+  description: 'Create or update a reusable pose-to-pose tween definition. Pass `tween` to update one in place, or `name` to create a new one. `tween_pose` is what actually bakes a tween into frames; this only stores the definition.',
   params: z.object({
     tween: tweenRefSchema.optional(),
     name: z.string().min(1).optional(),
@@ -431,7 +431,7 @@ export const saveTweenCommand = defineCommand({
 
 export const removeTweenCommand = defineCommand({
   name: 'remove_tween',
-  description: 'Remove a stored tween definition.',
+  description: 'Remove a stored tween definition. Frames it already baked into are untouched - undo those through the target frames of the bake that created them if they need to go.',
   params: z.object({ tween: tweenRefSchema }),
   apply(ctx, p) {
     const rig = requireRig(ctx.sprite);
@@ -501,9 +501,12 @@ function poseBakeCommand(name: string, description: string) {
   });
 }
 
-export const bakePoseCommand = poseBakeCommand('bake_pose', 'Render a saved pose from the rig rest frame into one explicit target frame.');
-export const applyPoseCommand = poseBakeCommand('apply_pose', 'Compatibility alias for bake_pose: apply a saved pose to an explicit frame.');
-export const drawPoseCommand = poseBakeCommand('draw_pose', 'Compatibility alias for bake_pose: draw a saved pose into an explicit frame.');
+// These three are the same command under three names. The aliases say so in one
+// sentence and point at the canonical name, because two near-identical descriptions
+// in one tool list is an invitation to pick the wrong one.
+export const bakePoseCommand = poseBakeCommand('bake_pose', 'Render a saved pose from the rig rest frame into one explicit target frame. This is the canonical name; `apply_pose` and `draw_pose` are aliases of it.');
+export const applyPoseCommand = poseBakeCommand('apply_pose', 'Alias of `bake_pose` - identical behaviour, identical parameters. Prefer `bake_pose`; use this name only to match an existing script.');
+export const drawPoseCommand = poseBakeCommand('draw_pose', 'Alias of `bake_pose` - identical behaviour, identical parameters. Prefer `bake_pose`; use this name only to match an existing script.');
 
 export const tweenPoseCommand = defineCommand({
   name: 'tween_pose',
@@ -577,17 +580,17 @@ export const tweenPoseCommand = defineCommand({
 
 export const transformPartCommand = defineCommand({
   name: 'transform_part',
-  description: 'Destructively transform all layers bound to one rig part in one frame, using its stored pivot unless overridden.',
+  description: 'Destructively transform every layer bound to one rig part in one frame, rasterising the pixels in place around the part\'s stored pivot. This is the manual alternative to posing: it edits the artwork itself rather than a pose, so it refuses to touch the rig rest frame. Undoable as one step.',
   params: z.object({
     part: partRefSchema,
     frame: frameRefSchema.optional().describe('Legacy target frame alias. Pass either frame or targetFrame explicitly.'),
     targetFrame: frameRefSchema.optional().describe('Explicit target frame. Required; never defaulted to frame 0.'),
-    pivot: pointSchema.optional(),
-    dx: z.number().optional(),
-    dy: z.number().optional(),
-    rotationDegrees: z.number().optional(),
-    scaleX: z.number().positive().max(8).optional(),
-    scaleY: z.number().positive().max(8).optional(),
+    pivot: pointSchema.optional().describe('Override the part\'s stored pivot, in pixels. Omit to use the pivot the part was created with.'),
+    dx: z.number().optional().describe('Horizontal translation in pixels. Defaults to 0.'),
+    dy: z.number().optional().describe('Vertical translation in pixels. Defaults to 0.'),
+    rotationDegrees: z.number().optional().describe('Clockwise rotation in degrees about the pivot. Defaults to 0.'),
+    scaleX: z.number().positive().max(8).optional().describe('Horizontal scale factor, 0-8. Defaults to 1.'),
+    scaleY: z.number().positive().max(8).optional().describe('Vertical scale factor, 0-8. Defaults to 1.'),
   }),
   apply(ctx, p) {
     const rig = requireRig(ctx.sprite);
@@ -626,7 +629,7 @@ export const transformPartCommand = defineCommand({
 
 export const setAnchorCommand = defineCommand({
   name: 'set_anchor',
-  description: 'Create or update a named rig anchor, optionally attached to a part.',
+  description: 'Create or update a named rig anchor, optionally attached to a part. An anchor is a positioning point other parts can be pinned to; for a collision rectangle use `set_hitbox` instead.',
   params: z.object({
     anchor: z.string().optional(),
     name: z.string().min(1),
@@ -651,7 +654,7 @@ export const setAnchorCommand = defineCommand({
 
 export const removeAnchorCommand = defineCommand({
   name: 'remove_anchor',
-  description: 'Remove a rig anchor.',
+  description: 'Remove a named rig anchor. Distinct from `remove_hitbox`, which removes a collision box; an anchor is a point other parts can be positioned against.',
   params: z.object({ anchor: z.string() }),
   apply(ctx, p) {
     const rig = requireRig(ctx.sprite);
@@ -664,7 +667,8 @@ export const removeAnchorCommand = defineCommand({
 
 export const setHitboxCommand = defineCommand({
   name: 'set_hitbox',
-  description: 'Create or update a local-space rig hitbox, optionally attached to a part.',
+  description:
+    'Create or update a local-space rig hitbox, optionally attached to a part. A hitbox is a collision rectangle exported with the sprite; for a positioning point use `set_anchor` instead.',
   params: z.object({
     hitbox: z.string().optional(),
     name: z.string().min(1),
@@ -693,7 +697,8 @@ export const setHitboxCommand = defineCommand({
 
 export const removeHitboxCommand = defineCommand({
   name: 'remove_hitbox',
-  description: 'Remove a rig hitbox.',
+  description:
+    'Remove a named rig hitbox. Distinct from `remove_anchor`, which removes a positioning anchor; a hitbox is a rectangle exported for collision.',
   params: z.object({ hitbox: z.string() }),
   apply(ctx, p) {
     const rig = requireRig(ctx.sprite);
