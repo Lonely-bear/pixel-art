@@ -51,9 +51,27 @@ export const DEFAULT_SCRIPT_TIMEOUT_MS = 2000;
 /** Upper bound on retained `log()` lines, so a runaway loop cannot exhaust memory. */
 const MAX_LOGS = 1000;
 
+/** `run()` prepends a wrapper line and `"use strict"` before caller source. */
+const SCRIPT_SOURCE_LINE_OFFSET = 2;
+
 export interface ScriptRuntimeOptions {
   /** Per-call execution budget. Defaults to {@link DEFAULT_SCRIPT_TIMEOUT_MS}. */
   timeoutMs?: number;
+}
+
+export type ScriptErrorPhase = 'parse' | 'runtime' | 'command' | 'timeout';
+
+export interface ScriptErrorInfo {
+  message: string;
+  code?: string;
+  phase: ScriptErrorPhase;
+  /** 1-based location in the caller-provided source, never in the VM wrapper. */
+  line?: number;
+  /** 1-based column in the caller-provided source. */
+  column?: number;
+  sourceName?: string;
+  /** Command name when the failure came through exec/tryExec. */
+  command?: string;
 }
 
 export interface ScriptRunResult {
@@ -65,6 +83,8 @@ export interface ScriptRunResult {
   error?: string;
   /** Machine-readable command/script error code when one is available. */
   code?: string;
+  /** Structured source location and failure phase for diagnostics. */
+  errorInfo?: ScriptErrorInfo;
 }
 
 export interface ScriptPluginResult {
@@ -74,6 +94,7 @@ export interface ScriptPluginResult {
   commands: string[];
   logs: string[];
   error?: string;
+  errorInfo?: ScriptErrorInfo;
 }
 
 export interface LoadPluginOptions {
@@ -117,6 +138,7 @@ const BOOTSTRAP = `(function () {
     if (!res.ok) {
       var err = new Error(res.error);
       err.code = res.code;
+      err.command = command;
       throw err;
     }
     return res.summary;
@@ -186,6 +208,9 @@ const BOOTSTRAP = `(function () {
   globalThis.defineCommand = function (def) {
     if (!def || typeof def !== "object" || typeof def.name !== "string" || typeof def.run !== "function") {
       throw new Error("defineCommand requires { name: string, run(api, params) }");
+    }
+    if (def.readOnly !== undefined && typeof def.readOnly !== "boolean") {
+      throw new Error("defineCommand readOnly must be a boolean when provided");
     }
     globalThis.__defs.push(def);
     return def.name;
@@ -301,12 +326,18 @@ export class ScriptRuntime {
         return { ok: true, result: this.read('globalThis.__result'), logs: this.logs() };
       });
     } catch (error) {
+      const errorInfo = this.describeErrorInfo(error, {
+        filename: 'pixel:script',
+        lineOffset: SCRIPT_SOURCE_LINE_OFFSET,
+        sourceName: 'source',
+      });
       return {
         ok: false,
         result: null,
         logs: this.logs(),
-        error: this.describeError(error),
-        code: (error as { code?: string } | null)?.code,
+        error: errorInfo.message,
+        code: errorInfo.code,
+        errorInfo,
       };
     } finally {
       this.stack.pop();
@@ -347,26 +378,35 @@ export class ScriptRuntime {
         seen.add(def.name);
       }
 
-      const commands: string[] = [];
+      const commands: Command[] = [];
       for (let i = 0; i < defs.length; i += 1) {
         const index = definitionStart + i;
-        const command = createPluginCommand(defs[i], (ctx, params) =>
-          this.invokePlugin(index, ctx.draft, registry, params),
+        commands.push(
+          createPluginCommand(defs[i], (ctx, params) =>
+            this.invokePlugin(index, ctx.draft, registry, params),
+          ),
         );
-        registry.register(command);
-        commands.push(command.name);
       }
+      // Build every command before registering any of them. A malformed second
+      // definition must not leave the first half of a failed plugin live.
+      for (const command of commands) registry.register(command);
 
-      return { ok: true, name, commands, logs: this.logs() };
+      return { ok: true, name, commands: commands.map((command) => command.name), logs: this.logs() };
     } catch (error) {
       // Do not leave a failed plugin's definitions for the next load to capture.
       runInContext(`globalThis.__defs.length = ${definitionStart};`, this.context);
+      const errorInfo = this.describeErrorInfo(error, {
+        filename: `${name}.js`,
+        lineOffset: 0,
+        sourceName: name,
+      });
       return {
         ok: false,
         name,
         commands: [],
         logs: this.logs(),
-        error: this.describeError(error),
+        error: errorInfo.message,
+        errorInfo,
       };
     } finally {
       if (options.editor) this.stack.pop();
@@ -556,14 +596,84 @@ export class ScriptRuntime {
     };
   }
 
-  private describeError(error: unknown): string {
-    if (error instanceof Error) {
-      if ((error as { code?: string }).code === 'ERR_SCRIPT_EXECUTION_TIMEOUT') {
-        return `Script timed out after ${this.timeoutMs}ms`;
-      }
-      return error.message;
+  private describeErrorInfo(
+    error: unknown,
+    location: { filename: string; lineOffset: number; sourceName: string },
+  ): ScriptErrorInfo {
+    const candidate =
+      typeof error === 'object' && error !== null
+        ? (error as {
+            name?: string;
+            message?: string;
+            stack?: string;
+            code?: string;
+            command?: string;
+          })
+        : null;
+    if (!candidate || typeof candidate.message !== 'string') {
+      return {
+        message: String(error),
+        phase: 'runtime',
+        sourceName: location.sourceName,
+      };
     }
-    return String(error);
+
+    const code = candidate.code;
+    const command = candidate.command;
+    const timeout = code === 'ERR_SCRIPT_EXECUTION_TIMEOUT';
+    const message = timeout ? `Script timed out after ${this.timeoutMs}ms` : candidate.message;
+    const commandCode =
+      code === 'unknown_command' || code === 'invalid_params' || code === 'command_failed' || code === 'version_conflict';
+    const phase: ScriptErrorPhase = timeout
+      ? 'timeout'
+      : command || commandCode
+        ? 'command'
+        : candidate.name === 'SyntaxError'
+          ? 'parse'
+          : 'runtime';
+
+    const stackLines = candidate.stack?.split('\n') ?? [];
+    const marker = `${location.filename}:`;
+    if (phase === 'parse' && stackLines[0]?.startsWith(marker)) {
+      const match = stackLines[0].slice(marker.length).match(/^(\d+)(?::(\d+))?/);
+      if (match) {
+        const caret = stackLines.find((line, index) => index > 0 && /^\s*\^/.test(line));
+        return {
+          message,
+          code,
+          phase,
+          line: Math.max(1, Number(match[1]) - location.lineOffset),
+          column: caret ? caret.indexOf('^') + 1 : match[2] ? Math.max(1, Number(match[2])) : undefined,
+          sourceName: location.sourceName,
+          ...(command ? { command } : {}),
+        };
+      }
+    }
+
+    for (const stackLine of stackLines) {
+      if (!/^\s*at\s/.test(stackLine)) continue;
+      const markerAt = stackLine.indexOf(marker);
+      if (markerAt < 0) continue;
+      const match = stackLine.slice(markerAt + marker.length).match(/^(\d+):(\d+)/);
+      if (!match) continue;
+      return {
+        message,
+        code,
+        phase,
+        line: Math.max(1, Number(match[1]) - location.lineOffset),
+        column: Math.max(1, Number(match[2])),
+        sourceName: location.sourceName,
+        ...(command ? { command } : {}),
+      };
+    }
+
+    return {
+      message,
+      code,
+      phase,
+      sourceName: location.sourceName,
+      ...(command ? { command } : {}),
+    };
   }
 }
 

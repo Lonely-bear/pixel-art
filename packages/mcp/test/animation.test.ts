@@ -134,6 +134,17 @@ describe('animated GIF export', () => {
     expect(result.loops).toBe(false);
   });
 
+  it('rejects an explicitly requested tag that does not exist', async () => {
+    await makeAnimation();
+    const result = (await client.callTool({
+      name: 'export_gif',
+      arguments: { out: join(tempDir, 'missing.gif'), tag: 'attack' },
+    })) as ToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(firstText(result)).toMatch(/Unknown animation tag: attack/);
+  });
+
   it('accepts `path` as an alias for `out`', async () => {
     await makeAnimation();
     const out = join(tempDir, 'alias.gif');

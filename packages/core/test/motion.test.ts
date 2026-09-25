@@ -184,6 +184,64 @@ describe('scope', () => {
   });
 });
 
+describe('rotate', () => {
+  it('rejects a scoped odd quarter turn before changing canvas or cel dimensions', () => {
+    const editor = createEditor(
+      createSprite({ width: 6, height: 4, layers: ['base', 'top'], frames: 2 }),
+    );
+    for (const layer of [0, 1]) {
+      for (const frame of [0, 1]) {
+        editor.execute('draw_pixels', {
+          layer,
+          frame,
+          pixels: [{ x: 1, y: 1, color: '#ff0000' }],
+        });
+      }
+    }
+    const version = editor.version;
+
+    const result = editor.tryExecute('rotate', { turns: 1, layer: 'base', frame: 0 });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/whole document|fixed-canvas/i);
+    expect(editor.sprite.width).toBe(6);
+    expect(editor.sprite.height).toBe(4);
+    expect(editor.version).toBe(version);
+    expect(editor.history()).toHaveLength(4);
+    for (const frame of editor.sprite.frames) {
+      for (const cel of frame.cels.values()) {
+        expect([cel.width, cel.height]).toEqual([6, 4]);
+      }
+    }
+  });
+
+  it('keeps scoped odd quarter turns available on a square canvas', () => {
+    const editor = createEditor(createSprite({ width: 8, height: 8, layers: ['base', 'top'], frames: 2 }));
+    editor.execute('draw_pixels', { layer: 0, frame: 0, pixels: [{ x: 1, y: 2, color: '#ff0000' }] });
+    editor.execute('draw_pixels', { layer: 1, frame: 0, pixels: [{ x: 2, y: 1, color: '#00ff00' }] });
+
+    expect(editor.execute('rotate', { turns: 1, layer: 'base', frame: 0 })).toEqual({ cels: 1, turns: 1 });
+    expect([editor.sprite.width, editor.sprite.height]).toEqual([8, 8]);
+    expect(editor.execute('measure_region', { layer: 'base', frame: 0 }).bounds).toEqual({ x: 5, y: 1, w: 1, h: 1 });
+    expect(editor.execute('measure_region', { layer: 'top', frame: 0 }).bounds).toEqual({ x: 2, y: 1, w: 1, h: 1 });
+  });
+
+  it('rotates every cel and the non-square canvas together for an unscoped quarter turn', () => {
+    const editor = createEditor(
+      createSprite({ width: 6, height: 4, layers: ['base', 'top'], frames: 2 }),
+    );
+    editor.execute('draw_pixels', { layer: 0, frame: 0, pixels: [{ x: 1, y: 1, color: '#ff0000' }] });
+    editor.execute('draw_pixels', { layer: 1, frame: 1, pixels: [{ x: 2, y: 2, color: '#00ff00' }] });
+
+    expect(editor.execute('rotate', { turns: 1 })).toEqual({ cels: 2, turns: 1 });
+    expect([editor.sprite.width, editor.sprite.height]).toEqual([4, 6]);
+    for (const frame of editor.sprite.frames) {
+      for (const cel of frame.cels.values()) {
+        expect([cel.width, cel.height]).toEqual([4, 6]);
+      }
+    }
+  });
+});
+
 describe('translate', () => {
   it('shifts a cel and clears the band it vacates', () => {
     const editor = createEditor(makeSprite());

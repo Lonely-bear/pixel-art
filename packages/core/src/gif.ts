@@ -81,6 +81,10 @@ function expandDirection(tag: AnimationTag): number[] {
 export function animationSequence(sprite: Sprite, tagRef?: string | number): AnimationSequence {
   const tag = tagRef === undefined ? undefined : findTag(sprite, tagRef);
 
+  if (tagRef !== undefined && !tag) {
+    throw new Error(`Unknown animation tag: ${tagRef}`);
+  }
+
   if (!tag) {
     const frames = sprite.frames.map((frame, index) => ({
       index,

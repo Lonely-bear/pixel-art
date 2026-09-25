@@ -48,6 +48,12 @@ describe('createPluginCommand', () => {
     );
   });
 
+  it('rejects a non-boolean readOnly declaration', () => {
+    expect(() =>
+      createPluginCommand({ name: 'bad_read_only', readOnly: 'false' as never }, () => {}),
+    ).toThrow(/non-boolean readOnly/);
+  });
+
   it('is indistinguishable from a built-in command to the editor', () => {
     const command = createPluginCommand(
       { name: 'draw_dot', description: 'One pixel', params: { x: { type: 'int', required: true } } },

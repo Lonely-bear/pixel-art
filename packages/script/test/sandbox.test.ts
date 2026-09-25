@@ -277,6 +277,52 @@ describe('ScriptRuntime.run', () => {
     expect(recovered.result).toBe('still alive');
   });
 
+  it('reports source-relative locations and the failure phase', () => {
+    const editor = makeEditor();
+    const runtime = new ScriptRuntime();
+
+    const thrown = runtime.run(
+      `const before = true;
+       throw new Error('boom');`,
+      editor,
+    );
+    expect(thrown.ok).toBe(false);
+    expect(thrown.errorInfo).toMatchObject({
+      message: 'boom',
+      phase: 'runtime',
+      line: 2,
+      sourceName: 'source',
+    });
+
+    const command = runtime.run(
+      `const before = true;
+       exec('missing_command', {});`,
+      editor,
+    );
+    expect(command.ok).toBe(false);
+    expect(command.errorInfo).toMatchObject({
+      phase: 'command',
+      code: 'unknown_command',
+      command: 'missing_command',
+      line: 2,
+      sourceName: 'source',
+    });
+
+    const syntax = runtime.run(
+      `const before = 1;
+       const = 2;`,
+      editor,
+    );
+    expect(syntax.errorInfo).toMatchObject({ phase: 'parse', line: 2, column: 14, sourceName: 'source' });
+
+    const misleadingMessage = runtime.run(
+      `const before = 1;
+       throw new Error('pixel:script:999:1');`,
+      editor,
+    );
+    expect(misleadingMessage.errorInfo).toMatchObject({ phase: 'runtime', line: 2, sourceName: 'source' });
+  });
+
   it('surfaces command errors with their code', () => {
     const editor = makeEditor();
     const runtime = new ScriptRuntime();
@@ -357,6 +403,21 @@ describe('ScriptRuntime.run', () => {
     expect(outcome.ok).toBe(false);
     expect(pixel(editor, 4, 4)).toBeNull();
     expect(editor.history()).toHaveLength(0);
+  });
+
+  it('rolls back commands that mutate many existing cels in place', () => {
+    const editor = makeEditor();
+    editor.execute('draw_pixels', { layer: 0, frame: 0, pixels: [{ x: 4, y: 4, color: '#ff0000' }] });
+    const history = editor.history().length;
+    const outcome = new ScriptRuntime().run(
+      `exec('clear_all', {});
+       throw new Error('after clear');`,
+      editor,
+    );
+
+    expect(outcome.ok).toBe(false);
+    expect(pixel(editor, 4, 4)).toEqual({ r: 255, g: 0, b: 0, a: 255 });
+    expect(editor.history()).toHaveLength(history);
   });
 });
 
@@ -499,6 +560,24 @@ describe('ScriptRuntime.loadPlugin', () => {
     expect(negative.ok).toBe(false);
   });
 
+  it('preserves a clean message when a plugin command throws across the VM boundary', () => {
+    const registry = createMutableRegistry(allCommands);
+    const editor = createEditor(
+      createSprite({ width: 8, height: 8, layers: ['base'], palette: createPalette('test', ['#ff0000']) }),
+      registry,
+    );
+    const runtime = new ScriptRuntime();
+    const loaded = runtime.loadPlugin(
+      `defineCommand({ name: 'plugin_boom', run() { throw new Error('plugin boom'); } });`,
+      { name: 'boom', registry },
+    );
+    expect(loaded.ok).toBe(true);
+
+    const result = editor.tryExecute('plugin_boom', {});
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBe('Command plugin_boom failed: plugin boom');
+  });
+
   it('rejects a plugin that collides with an existing command', () => {
     const registry = createMutableRegistry(allCommands);
     const runtime = new ScriptRuntime();
@@ -509,6 +588,40 @@ describe('ScriptRuntime.loadPlugin', () => {
     expect(outcome.ok).toBe(false);
     expect(outcome.error).toContain('already exists');
     expect(registry.get('draw_rect')).toBe(allCommands.find((c) => c.name === 'draw_rect'));
+  });
+
+  it('does not register the first command when a later plugin definition is invalid', () => {
+    const registry = createMutableRegistry(allCommands);
+    const outcome = new ScriptRuntime().loadPlugin(
+      `defineCommand({ name: 'plugin_first', run() { return null; } });
+       defineCommand({ name: 'plugin_bad', params: { value: { type: 'not-a-type' } }, run() { return null; } });`,
+      { name: 'partial', registry },
+    );
+    expect(outcome.ok).toBe(false);
+    expect(registry.has('plugin_first')).toBe(false);
+    expect(registry.has('plugin_bad')).toBe(false);
+  });
+
+  it('rejects a non-boolean plugin readOnly declaration', () => {
+    const registry = createMutableRegistry(allCommands);
+    const outcome = new ScriptRuntime().loadPlugin(
+      `defineCommand({ name: 'bad_read_only', readOnly: 'false', run() { return null; } });`,
+      { name: 'bad-read-only', registry },
+    );
+    expect(outcome.ok).toBe(false);
+    expect(outcome.error).toMatch(/readOnly must be a boolean/);
+    expect(registry.has('bad_read_only')).toBe(false);
+  });
+
+  it('reports plugin syntax errors with source-relative locations', () => {
+    const registry = createMutableRegistry(allCommands);
+    const outcome = new ScriptRuntime().loadPlugin(
+      `const before = 1;
+       const = 2;`,
+      { name: 'bad-syntax', registry },
+    );
+    expect(outcome.ok).toBe(false);
+    expect(outcome.errorInfo).toMatchObject({ phase: 'parse', line: 2, sourceName: 'bad-syntax' });
   });
 
   it('reports a plugin load error and registers nothing', () => {

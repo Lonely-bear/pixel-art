@@ -37,7 +37,7 @@ import type { Point } from '../types.js';
  */
 
 interface CelTarget {
-  frame: { cels: Map<string, PixelBuffer> };
+  frame: { id: string; cels: Map<string, PixelBuffer> };
   layerId: string;
   buffer: PixelBuffer;
 }
@@ -200,16 +200,15 @@ export const mirrorCommand = defineCommand({
     if (destId !== null) {
       for (const t of targets) {
         const mirrored = mirrorBuffer(t.buffer);
-        const existing = t.frame.cels.get(destId);
-        if (!existing) {
-          t.frame.cels.set(destId, mirrored);
-          continue;
-        }
+        // The destination may share its buffer with the editor's previous state.
+        // Always obtain it through Draft so a later transaction rollback can restore it.
+        const destination = ctx.draft.cel(destId, t.frame.id);
+        if (!destination) continue;
         // Merge, so several source layers can each contribute to one reflection.
         for (let y = 0; y < mirrored.height; y++) {
           for (let x = 0; x < mirrored.width; x++) {
             const c = mirrored.getColor(x, y);
-            if (c.a !== 0) existing.setColor(x, y, c);
+            if (c.a !== 0) destination.setColor(x, y, c);
           }
         }
       }
@@ -246,14 +245,19 @@ export const mirrorCommand = defineCommand({
 export const rotateCommand = defineCommand({
   name: 'rotate',
   description:
-    'Rotate artwork by a multiple of 90 degrees clockwise. A quarter turn swaps the canvas width and height.',
+    'Rotate artwork by a multiple of 90 degrees clockwise. On a non-square canvas, an odd quarter turn swaps width and height and therefore requires an unscoped whole-document rotation; scoped odd turns are safe on square canvases.',
   params: z.object({
     turns: z.number().int().describe('Number of clockwise quarter turns. 1, 2, 3; other values wrap.'),
     ...scopeShape,
   }),
   apply(ctx, p) {
-    const targets = selectCels(ctx, p.layer, p.frame);
     const turns = ((p.turns % 4) + 4) % 4;
+    if (turns % 2 === 1 && ctx.sprite.width !== ctx.sprite.height && (p.layer !== undefined || p.frame !== undefined)) {
+      throw new Error(
+        'An odd quarter turn swaps the sprite width and height and cannot be scoped to only some cels. Rotate the whole document, or use a fixed-canvas transform for a local part.',
+      );
+    }
+    const targets = selectCels(ctx, p.layer, p.frame);
     for (const t of targets) t.frame.cels.set(t.layerId, rotate90(t.buffer, turns));
     if (turns % 2 === 1) {
       const { width, height } = ctx.sprite;
@@ -335,11 +339,9 @@ export const clearAllCommand = defineCommand({
   params: z.object({}),
   apply(ctx) {
     let cleared = 0;
-    for (const frame of ctx.sprite.frames) {
-      for (const [layerId, buffer] of frame.cels) {
-        clearRegion(buffer);
-        cleared++;
-      }
+    for (const { buffer } of ctx.draft.allCels()) {
+      clearRegion(buffer);
+      cleared++;
     }
     return {
       cels: cleared,

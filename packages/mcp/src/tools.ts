@@ -24,6 +24,7 @@ import {
   buildSpritesheet,
   compositeFrame,
   compositeWithOnion,
+  createEditor,
   describeCommands,
   encodeGIF,
   encodePNG,
@@ -124,10 +125,28 @@ const tilemapDebugSchema = z
   })
   .strict();
 
-/** Shared options for a single-frame preview returned in a mutation response. */
+const previewOnionSchema = z
+  .object({
+    before: z.number().int().min(0).max(8).optional().describe('How many earlier frames to ghost in.'),
+    after: z.number().int().min(0).max(8).optional().describe('How many later frames to ghost in.'),
+    opacity: z.number().min(0).max(1).optional().describe('Ghost opacity, 0-1. Defaults to 0.35.'),
+    loop: z.boolean().optional().describe('Wrap around, so frame 0 ghosts the last frame. Defaults to false.'),
+    beforeTint: z.string().optional().describe('Tint earlier ghosts (e.g. "#ff8080") to show motion direction.'),
+    afterTint: z.string().optional().describe('Tint later ghosts (e.g. "#8080ff").'),
+  })
+  .strict()
+  .optional()
+  .describe('Onion skin: draw neighbouring frames behind each rendered frame as faded ghosts.');
+
+/** Shared sprite/tilemap preview options returned in a mutation response. */
 const previewOptionsObjectSchema = z
   .object({
-    frame: frameRefSchema.optional().describe('Frame id or 0-based index. Defaults to frame 0.'),
+    frame: frameRefSchema.optional().describe('Frame id or 0-based index. Defaults to frame 0. Do not pass with frames: "all".'),
+    frames: z
+      .enum(['one', 'all'])
+      .optional()
+      .describe('"one" (default) renders one frame; "all" renders every frame as a horizontal strip.'),
+    onion: previewOnionSchema,
     tilemap: z
       .union([z.string(), z.number().int()])
       .optional()
@@ -205,6 +224,7 @@ const SESSION_TOOLS: Array<{ name: string; description: string }> = [
   { name: 'export_sheet', description: 'Spritesheet PNG + Aseprite JSON.' },
   { name: 'export_tiled', description: 'Tilemaps as a Tiled `.tmj` map.' },
   { name: 'export_gif', description: 'Write an animated GIF.' },
+  { name: 'apply_ops', description: 'Run a batch of core commands with optional atomic rollback and inline preview.' },
   { name: 'run_script', description: 'Run a sandboxed script.' },
   { name: 'load_plugin', description: 'Load a plugin defining commands.' },
   { name: 'list_plugins', description: 'List loaded plugins.' },
@@ -320,6 +340,16 @@ interface PreviewRenderOptions {
 /** Even a valid 32x request can ask a 4096px canvas for a four-gigapixel image. */
 const MAX_PREVIEW_OUTPUT_PIXELS = 16_777_216;
 
+function assertPreviewOutputSize(width: number, height: number, factor: number): void {
+  const outputWidth = width * factor;
+  const outputHeight = height * factor;
+  if (outputWidth * outputHeight > MAX_PREVIEW_OUTPUT_PIXELS) {
+    throw new Error(
+      `Preview would be ${outputWidth}x${outputHeight} (${outputWidth * outputHeight} pixels), above the ${MAX_PREVIEW_OUTPUT_PIXELS}-pixel safety limit. Reduce scale or crop with rect.`,
+    );
+  }
+}
+
 /** Join the compact boolean switch, its options object and the legacy frame alias. */
 function inlinePreviewOptions(
   enabled: unknown,
@@ -366,6 +396,10 @@ function previewPayload(
     };
   }
 
+  if (options.frames === 'all' && options.frame !== undefined) {
+    throw new Error('Pass either `frame` or `frames: "all"`, not both.');
+  }
+
   const background = resolveBackground(options.background);
   const layerIds = options.layers?.map((ref) => resolveLayer(sprite, ref).id);
   const onion = options.onion;
@@ -390,10 +424,12 @@ function previewPayload(
   const allFrames = options.frames === 'all' && sprite.frames.length > 1;
   if (allFrames) {
     const gap = 1;
-    const strip = new PixelBuffer(
-      sprite.frames.length * sprite.width + (sprite.frames.length - 1) * gap,
-      sprite.height,
-    );
+    const stripWidth = sprite.frames.length * sprite.width + (sprite.frames.length - 1) * gap;
+    const factor = options.scale ?? previewFactor(stripWidth, sprite.height, 256, 16);
+    // Check the logical strip before allocating it. Rendering each frame first can
+    // otherwise consume gigabytes before the existing output-size guard runs.
+    assertPreviewOutputSize(stripWidth, sprite.height, factor);
+    const strip = new PixelBuffer(stripWidth, sprite.height);
     sprite.frames.forEach((frame, index) => strip.blit(renderFrame(frame.id), index * (sprite.width + gap), 0));
     buffer = strip;
     meta = {
@@ -420,13 +456,7 @@ function previewPayload(
   if (options.rect) buffer = extractRegion(buffer, options.rect);
 
   const factor = options.scale ?? previewFactor(buffer.width, buffer.height, 256, 16);
-  const outputWidth = buffer.width * factor;
-  const outputHeight = buffer.height * factor;
-  if (outputWidth * outputHeight > MAX_PREVIEW_OUTPUT_PIXELS) {
-    throw new Error(
-      `Preview would be ${outputWidth}x${outputHeight} (${outputWidth * outputHeight} pixels), above the ${MAX_PREVIEW_OUTPUT_PIXELS}-pixel safety limit. Reduce scale or crop with rect.`,
-    );
-  }
+  assertPreviewOutputSize(buffer.width, buffer.height, factor);
   const shown = factor > 1 ? scaleNearest(buffer, factor) : buffer;
   return {
     blocks: [imageContent(shown)],
@@ -1501,6 +1531,7 @@ function compactType(schema: unknown): string {
 interface CompactCommand {
   name: string;
   description: string;
+  readOnly: boolean;
   params: Record<string, string>;
   required: string[];
 }
@@ -1512,7 +1543,13 @@ function compactCommand(command: ReturnType<typeof describeCommands>[number]): C
   for (const [key, value] of Object.entries(schema.properties ?? {})) {
     params[key] = `${compactType(value)}${required.includes(key) ? '' : '?'}`;
   }
-  return { name: command.name, description: command.description, params, required };
+  return {
+    name: command.name,
+    description: command.description,
+    readOnly: command.readOnly === true,
+    params,
+    required,
+  };
 }
 
 function writeFile(path: string, bytes: Uint8Array): void {
@@ -1930,18 +1967,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           .optional()
           .describe('"one" (default) renders a single frame; "all" renders every frame as a horizontal strip.'),
         layers: previewLayersSchema,
-        onion: z
-          .object({
-            before: z.number().int().min(0).max(8).optional().describe('How many earlier frames to ghost in.'),
-            after: z.number().int().min(0).max(8).optional().describe('How many later frames to ghost in.'),
-            opacity: z.number().min(0).max(1).optional().describe('Ghost opacity, 0-1. Defaults to 0.35.'),
-            loop: z.boolean().optional().describe('Wrap around, so frame 0 ghosts the last frame. Defaults to false.'),
-            beforeTint: z.string().optional().describe('Tint earlier ghosts (e.g. "#ff8080") to show motion direction.'),
-            afterTint: z.string().optional().describe('Tint later ghosts (e.g. "#8080ff").'),
-          })
-          .strict()
-          .optional()
-          .describe('Onion skin: draw the neighbouring frames behind this one as faded ghosts.'),
+        onion: previewOnionSchema,
         scale: previewScaleSchema,
         background: previewBackgroundSchema,
       }),
@@ -2436,14 +2462,14 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Apply a batch of commands',
       description:
-        'Run several commands in one round trip. Far cheaper than one call per edit when you are generating a sprite or all the frames of an animation. Each op is `{command, params}` - or put the params inline: `{command: "draw_rect", layer: "base", rect: {...}, color: "#f00", fill: true}`. Set `defaultLayer`/`defaultFrame` once instead of repeating them in every op. Use `list_commands` to see every available command and its parameters. Returns a per-op result, so a failure tells you exactly which op and why. Pass `preview: true` to get the rendered result in the same response; add `previewOptions: {scale: 4, rect, layers, frame}` to choose a sprite view, or `{tilemap: "Ground", debug: {grid: true, indices: true}}` to inspect an unbaked tile grid without a second call.',
+        'Run several commands in one round trip. Far cheaper than one call per edit when you are generating a sprite or all the frames of an animation. Each op is `{command, params}` - or put the params inline: `{command: "draw_rect", layer: "base", rect: {...}, color: "#f00", fill: true}`. Set `defaultLayer`/`defaultFrame` once instead of repeating them in every op. `atomic: true` restores the exact pre-batch state on any failure. Returns a per-op result, so a failure tells you exactly which op and why. Pass `preview: true` and use `previewOptions: {scale: 4, frame}` for one frame, `{frames: "all", onion}` for a complete animation, or `{tilemap: "Ground", debug: {grid: true, indices: true}}` for an unbaked tile grid.',
       inputSchema: z.object({
         document: documentRef,
         expectedVersion: versionRef,
         atomic: z
           .boolean()
           .optional()
-          .describe('If true, undo every op that succeeded when one fails, so the document is unchanged. Defaults to false.'),
+          .describe('If true, restore the exact pre-batch document, version and history when any op fails. Defaults to false.'),
         stopOnError: z
           .boolean()
           .optional()
@@ -2470,7 +2496,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           .describe('Include a rendered PNG of the result in this response. Defaults to false.'),
         previewOptions: previewOptionsObjectSchema
           .optional()
-          .describe('Configure the inline preview. Requires `preview: true`; use `{scale: 4}` for sprite art or `{tilemap, debug: {grid, indices, highlightCells}}` for an unbaked map.'),
+          .describe('Configure the inline preview. Requires `preview: true`; use `{frames: "all", onion}` for animation review, `{scale: 4}` for sprite art, or `{tilemap, debug}` for an unbaked map.'),
         previewFrame: frameRefSchema
           .optional()
           .describe('Legacy alias for `previewOptions.frame`. Do not pass both.'),
@@ -2496,6 +2522,9 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
       }
       if (previewOptions?.frame !== undefined && previewFrame !== undefined) {
         return fail('Pass either `previewOptions.frame` or the legacy `previewFrame`, not both.');
+      }
+      if (previewOptions?.frames === 'all' && previewFrame !== undefined) {
+        return fail('Pass either the legacy `previewFrame` or `previewOptions.frames: "all"`, not both.');
       }
 
       const expectedVersion = args.expectedVersion as number | undefined;
@@ -2531,7 +2560,15 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
             op = normalizeOp(rawOps[i] ?? {});
           } catch (error) {
             failed++;
-            results.push({ index: i, ok: false, error: briefError(error) });
+            const malformed = { index: i, command: '', code: 'invalid_op', error: briefError(error) };
+            const rawCommand = rawOps[i];
+            const maybeCommand =
+              rawCommand && typeof rawCommand === 'object'
+                ? (rawCommand as Record<string, unknown>).command ?? (rawCommand as Record<string, unknown>).name
+                : undefined;
+            if (typeof maybeCommand === 'string') malformed.command = maybeCommand;
+            results.push({ ...malformed, ok: false });
+            failures.push(malformed);
             if (stopOnError) {
               stoppedAt = i;
               break;
@@ -2578,25 +2615,35 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         }
       };
 
-      if (singleStep) doc.editor.transaction('apply_ops', runOps);
-      else runOps();
+      const atomicFailure = Symbol('apply_ops_atomic_failure');
+      const runBatch = (): void => {
+        runOps();
+        if (atomic && failed > 0) throw atomicFailure;
+      };
+
+      try {
+        if (singleStep) doc.editor.transaction('apply_ops', runBatch);
+        else if (atomic) doc.editor.runAtomic(runBatch);
+        else runOps();
+      } catch (error) {
+        if (error !== atomicFailure) throw error;
+      }
 
       // A skipped tail is the one thing an agent cannot infer from the results, so say
       // it out loud: ops after `stoppedAt` never ran.
       const skipped = stoppedAt === null ? 0 : rawOps.length - stoppedAt - 1;
 
       if (atomic && failed > 0) {
-        // One undo unwinds the whole collapsed transaction; otherwise there is one
-        // history entry per successful op.
-        const undoSteps = singleStep ? Math.min(1, applied) : applied;
-        for (let i = 0; i < undoSteps; i++) doc.editor.undo();
         return ok({
           ok: false,
+          committed: false,
           rolledBack: true,
           applied: 0,
+          succeededBeforeRollback: applied,
           failed,
           skipped,
-          version: doc.editor.version,
+          version: beforeVersion,
+          document: store.summary(doc),
           failures,
           advisories,
         });
@@ -2940,9 +2987,12 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'List all commands',
       description:
-        'The catalogue of drawing, structure, palette and transform commands, including commands that are not individually exposed as tools. Everything in `commands` can be run through `apply_ops`. By default each command is one line: its name, description and parameter types; pass `verbose: true` for the full JSON Schemas. `sessionTools` lists the hand-registered tools (undo/redo/history, perception, export) that are called directly instead of through `apply_ops`.',
+        'Progressive command discovery. The default response is one compact line per command; use `name` for an exact command, `param` to search parameter names, `filter` for a name/description substring, and `verbose: true` for full JSON Schemas. Every command in `commands` can run through `apply_ops`; `sessionTools` are called directly.',
       inputSchema: z.object({
-        filter: z.string().optional().describe('Only return commands whose name or description contains this text.'),
+        name: z.string().min(1).optional().describe('Return only this exact command/session-tool name.'),
+        param: z.string().min(1).optional().describe('Only return commands whose schema contains a parameter with this name.'),
+        filter: z.string().optional().describe('Only return entries whose name or description contains this text.'),
+        limit: z.number().int().min(1).max(256).optional().describe('Maximum command entries to return after filtering.'),
         verbose: z
           .boolean()
           .optional()
@@ -2951,35 +3001,72 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
       annotations: { readOnlyHint: true },
     },
     (args) => {
+      const exactName = args.name as string | undefined;
+      const paramName = (args.param as string | undefined)?.toLowerCase();
       const filter = (args.filter as string | undefined)?.toLowerCase();
-      let catalog = describeCommands(store.registry.list());
-      let sessionTools = SESSION_TOOLS;
+      const limit = args.limit as number | undefined;
+      const registryCommands = store.registry.list();
+      const selectedCommands = exactName
+        ? registryCommands.filter((command) => command.name === exactName)
+        : registryCommands;
+      let catalog = describeCommands(selectedCommands);
+      let sessionTools = [...SESSION_TOOLS];
+
+      if (paramName) {
+        catalog = catalog.filter((command) => {
+          const schema = command.params as { properties?: Record<string, unknown> };
+          return Object.keys(schema.properties ?? {}).some((key) => key.toLowerCase() === paramName);
+        });
+        // Session-tool schemas are not part of the core command registry, so a
+        // parameter search cannot truthfully include them.
+        sessionTools = [];
+      }
       if (filter) {
         catalog = catalog.filter(
-          (c) => c.name.toLowerCase().includes(filter) || c.description.toLowerCase().includes(filter),
+          (command) =>
+            command.name.toLowerCase().includes(filter) || command.description.toLowerCase().includes(filter),
         );
         sessionTools = sessionTools.filter(
-          (t) => t.name.toLowerCase().includes(filter) || t.description.toLowerCase().includes(filter),
+          (tool) => tool.name.toLowerCase().includes(filter) || tool.description.toLowerCase().includes(filter),
         );
       }
+      if (exactName) {
+        sessionTools = sessionTools.filter((tool) => tool.name === exactName);
+      }
+      const totalMatched = catalog.length;
+      const truncated = limit !== undefined && totalMatched > limit;
+      if (limit !== undefined) catalog = catalog.slice(0, limit);
+
       const hint =
-        'Run anything in `commands` through apply_ops, e.g. {"ops": [{"command": "dither_fill", "params": {...}}]}. `sessionTools` are called directly as tools (e.g. `undo`, `get_preview`), not via apply_ops. Pass verbose: true for the full JSON Schemas.';
+        'Run anything in `commands` through apply_ops, e.g. {"ops": [{"command": "dither_fill", "params": {...}}]}. `sessionTools` are called directly as tools. Use name for an exact lookup, param for parameter-name search, and verbose: true for full JSON Schemas.';
+      const build = {
+        ...SKILL_FINGERPRINT,
+        commandCount: registryCommands.length,
+      };
       if (args.verbose === true) {
-        return ok({ ok: true, count: catalog.length, commands: catalog, sessionTools, hint });
+        return ok({
+          ok: true,
+          count: catalog.length,
+          totalMatched,
+          truncated,
+          commands: catalog,
+          sessionTools,
+          build,
+          hint,
+        });
       }
       return ok({
         ok: true,
         count: catalog.length,
+        totalMatched,
+        truncated,
         commands: catalog.map(compactCommand),
         sessionTools,
         // The registry and the guide are both a snapshot of what this process loaded
         // at startup. If either disagrees with a freshly built server, the MCP server
         // is running a stale build and needs restarting - everything here still works,
         // it is just last week's version.
-        build: {
-          ...SKILL_FINGERPRINT,
-          commandCount: store.registry.list().length,
-        },
+        build,
         hint,
       });
     },
@@ -3005,7 +3092,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Run a sandboxed script',
       description:
-        'Run trusted JavaScript against the current document in a constrained `node:vm` context; it is not a security boundary for hostile code. `exec(command, params)` / `tryExec(...)` drive the same command bus as the tools; `draw.*`, `strokeTilemap`, `paintTilemap`, `document()`, `tilemaps()`, `layers()`, `frames()`, `tags()`, `palette()`, `getPixel(x, y)` and `sample(x, y)` provide higher-level editing and state reads; `log(...)` collects output; returning a value yields JSON. The whole script collapses into one undo step. Pass `preview: true` and optionally `previewOptions: {scale: 4, frame, rect, layers, background}` for sprite art, or `{tilemap: "Ground", debug: {grid: true, indices: true}}` for an unbaked map, so the PNG arrives in this same response. There is no intended filesystem, network, `require` or `process` access, and it is killed after the timeout.',
+        'Run trusted JavaScript against the current document in a constrained `node:vm` context; it is not a security boundary for hostile code. `exec(command, params)` / `tryExec(...)` drive the same command bus as the tools; `draw.*`, `strokeTilemap`, `paintTilemap`, `document()`, `tilemaps()`, `layers()`, `frames()`, `tags()`, `palette()`, `getPixel(x, y)` and `sample(x, y)` provide higher-level editing and state reads. The whole script collapses into one undo step. Set `dryRun: true` to execute and validate against an isolated document snapshot without committing it. Pass `preview: true` and `previewOptions` (including `frames: "all"` and onion skin) to return the edited or dry-run result as a PNG in the same response. Errors include source-relative line/column information when available.',
       inputSchema: z.object({
         document: documentRef,
         expectedVersion: versionRef,
@@ -3021,13 +3108,17 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           .describe(
             'Execution budget in milliseconds. Defaults to 15000. Raise it for a script that generates a large field procedurally; a 256x256 scene can be a few hundred command calls inside one script.',
           ),
+        dryRun: z
+          .boolean()
+          .optional()
+          .describe('Execute against an isolated document snapshot for validation and preview only. Never changes the live document, version, history, or dirty state.'),
         preview: z
           .boolean()
           .optional()
           .describe('Return a PNG of the document after the script runs in this same response.'),
         previewOptions: previewOptionsObjectSchema
           .optional()
-          .describe('Configure the inline preview. Requires `preview: true`; `{scale: 4}` is the normal sprite view or `{tilemap, debug}` previews an unbaked map.'),
+          .describe('Configure the inline preview. Requires `preview: true`; `{scale: 4}` is the normal sprite view, `{frames: "all", onion}` checks a complete animation, and `{tilemap, debug}` previews an unbaked map.'),
       }),
     },
     (args) => {
@@ -3042,6 +3133,9 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
       if (previewOptions && args.preview !== true) {
         return fail('`previewOptions` requires `preview: true`.');
       }
+      if (previewOptions?.frames === 'all' && previewOptions.frame !== undefined) {
+        return fail('Pass either `frame` or `frames: "all"`, not both.');
+      }
       const expectedVersion = args.expectedVersion as number | undefined;
       if (expectedVersion !== undefined && expectedVersion !== doc.editor.version) {
         return fail(
@@ -3051,19 +3145,27 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
       }
 
       const timeoutMs = args.timeoutMs as number | undefined;
+      const dryRun = args.dryRun === true;
       // A procedural script that lays down a whole 256x256 scene is a few hundred
       // command calls; the core default of 2s kills it mid-run. Give the MCP path a
       // budget that matches the work agents actually submit.
       const runtime = new ScriptRuntime({ timeoutMs: timeoutMs ?? 15_000 });
-      const before = doc.editor.version;
-      const outcome = runtime.run(args.source as string, doc.editor);
-      if (doc.editor.version !== before) store.touch(doc);
+      const liveVersion = doc.editor.version;
+      const targetEditor = dryRun ? createEditor(doc.editor.snapshot(), doc.editor.registry) : doc.editor;
+      const targetVersion = targetEditor.version;
+      const outcome = runtime.run(args.source as string, targetEditor);
+      const changed = targetEditor.version !== targetVersion;
+      if (!dryRun && changed) store.touch(doc);
 
       if (!outcome.ok) {
         return fail(outcome.error ?? 'The script failed.', {
           code: outcome.code,
+          errorInfo: outcome.errorInfo,
           logs: outcome.logs,
-          version: doc.editor.version,
+          dryRun,
+          committed: false,
+          changed: false,
+          version: liveVersion,
           document: store.summary(doc),
         });
       }
@@ -3074,7 +3176,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
       const inlinePreview = inlinePreviewOptions(args.preview, previewOptions);
       if (inlinePreview) {
         try {
-          const rendered = previewPayload(doc.editor.sprite, inlinePreview);
+          const rendered = previewPayload(targetEditor.sprite, inlinePreview);
           blocks.push(...rendered.blocks);
           preview = rendered.meta;
         } catch (error) {
@@ -3087,10 +3189,13 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           ok: previewError === undefined,
           result: outcome.result,
           logs: outcome.logs,
-          version: doc.editor.version,
+          dryRun,
+          changed,
+          committed: !dryRun && changed,
+          version: dryRun ? liveVersion : doc.editor.version,
           document: store.summary(doc),
           ...(preview ? { preview } : {}),
-          ...(previewError ? { previewError, editCommitted: doc.editor.version !== before } : {}),
+          ...(previewError ? { previewError, editCommitted: !dryRun && changed } : {}),
         },
         blocks,
       );
@@ -3126,7 +3231,10 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
 
       const outcome = scriptRuntime.loadPlugin(source, { name, registry: store.registry });
       if (!outcome.ok) {
-        return fail(outcome.error ?? 'The plugin failed to load.', { logs: outcome.logs });
+        return fail(outcome.error ?? 'The plugin failed to load.', {
+          errorInfo: outcome.errorInfo,
+          logs: outcome.logs,
+        });
       }
 
       for (const commandName of outcome.commands) {

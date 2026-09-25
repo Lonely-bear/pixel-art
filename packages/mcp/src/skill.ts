@@ -247,15 +247,16 @@ render. Break them and no amount of extra shading recovers the result.
   ran first. A named pivot is measured against the artwork's bounding box, which
   includes any outline you have drawn - so \`pivot: "bottom"\` sits on the outline's
   bottom row, one pixel below the body.
-- Check the loop: the last frame should lead back into the first. Look at the
-  sprite sheet, not just the individual frames.
+- Check the loop: the last frame should lead back into the first. Ask for
+  \`previewOptions: {frames: "all", onion: {before: 1, after: 1}}\` from the mutation that
+  finishes the sequence; do not inspect only the individual frames.
 
 ## 8. Iterating
 
 - The fastest draw→look loop is one call: pass \`preview: true\` to \`run_script\` or
-  \`apply_ops\`, plus \`previewOptions\` (and optionally \`frame\`, \`rect\`, \`layers\`, or
-  \`background\`). The command result and a real PNG come back together, so do not spend
-  a second call on \`get_preview\` immediately afterwards.
+  \`apply_ops\`, plus \`previewOptions\` (and optionally \`frame\`, \`frames: "all"\`, \`onion\`,
+  \`rect\`, \`layers\`, or \`background\`). The command result and a real PNG come back together,
+  so do not spend a second call on \`get_preview\` immediately afterwards.
 - **Leave \`scale\` alone for the whole-canvas look.** The default targets roughly 256px
   on the long side, which is a useful overview. Set \`scale: 1\` when a true 1:1 export
   is needed for fine pixel judgement, or crop when you are inspecting one detail.
@@ -551,9 +552,12 @@ For a visual iteration, pass \`preview: true\` and leave \`previewOptions\` at i
 the PNG is returned with the script result, so no follow-up \`get_preview\` call is needed.
 The default integer scale targets about 256px on the long side. Judge the whole piece at
 100% in a separate 1:1 export when fine decisions matter; pass
-\`previewOptions: {rect, scale: 4}\` for a detail. Use \`expectedVersion\` when another
-editor may have changed the document since your last read. \`finalize_document\` saves the
-source and writes PNG exports in one call.
+\`previewOptions: {rect, scale: 4}\` for a detail, or \`{frames: "all", onion}\` to inspect
+an entire animation. Use \`dryRun: true\` to execute and validate against an isolated snapshot
+without touching the live document. Use \`expectedVersion\` when another editor may have
+changed the document since your last read. Runtime failures include source-relative
+\`errorInfo\` when a location is available. \`finalize_document\` saves the source and writes
+PNG exports in one call.
 
 ## What the scripting context gives you
 
@@ -611,9 +615,12 @@ source and writes PNG exports in one call.
 
 ## Undo
 
-A whole script is **one undo step**. Every \`exec\` inside it folds into a single
+A committed whole script is **one undo step**. Every \`exec\` inside it folds into a single
 history entry, so a script that makes fifty edits is undone with one \`undo\`. A
-script that only reads leaves the history untouched.
+script that only reads leaves the history untouched. With \`dryRun: true\`, document commands
+run on an isolated snapshot and the live document is not changed. Loaded plugins are trusted
+code and may still advance their own process-local state; dry-run does not virtualise those
+closures.
 
 ## Example
 

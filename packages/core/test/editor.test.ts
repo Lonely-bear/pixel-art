@@ -292,6 +292,54 @@ describe('editor.transaction', () => {
     expect(editor.canRedo()).toBe(true);
   });
 
+  it('runAtomic restores version and redo exactly when work throws', () => {
+    const editor = createEditor(makeSprite());
+    editor.execute('draw_rect', redRect);
+    editor.undo();
+    const version = editor.version;
+    expect(editor.canRedo()).toBe(true);
+
+    expect(() =>
+      editor.runAtomic(() => {
+        editor.execute('draw_rect', redRect);
+        editor.execute('draw_rect', { ...redRect, rect: { x: 4, y: 4, w: 2, h: 2 } });
+        throw new Error('batch failed');
+      }),
+    ).toThrow('batch failed');
+
+    expect(editor.version).toBe(version);
+    expect(editor.history()).toHaveLength(0);
+    expect(editor.canRedo()).toBe(true);
+    expect(editor.execute('measure_region', { layer: 0, frame: 0 }).opaque).toBe(0);
+  });
+
+  it('runAtomic restores existing pixels for multi-cel commands', () => {
+    const editor = createEditor(makeSprite());
+    editor.execute('draw_rect', redRect);
+
+    expect(() =>
+      editor.runAtomic(() => {
+        editor.execute('clear_all', {});
+        throw new Error('clear then fail');
+      }),
+    ).toThrow('clear then fail');
+
+    expect(editor.execute('measure_region', { layer: 0, frame: 0 }).opaque).toBe(4);
+    expect(editor.history()).toHaveLength(1);
+    expect(editor.history()[0].command).toBe('draw_rect');
+  });
+
+  it('runAtomic keeps normal per-command history on success', () => {
+    const editor = createEditor(makeSprite());
+    editor.runAtomic(() => {
+      editor.execute('draw_rect', redRect);
+      editor.execute('draw_rect', { ...redRect, rect: { x: 4, y: 4, w: 2, h: 2 } });
+    });
+
+    expect(editor.history()).toHaveLength(2);
+    expect(editor.history().map((entry) => entry.command)).toEqual(['draw_rect', 'draw_rect']);
+  });
+
   it('discards the redo stack once it records a step', () => {
     const editor = createEditor(makeSprite());
     editor.execute('draw_rect', redRect);

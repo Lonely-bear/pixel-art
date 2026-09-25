@@ -152,7 +152,13 @@ export function describeParseError(error: unknown): string {
     const extra = issues.length > 4 ? ` (+${issues.length - 4} more)` : '';
     return parts.join('; ') + extra;
   }
-  return error instanceof Error ? error.message : String(error);
+  return errorMessage(error);
+}
+
+/** Read an Error-like value across VM/plugin realms without relying on `instanceof`. */
+function errorMessage(error: unknown): string {
+  const message = (error as { message?: unknown } | null)?.message;
+  return typeof message === 'string' ? message : String(error);
 }
 
 /**
@@ -200,7 +206,7 @@ export function applyCommandWithSummary(
     summary = command.apply({ draft, sprite: draft.sprite }, parsed) ?? {};
   } catch (error) {
     throw new CommandError(
-      `Command ${name} failed: ${error instanceof Error ? error.message : String(error)}`,
+      `Command ${name} failed: ${errorMessage(error)}`,
       'command_failed',
       error,
     );
@@ -277,7 +283,7 @@ export function applyCommandToDraft(
   } catch (error) {
     if (error instanceof CommandError) throw error;
     throw new CommandError(
-      `Command ${name} failed: ${error instanceof Error ? error.message : String(error)}`,
+      `Command ${name} failed: ${errorMessage(error)}`,
       'command_failed',
       error,
     );
@@ -422,6 +428,25 @@ export class Editor {
       redoStack: [],
     };
     return result;
+  }
+
+  /**
+   * Run work with exact-state rollback if it throws.
+   *
+   * Unlike {@link transaction}, a successful call keeps whatever history entries its
+   * commands created. The callback must be synchronous. This is useful for `atomic`
+   * batches that should either commit all of their normal per-command undo steps or
+   * restore the complete editor state - including version and redo stack - without
+   * synthesising an edit by calling undo.
+   */
+  runAtomic<T>(fn: () => T extends PromiseLike<unknown> ? never : T): T {
+    const before = this.current;
+    try {
+      return fn();
+    } catch (error) {
+      this.current = before;
+      throw error;
+    }
   }
 
   undo(): this {

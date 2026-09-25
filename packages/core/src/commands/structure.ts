@@ -149,8 +149,9 @@ export const mergeLayerDownCommand = defineCommand({
     for (const frame of ctx.sprite.frames) {
       const top = frame.cels.get(upper.id);
       if (!top) continue;
-      const below = frame.cels.get(lower.id) ?? new PixelBuffer(ctx.sprite.width, ctx.sprite.height);
-      frame.cels.set(lower.id, below);
+      // The lower cel may share pixels with the previous editor state; Draft.cel()
+      // clones it before the merge so a failed transaction can roll the pixels back.
+      const below = ctx.draft.cel(lower.id, frame.id) ?? new PixelBuffer(ctx.sprite.width, ctx.sprite.height);
       const src = top.data;
       const dst = below.data;
       for (let i = 0; i < src.length; i += 4) {

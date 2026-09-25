@@ -89,6 +89,12 @@ describe('animationSequence', () => {
     expect(animationSequence(sprite).durationMs).toBe(300);
   });
 
+  it('rejects an explicitly named tag that does not exist', () => {
+    const sprite = makeSprite(3, [{ name: 'idle' }]);
+    expect(() => animationSequence(sprite, 'attack')).toThrow(/Unknown animation tag: attack/);
+    expect(() => encodeGIF(sprite, { tag: 'attack' })).toThrow(/Unknown animation tag: attack/);
+  });
+
   it('finds a tag by index, id and name', () => {
     const sprite = makeSprite(3, [{ name: 'idle' }]);
     expect(findTag(sprite, 0)?.name).toBe('idle');

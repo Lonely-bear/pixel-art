@@ -234,8 +234,11 @@ To connect to a running desktop app instead of the standalone server, append
   `list_commands`, `read_skill`, and the scripting tools `run_script`, `load_plugin`,
   `list_plugins`. Loading a plugin registers its commands as real tools on the fly.
   `list_commands` returns the runnable command catalogue plus a `sessionTools` list, so
-  `undo`/`redo`/`get_history` and the perception/export tools are discoverable from one
-  call. `undo`/`redo` take `steps` (alias `count`). `create_document` takes `select: false`
+  `undo`/`redo`/`get_history`, `apply_ops`, and the perception/export tools are discoverable
+  from one call. Its compact response includes `readOnly`; use exact `name`, parameter-name
+  `param`, substring `filter`, and optional `limit` for progressive discovery, then
+  `verbose: true` for full schemas. `undo`/`redo` take `steps` (alias `count`).
+  `create_document` takes `select: false`
   to build a scratch document without stealing focus, `select_document` accepts an id or a
   name, and `get_preview` takes `rect` to crop-zoom a detail. Document summaries expose
   both `active` and `activeDocumentId`; an explicit `get_document {document}` reads without
@@ -257,12 +260,12 @@ To connect to a running desktop app instead of the standalone server, append
    (`before`/`after` counts, `opacity`, `loop`, and separate `beforeTint`/`afterTint`), so an
    agent can inspect a single layer or judge motion without exporting anything.
 2. **`apply_ops` batches.** An agent sends a list of commands in one round trip; with
-   `atomic: true` a failure rolls the whole batch back. It also takes `defaultLayer` /
-   `defaultFrame` so a long batch does not repeat itself, and `quiet: true` to drop the
-   per-op summaries. Pass `preview: true` and the same call returns the resulting PNG;
-   `previewOptions: {frame, rect, layers, scale, background}` chooses the exact iteration
-   view. `run_script` supports the same inline preview, so the usual draw→look→adjust loop
-   needs one call per visual gate rather than two.
+   `atomic: true`, any failure restores the exact pre-batch sprite, version, undo/redo
+   stacks and dirty state. It also takes `defaultLayer` / `defaultFrame` so a long batch does
+   not repeat itself, and `quiet: true` to drop the per-op summaries. Pass `preview: true`
+   and the same call returns the resulting PNG. `previewOptions: {frame, rect, layers, scale,
+   background}` chooses one iteration view; `{frames: "all", onion}` returns the complete
+   animation with neighbouring-frame ghosts. `run_script` supports the same inline preview.
 3. **`expectedVersion` gives optimistic concurrency.** Read a version, pass it back on the
    next write, and a stale edit fails with `version_conflict` instead of clobbering someone
    else's work. Read-only commands never bump the version or eat your redo stack.
@@ -367,15 +370,15 @@ structure for terrain, walls and floors, and it is what an agent uses to build a
 
 ### Exporting an animation
 
-- `export_gif` writes an animated GIF. Omit `tag` for every frame in order, or pass one and the
-  tag's `direction` (`forward`, `reverse`, `pingpong`) and `repeat` decide the frame order and
-  whether it loops — a pingpong idle bounces without duplicating any frames. `scale` upscales
-  by an integer factor and `background` fills transparency.
-- `export_sheet` writes the same frames as a spritesheet PNG plus Aseprite-compatible JSON,
-  with the animation tags exported as `meta.frameTags`. `export_png` with `frames: "all"`
-  writes one file per frame.
-- All three read the frame order from the same `animationSequence` the canvas plays, so a
-  preview and an export always agree.
+- `export_gif` writes an animated GIF. Omit `tag` for every frame in timeline order, or pass
+  an existing tag and its `direction` (`forward`, `reverse`, `pingpong`) and `repeat` decide
+  playback order and looping. An explicitly named tag that does not exist is an error rather
+  than a silent whole-timeline fallback. `scale` upscales by an integer factor and
+  `background` fills transparency.
+- `export_sheet` writes the raw timeline as a spritesheet PNG plus Aseprite-compatible JSON,
+  with animation tags exported as `meta.frameTags`. `export_png` with `frames: "all"`
+  writes one file per raw timeline frame. This keeps engine slicing deterministic; use the
+  GIF or a tag-aware playback sequence when reviewing direction/repeat behaviour.
 
 ## Scripting and plugins
 
@@ -384,7 +387,8 @@ structure for terrain, walls and floors, and it is what an agent uses to build a
 drive the editor through the commands, never touch the filesystem, the network or `process`.
 
 A script runs inside a restricted `node:vm` context with no `require`, no `process`, no `module`,
-no `eval`/`new Function` and no string code generation, under a timeout (2 s by default). Node's
+no `eval`/`new Function` and no string code generation, under a timeout (2 s in the core runtime;
+15 s through MCP unless `timeoutMs` is supplied). Node's
 `vm` API is not a security mechanism, so only run trusted scripts and plugins. It is
 handed a small **context-native** API — `exec`, `tryExec`, `putPixels`, `commands`, `command`,
 `document`, `layers`, `frames`, `tags`, `palette`, `tilemaps`, `mapObjects`,
@@ -403,9 +407,14 @@ log('done', commands().length);
 return { w: document().width };
 ```
 
-**A whole script is one undo step.** The runtime wraps every call in `editor.transaction`, so
-a fifty-command script is a single `Ctrl+Z`, exactly like one brush stroke. A script that only
-reads creates no undo entry at all.
+**A whole script is one undo step.** The runtime wraps every committed call in
+`editor.transaction`, so a fifty-command script is a single `Ctrl+Z`, exactly like one brush
+stroke. A script that only reads creates no undo entry. MCP `run_script { dryRun: true }`
+executes document commands against an isolated snapshot instead, so validation and preview
+never change the live sprite, version, history or dirty state. Loaded plugins remain trusted
+process-local code; their own closure/global counters are not virtualised by dry-run.
+Runtime/command failures include `errorInfo` with a stable phase and, when Node exposes it,
+source-relative line/column plus the command name.
 
 A **plugin** is just a script that calls `defineCommand(...)`. The command it declares is
 validated by a generated zod schema and registered on the live registry, so it shows up in the
@@ -436,7 +445,7 @@ json`, each accepting `required`, `default`, `description`, `min`, `max` and (fo
 
 Ways to run them:
 
-- **MCP** — `run_script` (`{ document, source, timeoutMs?, expectedVersion?, preview?, previewOptions? }`), `load_plugin`
+- **MCP** — `run_script` (`{ document, source, timeoutMs?, dryRun?, expectedVersion?, preview?, previewOptions? }`), `load_plugin`
   (`{ source? | path?, name? }`, which hot-registers the new tools and emits
   `notifications/tools/list_changed`) and `list_plugins`. `pixel://script-guide` is the API
   reference an agent reads first.

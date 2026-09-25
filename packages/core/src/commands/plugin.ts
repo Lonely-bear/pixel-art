@@ -135,6 +135,9 @@ export function createPluginCommand(
       `Invalid plugin command name: ${JSON.stringify(def?.name)}. Use lowercase snake case, e.g. "draw_star".`,
     );
   }
+  if (def.readOnly !== undefined && typeof def.readOnly !== 'boolean') {
+    throw new Error(`Plugin command ${def.name} has a non-boolean readOnly value.`);
+  }
   return {
     name: def.name,
     description: def.description ?? '',

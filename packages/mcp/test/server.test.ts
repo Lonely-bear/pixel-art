@@ -137,6 +137,50 @@ describe('tool surface', () => {
     expect(full.params.additionalProperties).toBe(false);
   });
 
+  it('supports exact command lookup, parameter search and read-only metadata', async () => {
+    const exact = payload((await client.callTool({
+      name: 'list_commands',
+      arguments: { name: 'draw_rect' },
+    })) as ToolResult);
+    expect(exact.count).toBe(1);
+    expect((exact.commands as Array<{ name: string; readOnly: boolean }>)[0]).toMatchObject({
+      name: 'draw_rect',
+      readOnly: false,
+    });
+
+    const byParam = payload((await client.callTool({
+      name: 'list_commands',
+      arguments: { param: 'hueShift' },
+    })) as ToolResult);
+    expect((byParam.commands as Array<{ name: string }>).map((command) => command.name)).toEqual(
+      expect.arrayContaining(['add_palette_ramp', 'banded_gradient', 'noise_fill']),
+    );
+
+    const readOnly = payload((await client.callTool({
+      name: 'list_commands',
+      arguments: { name: 'measure_region' },
+    })) as ToolResult);
+    expect((readOnly.commands as Array<{ readOnly: boolean }>)[0].readOnly).toBe(true);
+
+    const session = payload((await client.callTool({
+      name: 'list_commands',
+      arguments: { name: 'get_preview' },
+    })) as ToolResult);
+    expect(session.count).toBe(0);
+    expect((session.sessionTools as Array<{ name: string }>).map((tool) => tool.name)).toEqual(['get_preview']);
+
+    const limited = payload((await client.callTool({
+      name: 'list_commands',
+      arguments: { filter: 'draw', limit: 2 },
+    })) as ToolResult);
+    expect(limited.count).toBe(2);
+    expect(limited.totalMatched).toBeGreaterThan(2);
+    expect(limited.truncated).toBe(true);
+
+    const allSessions = payload((await client.callTool({ name: 'list_commands', arguments: {} })) as ToolResult);
+    expect((allSessions.sessionTools as Array<{ name: string }>).map((tool) => tool.name)).toContain('apply_ops');
+  });
+
   it('documents the landscape primitives well enough to call without reading the source', async () => {
     const body = payload((await client.callTool({ name: 'list_commands', arguments: {} })) as ToolResult);
     const commands = body.commands as Array<{ name: string; description: string; params: Record<string, string> }>;
@@ -271,13 +315,17 @@ describe('editing', () => {
     const before = payload(
       (await client.callTool({ name: 'measure_region', arguments: {} })) as ToolResult,
     ).summary as { opaque: number };
+    const historyBefore = payload(
+      (await client.callTool({ name: 'get_history', arguments: {} })) as ToolResult,
+    );
 
     const rolled = (await client.callTool({
       name: 'apply_ops',
       arguments: {
         atomic: true,
         ops: [
-          { command: 'draw_rect', rect: { x: 8, y: 8, w: 2, h: 2 }, color: '#dad45e', fill: true },
+          { command: 'clear_all' },
+          { command: 'measure_region' },
           { command: 'this_command_does_not_exist' },
         ],
       },
@@ -285,15 +333,47 @@ describe('editing', () => {
 
     const rolledBody = payload(rolled);
     expect(rolledBody.ok).toBe(false);
+    expect(rolledBody.committed).toBe(false);
     expect(rolledBody.rolledBack).toBe(true);
     expect(rolledBody.applied).toBe(0);
+    expect(rolledBody.succeededBeforeRollback).toBe(2);
+    expect(rolledBody.version).toBe(historyBefore.version);
 
-    // The rollback restored the artwork. The version counter still moves forward,
-    // because undo is itself an edit.
     const after = payload(
       (await client.callTool({ name: 'measure_region', arguments: {} })) as ToolResult,
     ).summary as { opaque: number };
     expect(after.opaque).toBe(before.opaque);
+    const historyAfter = payload(
+      (await client.callTool({ name: 'get_history', arguments: {} })) as ToolResult,
+    );
+    expect(historyAfter.version).toBe(historyBefore.version);
+    expect(historyAfter.entries).toEqual(historyBefore.entries);
+    expect(historyAfter.total).toBe(historyBefore.total);
+  });
+
+  it('does not undo prior history when an atomic single-step batch only had a read-only success', async () => {
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { rect: { x: 0, y: 0, w: 2, h: 2 }, color: '#ff0000', fill: true },
+    });
+    await client.callTool({ name: 'undo', arguments: {} });
+    const before = payload((await client.callTool({ name: 'get_history', arguments: {} })) as ToolResult);
+    expect(before.canRedo).toBe(true);
+
+    const rolled = payload((await client.callTool({
+      name: 'apply_ops',
+      arguments: {
+        atomic: true,
+        singleUndoStep: true,
+        ops: [{ command: 'measure_region' }, { command: 'missing_after_read' }],
+      },
+    })) as ToolResult);
+    expect(rolled.rolledBack).toBe(true);
+
+    const after = payload((await client.callTool({ name: 'get_history', arguments: {} })) as ToolResult);
+    expect(after.version).toBe(before.version);
+    expect(after.canRedo).toBe(true);
+    expect(after.entries).toEqual(before.entries);
   });
 
   it('rejects a stale expectedVersion', async () => {
@@ -309,6 +389,19 @@ describe('editing', () => {
       arguments: { rect: { x: 0, y: 0, w: 1, h: 1 }, color: '#fff', expectedVersion: 1 },
     })) as ToolResult;
     expect(payload(good).ok).toBe(true);
+  });
+
+  it('keeps malformed-op diagnostics in atomic and quiet responses', async () => {
+    const result = (await client.callTool({
+      name: 'apply_ops',
+      arguments: { atomic: true, quiet: true, ops: [{ oops: 'missing command' }] },
+    })) as ToolResult;
+    const body = payload(result);
+
+    expect(body).toMatchObject({ ok: false, failed: 1, rolledBack: true });
+    expect(body.failures).toEqual([
+      expect.objectContaining({ index: 0, code: 'invalid_op', error: expect.stringMatching(/needs a "command" string/i) }),
+    ]);
   });
 
   it('rejects an unknown op parameter instead of silently ignoring it', async () => {
@@ -1275,6 +1368,47 @@ describe('apply_ops preview', () => {
     expect(image.getColor(0, 0)).toEqual({ r: 0, g: 255, b: 0, a: 255 });
   });
 
+  it('returns every edited frame from the same apply_ops call', async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 4, height: 4, layers: ['base'], frames: 3 },
+    });
+    const result = (await client.callTool({
+      name: 'apply_ops',
+      arguments: {
+        ops: [
+          { command: 'draw_rect', frame: 0, rect: { x: 0, y: 0, w: 1, h: 1 }, color: '#ff0000', fill: true },
+          { command: 'draw_rect', frame: 1, rect: { x: 1, y: 1, w: 1, h: 1 }, color: '#00ff00', fill: true },
+          { command: 'draw_rect', frame: 2, rect: { x: 2, y: 2, w: 1, h: 1 }, color: '#0000ff', fill: true },
+        ],
+        preview: true,
+        previewOptions: { frames: 'all', scale: 1 },
+      },
+    })) as ToolResult;
+
+    expect(payload(result).preview).toMatchObject({ mode: 'all-frames', frameCount: 3, scale: 1 });
+    const image = decodedImage(result);
+    expect([image.width, image.height]).toEqual([14, 4]);
+    expect(image.getColor(0, 0)).toEqual({ r: 255, g: 0, b: 0, a: 255 });
+    expect(image.getColor(6, 1)).toEqual({ r: 0, g: 255, b: 0, a: 255 });
+    expect(image.getColor(12, 2)).toEqual({ r: 0, g: 0, b: 255, a: 255 });
+  });
+
+  it('rejects an oversized all-frame strip before allocating it', async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 4096, height: 1024, layers: ['base'], frames: 5 },
+    });
+    const result = (await client.callTool({
+      name: 'get_preview',
+      arguments: { frames: 'all', scale: 1 },
+    })) as ToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(firstText(result)).toMatch(/safety limit/i);
+    expect(result.content.some((content) => content.type === 'image')).toBe(false);
+  });
+
   it('rejects previewOptions without preview before running any op', async () => {
     const created = (await client.callTool({
       name: 'create_document',
@@ -1404,6 +1538,32 @@ describe('scripting and plugins', () => {
     expect(buf.getColor(1, 0).a).toBe(0);
   });
 
+  it('returns the committed script version and accepts it as the next expectedVersion', async () => {
+    const id = await makeDoc();
+    const run = payload((await client.callTool({
+      name: 'run_script',
+      arguments: {
+        document: id,
+        source: `exec('draw_pixels', { layer: 0, frame: 0, pixels: [{ x: 0, y: 0, color: '#ff0000' }] }); return 1;`,
+      },
+    })) as ToolResult);
+    const detail = payload((await client.callTool({ name: 'get_document', arguments: { document: id } })) as ToolResult);
+    expect(run.version).toBe((detail.document as { version: number }).version);
+
+    const next = (await client.callTool({
+      name: 'draw_rect',
+      arguments: {
+        document: id,
+        expectedVersion: run.version,
+        rect: { x: 1, y: 1, w: 1, h: 1 },
+        color: '#00ff00',
+        fill: true,
+      },
+    })) as ToolResult;
+    expect(next.isError).toBeFalsy();
+    expect(payload(next).version).toBe((run.version as number) + 1);
+  });
+
   it('uses the same layer/frame defaults as generated tools and exposes sampleComposite', async () => {
     const id = await makeDoc();
     const result = (await client.callTool({
@@ -1445,6 +1605,84 @@ describe('scripting and plugins', () => {
     expect(body.preview).toMatchObject({ scale: 3, imageWidth: 12, imageHeight: 12 });
     expect(image.getColor(0, 0)).toEqual({ r: 255, g: 0, b: 0, a: 255 });
     expect(image.getColor(9, 9).a).toBe(0);
+  });
+
+  it('dry-runs a script and previews all shadow frames without changing the live document', async () => {
+    const created = (await client.callTool({
+      name: 'create_document',
+      arguments: { width: 4, height: 4, layers: ['base'], frames: 2 },
+    })) as ToolResult;
+    const id = (payload(created).document as { id: string }).id;
+    const historyBefore = payload((await client.callTool({ name: 'get_history', arguments: { document: id } })) as ToolResult);
+
+    const run = (await client.callTool({
+      name: 'run_script',
+      arguments: {
+        document: id,
+        dryRun: true,
+        source: `
+          const base = layers()[0].id;
+          exec('draw_pixels', { layer: base, frame: 0, pixels: [{ x: 0, y: 0, color: '#ff0000' }] });
+          exec('draw_pixels', { layer: base, frame: 1, pixels: [{ x: 1, y: 1, color: '#00ff00' }] });
+          return 'shadow';
+        `,
+        preview: true,
+        previewOptions: {
+          frames: 'all',
+          onion: { before: 1, after: 1, opacity: 0.5 },
+          scale: 1,
+        },
+      },
+    })) as ToolResult;
+
+    const body = payload(run);
+    expect(body).toMatchObject({
+      ok: true,
+      result: 'shadow',
+      dryRun: true,
+      changed: true,
+      committed: false,
+    });
+    expect(body.preview).toMatchObject({ mode: 'all-frames', frameCount: 2 });
+    const image = decodedImage(run);
+    expect([image.width, image.height]).toEqual([9, 4]);
+    expect(image.getColor(0, 0)).toEqual({ r: 255, g: 0, b: 0, a: 255 });
+
+    const detail = payload((await client.callTool({ name: 'get_document', arguments: { document: id } })) as ToolResult);
+    const historyAfter = payload((await client.callTool({ name: 'get_history', arguments: { document: id } })) as ToolResult);
+    expect((detail.document as { version: number }).version).toBe(historyBefore.version);
+    expect(historyAfter.entries).toEqual(historyBefore.entries);
+    const measured = payload((await client.callTool({
+      name: 'measure_region',
+      arguments: { document: id, layer: 'base', frame: 0 },
+    })) as ToolResult);
+    expect((measured.summary as { opaque: number }).opaque).toBe(0);
+  });
+
+  it('returns source-relative error details for a dry-run failure', async () => {
+    const id = await makeDoc();
+    const before = payload((await client.callTool({ name: 'get_history', arguments: { document: id } })) as ToolResult);
+    const run = (await client.callTool({
+      name: 'run_script',
+      arguments: {
+        document: id,
+        dryRun: true,
+        source: `const before = true;\nthrow new Error('dry boom');`,
+      },
+    })) as ToolResult;
+
+    expect(run.isError).toBe(true);
+    const body = payload(run);
+    expect(body).toMatchObject({ dryRun: true, committed: false, changed: false, version: before.version });
+    expect(body.errorInfo).toMatchObject({
+      message: 'dry boom',
+      phase: 'runtime',
+      line: 2,
+      sourceName: 'source',
+    });
+
+    const after = payload((await client.callTool({ name: 'get_history', arguments: { document: id } })) as ToolResult);
+    expect(after.entries).toEqual(before.entries);
   });
 
   it('honours expectedVersion before running a script', async () => {

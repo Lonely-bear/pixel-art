@@ -202,7 +202,7 @@ pixel apply hero.pixel --ops ops.json
 
 | 能力 | 作用 |
 | --- | --- |
-| `get_preview` | 返回真实 PNG，可选择裁剪、缩放、隔离图层或洋葱皮显示。 |
+| `get_preview` | 返回单帧或全部帧的真实 PNG，可选择裁剪、缩放、隔离图层或洋葱皮显示。 |
 | `preview_tilemap` | 渲染未烘焙的地图，可叠加瓦片网格、数字索引、无效单元格和变更区域。 |
 | `apply_ops` | 批量执行编辑操作，支持原子回滚，并可在同一次往返中返回预览。 |
 | `expectedVersion` | 通过版本冲突拒绝过期写入，避免覆盖更新的工作。 |
@@ -210,7 +210,7 @@ pixel apply hero.pixel --ops ops.json
 | `add_palette_ramp` | 构建色相偏移的材质渐变，而不是简单的平面插值。 |
 | `quality_report` | 报告光栅缺陷和构图证据，或分析瓦片地图的变体、重复、开放边缘和连通地形。 |
 | `finalize_document` | 一次调用即可保存可编辑的 `.pixel` 源文件并写出所需的 PNG 导出。 |
-| `run_script` | 将有时限的 JavaScript 批处理作为单个撤销步骤运行。 |
+| `run_script` | 将有时限的 JavaScript 批处理作为单个撤销步骤运行，并提供隔离 dry-run 和源码相对错误诊断。 |
 | `load_plugin` | 将插件命令注册为实时 MCP 工具。 |
 
 实用的 Agent 工作循环刻意保持简短：
@@ -253,7 +253,7 @@ draw.rect({
 });
 
 putPixels({ x: 8, y: 0, w: 2, h: 1 }, '/wAA/wD/AIA=');
-const reflected = sampleComposite({ x: 1, y: 1 });
+const reflected = sampleComposite(1, 1);
 
 log('done', commands().length);
 return { base, reflected };

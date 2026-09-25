@@ -11,6 +11,8 @@ import type { Command } from './types.js';
 export interface CommandDescription {
   name: string;
   description: string;
+  /** True when executing the command cannot mutate the document or its history. */
+  readOnly?: boolean;
   /** JSON Schema (draft 2020-12) describing the command's parameters. */
   params: Record<string, unknown>;
 }
@@ -19,6 +21,7 @@ export function describeCommand(command: Command): CommandDescription {
   return {
     name: command.name,
     description: command.description,
+    readOnly: command.readOnly === true,
     params: toJSONSchema(command.params) as unknown as Record<string, unknown>,
   };
 }

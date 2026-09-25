@@ -2,6 +2,20 @@
 
 All notable changes to dotloom-mcp are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- `run_script.dryRun` executes against an isolated document snapshot and returns structured source-relative error diagnostics.
+- Inline `apply_ops`/`run_script` previews now accept `frames: "all"` and onion-skin options.
+- `list_commands` supports exact `name`, parameter-name `param`, result `limit`, and command `readOnly` metadata.
+
+### Fixed
+
+- `apply_ops.atomic` now restores the exact pre-batch sprite, version, undo/redo state instead of undoing a count that included read-only commands.
+- Explicitly requesting a missing animation tag now fails instead of silently exporting the full timeline.
+- Scoped odd quarter-turn rotations are rejected before they can leave cels and sprite dimensions inconsistent.
+
 ## [0.1.3] - 2026-09-25
 
 ### Added

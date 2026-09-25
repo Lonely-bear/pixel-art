@@ -64,7 +64,8 @@ Workflow that works:
    or when a structural change means you need a fresh view.
 2. Block the silhouette in one flat colour. For the fast draw→look loop, call
    \`run_script\` or \`apply_ops\` with \`preview: true\` and
-   \`previewOptions: {scale: 4}\`; inspect that returned PNG before the next pass.
+   \`previewOptions: {scale: 4}\` (or \`{frames: "all", onion}\` for a completed animation);
+   inspect that returned PNG before the next pass.
    Use \`get_preview\` when you need a view without making an edit.
 3. Build material ramps with \`add_palette_ramp\` (dark anchor, light anchor, steps,
    \`hueShift\`) and shade with them, then outline selectively. On large canvases use

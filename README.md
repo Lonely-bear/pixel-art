@@ -202,7 +202,7 @@ The tool catalog is generated from the same Zod schemas used to validate command
 
 | Capability | Why it matters |
 | --- | --- |
-| `get_preview` | Returns an actual PNG, optionally cropped, zoomed, layer-isolated, or onion-skinned. |
+| `get_preview` | Returns an actual PNG for one frame or all frames, optionally cropped, zoomed, layer-isolated, or onion-skinned. |
 | `preview_tilemap` | Renders an unbaked map with optional tile grid, numeric indices, invalid-cell and changed-area overlays. |
 | `apply_ops` | Batches edits, supports atomic rollback, and can return a preview in the same round trip. |
 | `expectedVersion` | Rejects stale writes with a version conflict instead of overwriting newer work. |
@@ -210,7 +210,7 @@ The tool catalog is generated from the same Zod schemas used to validate command
 | `add_palette_ramp` | Builds hue-shifted material ramps instead of flat interpolation. |
 | `quality_report` | Reports raster defects and composition evidence, or analyses a tilemap's variants, repetition, open edges and connected terrain. |
 | `finalize_document` | Saves the editable `.pixel` source and writes the requested PNG exports in one call. |
-| `run_script` | Runs a time-limited JavaScript batch as a single undo step. |
+| `run_script` | Runs a time-limited JavaScript batch as a single undo step, with isolated dry-run and source-relative error diagnostics. |
 | `load_plugin` | Registers plugin commands as live MCP tools. |
 
 A practical agent loop is deliberately short:
@@ -253,7 +253,7 @@ draw.rect({
 });
 
 putPixels({ x: 8, y: 0, w: 2, h: 1 }, '/wAA/wD/AIA=');
-const reflected = sampleComposite({ x: 1, y: 1 });
+const reflected = sampleComposite(1, 1);
 
 log('done', commands().length);
 return { base, reflected };
