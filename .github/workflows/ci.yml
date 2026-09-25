@@ -65,7 +65,7 @@ jobs:
           npm init -y >/dev/null
           npm install "$GITHUB_WORKSPACE/$TARBALL"
           ./node_modules/.bin/pixel --version | tee version.json
-          node -e "const v=require('./version.json'); if (v.name !== 'dotloom-mcp' || v.version !== '0.2.0') process.exit(1)"
+          node -e "const v=require('./version.json'); if (v.name !== 'dotloom-mcp' || v.version !== '0.3.0') process.exit(1)"
           ./node_modules/.bin/pixel-mcp --version
           ./node_modules/.bin/pixel-art-mcp --version
           ./node_modules/.bin/dotloom-mcp --version
@@ -76,7 +76,7 @@ jobs:
           import { Client } from '@modelcontextprotocol/sdk/client/index.js';
           import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
           import { VERSION, core, mcp, script } from 'dotloom-mcp';
-          if (VERSION !== '0.2.0') throw new Error(`unexpected package version: ${VERSION}`);
+          if (VERSION !== '0.3.0') throw new Error(`unexpected package version: ${VERSION}`);
           if (core.createSprite({ width: 2, height: 2 }).width !== 2) throw new Error('core API unavailable');
           if (typeof mcp.createPixelServer !== 'function') throw new Error('MCP API unavailable');
           if (typeof script.ScriptRuntime !== 'function') throw new Error('script API unavailable');

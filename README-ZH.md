@@ -340,7 +340,7 @@ npm pack --dry-run
 
 仓库使用 pnpm workspace、严格 TypeScript、Vitest 和干净构建 CI 检查。公开 npm 包会将内部 workspace 代码打包进去，同时将普通 npm 依赖保留为外部依赖。
 
-> **分发范围：** `dotloom-mcp@0.2.0` 发布 CLI、库入口和独立 MCP 服务器。本版本中的 Electron 应用仍以源代码形式提供；桌面安装程序不属于 npm tarball 的一部分。
+> **分发范围：** `dotloom-mcp@0.3.0` 发布 CLI、库入口和独立 MCP 服务器。本版本中的 Electron 应用仍以源代码形式提供；桌面安装程序不属于 npm tarball 的一部分。
 
 ## 安全与本地信任
 
@@ -359,7 +359,7 @@ npm pack --dry-run
 
 ## 项目状态
 
-`dotloom-mcp@0.2.0` 是当前可安装的 CLI/MCP 版本。
+`dotloom-mcp@0.3.0` 是当前可安装的 CLI/MCP 版本。
 
 - [x] 核心文档模型、光栅器、命令总线、历史记录和原生序列化
 - [x] PNG、精灵图、GIF、Aseprite 导入和 Tiled 导出
