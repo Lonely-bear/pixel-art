@@ -8,8 +8,10 @@ import {
   getLayer,
   resolveFrame,
   resolveLayer,
+  spriteDurationMs,
   type AnimationTag,
   type Layer,
+  type Sprite,
 } from '../document.js';
 import { makeId } from '../ids.js';
 import { quantizeBuffer } from '../palette.js';
@@ -25,6 +27,21 @@ import {
   layerRefSchema,
   resolveColor,
 } from './types.js';
+
+const tagRefSchema = z
+  .union([z.string(), z.number().int()])
+  .describe('Tag ID, tag name, or 0-based index.');
+
+const frameRangeSchema = z
+  .object({
+    from: z.number().int().min(0).describe('First frame index, inclusive.'),
+    to: z.number().int().min(0).describe('Last frame index, inclusive.'),
+  })
+  .strict();
+
+const frameSelectionSchema = z
+  .union([z.literal('all'), frameRangeSchema, z.array(frameRefSchema).min(1)])
+  .describe('"all", an inclusive index range, or an explicit list of frame IDs/indexes.');
 
 /* ------------------------------------------------------------------ *
  * Layers
@@ -250,6 +267,79 @@ export const updateFrameCommand = defineCommand({
   },
 });
 
+function frameIndexesForSelection(
+  sprite: Sprite,
+  selection: z.infer<typeof frameSelectionSchema>,
+): number[] {
+  if (selection === 'all') return sprite.frames.map((_, index) => index);
+  if (Array.isArray(selection)) {
+    return selection.map((ref) => sprite.frames.findIndex((frame) => frame.id === resolveFrame(sprite, ref).id));
+  }
+  const from = Math.min(selection.from, selection.to);
+  const to = Math.max(selection.from, selection.to);
+  if (to >= sprite.frames.length) {
+    throw new Error(`Frame range ${selection.from}-${selection.to} exceeds frame count ${sprite.frames.length}`);
+  }
+  return Array.from({ length: to - from + 1 }, (_, offset) => from + offset);
+}
+
+const frameDurationUpdateSchema = z
+  .object({
+    frames: frameSelectionSchema.optional().describe('Frames to update. Defaults to every frame.'),
+    tag: tagRefSchema.optional().describe('Update the inclusive frame range of this animation tag.'),
+    durationMs: z.number().int().min(1).describe('New duration in milliseconds.'),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.frames !== undefined && value.tag !== undefined) {
+      ctx.addIssue({ code: 'custom', message: 'Pass either frames or tag, not both.' });
+    }
+  });
+
+export const setFrameDurationsCommand = defineCommand({
+  name: 'set_frame_durations',
+  description:
+    'Set durations for many frames in one validated command. Each update targets all frames, an inclusive range, an explicit frame list, or a tag range. Later updates win when selectors overlap.',
+  params: z.object({
+    updates: z.array(frameDurationUpdateSchema).min(1).max(64),
+  }),
+  apply(ctx, p) {
+    const planned = p.updates.map((update, updateIndex) => {
+      let indexes: number[];
+      if (update.tag !== undefined) {
+        const tag = resolveTag(ctx.sprite, update.tag);
+        const from = Math.min(tag.from, tag.to);
+        const to = Math.max(tag.from, tag.to);
+        indexes = Array.from({ length: to - from + 1 }, (_, offset) => from + offset);
+      } else {
+        indexes = frameIndexesForSelection(ctx.sprite, update.frames ?? 'all');
+      }
+      return { updateIndex, durationMs: update.durationMs, indexes };
+    });
+
+    const results: Array<Record<string, unknown>> = [];
+    let changed = 0;
+    for (const plan of planned) {
+      const frames = plan.indexes.map((index) => {
+        const frame = ctx.sprite.frames[index];
+        if (!frame) throw new Error(`Unknown frame index: ${index}`);
+        const previous = frame.durationMs;
+        frame.durationMs = plan.durationMs;
+        if (previous !== plan.durationMs) changed++;
+        return { index, frameId: frame.id, previous, durationMs: frame.durationMs };
+      });
+      results.push({ updateIndex: plan.updateIndex, count: frames.length, frames });
+    }
+
+    return {
+      updates: results,
+      changed,
+      frameCount: ctx.sprite.frames.length,
+      totalDurationMs: spriteDurationMs(ctx.sprite),
+    };
+  },
+});
+
 export const reorderFrameCommand = defineCommand({
   name: 'reorder_frame',
   description: 'Move a frame to a new index.',
@@ -412,6 +502,99 @@ export const removePaletteColorCommand = defineCommand({
   },
 });
 
+export const prunePaletteCommand = defineCommand({
+  name: 'prune_palette',
+  description:
+    'Find palette entries unused by the selected document/frame/tag pixels. This scans raw cels, including hidden layers, so a colour used only in another frame is not removed. Dry-run is the default; pass dryRun:false to commit.',
+  params: z.object({
+    scope: z
+      .enum(['document', 'frame', 'tag'])
+      .optional()
+      .describe('Pixels to inspect. Defaults to every cel in the document.'),
+    frame: frameRefSchema.optional().describe('Required with scope: "frame".'),
+    tag: tagRefSchema.optional().describe('Required with scope: "tag"; inspects its inclusive range.'),
+    keep: z.array(z.number().int().min(0)).max(256).optional().describe('Palette indices that must never be removed.'),
+    dryRun: z.boolean().optional().describe('Report candidates without changing the palette. Defaults to true.'),
+  }),
+  apply(ctx, p) {
+    const scope = p.scope ?? 'document';
+    if (scope === 'document' && (p.frame !== undefined || p.tag !== undefined)) {
+      throw new Error('`frame` and `tag` require scope: "frame" or scope: "tag".');
+    }
+    if (scope === 'frame' && p.frame === undefined) throw new Error('scope: "frame" requires `frame`.');
+    if (scope === 'tag' && p.tag === undefined) throw new Error('scope: "tag" requires `tag`.');
+    if (scope !== 'frame' && p.frame !== undefined) throw new Error('`frame` requires scope: "frame".');
+    if (scope !== 'tag' && p.tag !== undefined) throw new Error('`tag` requires scope: "tag".');
+
+    const palette = ctx.draft.palette();
+    const keep = new Set(p.keep ?? []);
+    for (const index of keep) {
+      if (index >= palette.colors.length) {
+        throw new Error(`Kept palette index ${index} is out of range (size ${palette.colors.length})`);
+      }
+    }
+
+    let frameIndexes = ctx.sprite.frames.map((_, index) => index);
+    if (scope === 'frame') {
+      const frame = resolveFrame(ctx.sprite, p.frame!);
+      frameIndexes = [ctx.sprite.frames.indexOf(frame)];
+    } else if (scope === 'tag') {
+      const tag = resolveTag(ctx.sprite, p.tag!);
+      const from = Math.min(tag.from, tag.to);
+      const to = Math.max(tag.from, tag.to);
+      frameIndexes = Array.from({ length: to - from + 1 }, (_, offset) => from + offset);
+    }
+
+    const used = new Set<number>();
+    for (const frameIndex of frameIndexes) {
+      const frame = ctx.sprite.frames[frameIndex];
+      if (!frame) throw new Error(`Unknown frame index: ${frameIndex}`);
+      for (const buffer of frame.cels.values()) {
+        for (let i = 0; i < buffer.data.length; i += 4) {
+          if (buffer.data[i + 3] === 0) continue;
+          used.add(packColor({
+            r: buffer.data[i],
+            g: buffer.data[i + 1],
+            b: buffer.data[i + 2],
+            a: buffer.data[i + 3],
+          }));
+        }
+      }
+    }
+
+    const candidates = palette.colors
+      .map((color, index) => ({ color, index, packed: packColor(color) }))
+      .filter(({ index, packed }) => !keep.has(index) && !used.has(packed));
+    const remaining = palette.colors.length - candidates.length;
+    if (remaining < 1) throw new Error('Cannot prune every palette entry; keep at least one colour.');
+
+    const removed = candidates.map(({ color, index }) => ({ index, color: colorToHex(color, true) }));
+    const indexMap: Record<string, number | null> = {};
+    let nextIndex = 0;
+    palette.colors.forEach((_, oldIndex) => {
+      indexMap[String(oldIndex)] = candidates.some((candidate) => candidate.index === oldIndex) ? null : nextIndex++;
+    });
+
+    const dryRun = p.dryRun !== false;
+    if (!dryRun && candidates.length > 0) {
+      const remove = new Set(candidates.map((candidate) => candidate.index));
+      palette.colors = palette.colors.filter((_, index) => !remove.has(index));
+    }
+
+    return {
+      dryRun,
+      scope,
+      inspectedFrames: frameIndexes.length,
+      usedColors: used.size,
+      removed,
+      removedCount: removed.length,
+      remaining,
+      indexMap,
+      paletteSize: palette.colors.length,
+    };
+  },
+});
+
 export const quantizeToPaletteCommand = defineCommand({
   name: 'quantize_to_palette',
   description:
@@ -470,10 +653,6 @@ export function resolveTag(sprite: { tags: AnimationTag[] }, ref: string | numbe
   if (byName) return byName;
   throw new Error(`Unknown tag: ${ref}`);
 }
-
-const tagRefSchema = z
-  .union([z.string(), z.number().int()])
-  .describe('Tag ID, tag name, or 0-based index.');
 
 export const addTagCommand = defineCommand({
   name: 'add_tag',
@@ -539,6 +718,93 @@ export const updateTagCommand = defineCommand({
     if (p.direction !== undefined) tag.direction = p.direction;
     if (p.repeat !== undefined) tag.repeat = p.repeat;
     return { tagId: tag.id };
+  },
+});
+
+const upsertTagSchema = z
+  .object({
+    tag: tagRefSchema.optional().describe('Existing tag ID/name/index to update. Omit to create a tag.'),
+    name: z.string().min(1).optional().describe('Final tag name. Required when creating.'),
+    from: z.number().int().min(0).optional().describe('First frame index. Required when creating.'),
+    to: z.number().int().min(0).optional().describe('Last frame index. Required when creating.'),
+    direction: z.enum(['forward', 'reverse', 'pingpong']).optional(),
+    repeat: z.number().int().min(0).optional().describe('0 means loop forever.'),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.tag !== undefined) return;
+    if (value.name === undefined) ctx.addIssue({ code: 'custom', message: 'A new tag requires `name`.' });
+    if (value.from === undefined) ctx.addIssue({ code: 'custom', message: 'A new tag requires `from`.' });
+    if (value.to === undefined) ctx.addIssue({ code: 'custom', message: 'A new tag requires `to`.' });
+  });
+
+export const upsertTagsCommand = defineCommand({
+  name: 'upsert_tags',
+  description:
+    'Create or update many animation tags in one validated command. Omit `tag` to create; provide an id/name/index to update. All ranges and final unique names are checked before anything changes.',
+  params: z.object({
+    tags: z.array(upsertTagSchema).min(1).max(64),
+  }),
+  apply(ctx, p) {
+    const maxIndex = ctx.sprite.frames.length - 1;
+    const plans = p.tags.map((input, inputIndex) => {
+      const target = input.tag === undefined ? undefined : resolveTag(ctx.sprite, input.tag);
+      const name = input.name ?? target?.name;
+      if (name === undefined) throw new Error(`Tag entry ${inputIndex} requires a name.`);
+      const fromInput = input.from ?? target?.from;
+      const toInput = input.to ?? target?.to;
+      if (fromInput === undefined || toInput === undefined) {
+        throw new Error(`Tag entry ${inputIndex} requires both from and to.`);
+      }
+      if (fromInput > maxIndex || toInput > maxIndex) {
+        throw new Error(`Tag range ${fromInput}-${toInput} exceeds frame count ${ctx.sprite.frames.length}`);
+      }
+      const from = Math.min(fromInput, toInput);
+      const to = Math.max(fromInput, toInput);
+      return {
+        inputIndex,
+        target,
+        desired: {
+          name,
+          from,
+          to,
+          direction: input.direction ?? target?.direction ?? ('forward' as const),
+          repeat: input.repeat ?? target?.repeat ?? 0,
+        },
+      };
+    });
+
+    const targeted = new Set(plans.flatMap((plan) => (plan.target ? [plan.target.id] : [])));
+    const finalNames = ctx.sprite.tags.filter((tag) => !targeted.has(tag.id)).map((tag) => tag.name);
+    for (const plan of plans) {
+      if (finalNames.includes(plan.desired.name)) {
+        throw new Error(`Tag name "${plan.desired.name}" would be duplicated.`);
+      }
+      finalNames.push(plan.desired.name);
+    }
+
+    const created: Array<Record<string, unknown>> = [];
+    const updated: Array<Record<string, unknown>> = [];
+    const unchanged: Array<Record<string, unknown>> = [];
+    for (const plan of plans) {
+      if (!plan.target) {
+        const tag: AnimationTag = { id: makeId('tag'), ...plan.desired };
+        ctx.sprite.tags.push(tag);
+        created.push({ tagId: tag.id, ...plan.desired });
+        continue;
+      }
+      const previous = { ...plan.target };
+      Object.assign(plan.target, plan.desired);
+      const changed = (Object.keys(plan.desired) as Array<keyof typeof plan.desired>).some(
+        (key) => previous[key] !== plan.target![key],
+      );
+      const summary = { tagId: plan.target.id, name: plan.target.name, from: plan.target.from, to: plan.target.to,
+        direction: plan.target.direction, repeat: plan.target.repeat };
+      if (changed) updated.push(summary);
+      else unchanged.push(summary);
+    }
+
+    return { created, updated, unchanged, tagCount: ctx.sprite.tags.length };
   },
 });
 

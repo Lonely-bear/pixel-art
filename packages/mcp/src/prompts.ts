@@ -73,7 +73,7 @@ Workflow:
 3. Keep everything that should not move identical between frames.
 4. Set frame durations with \`update_frame\` (100-150 ms baseline; a run cycle is faster than a walk).
 5. Add an animation tag with \`add_tag\` covering all frames, direction "${dir}", so the engine knows the loop.
-6. From the mutation that finishes the sequence, request \`preview: true\` + \`previewOptions: {frames: "all", onion: {before: 1, after: 1}}\`; inspect that strip and check the loop: the last frame must lead back into the first without a jump.
+6. Batch final timing with \`set_frame_durations\` and tags with \`upsert_tags\`, then call \`preview_animation {tag, onion: {before: 1, after: 1}}\`. Inspect that playback-ordered contact sheet and check the loop: the last frame must lead back into the first without a jump.
 7. Export with \`export_sheet\` using \`layout: "grid"\`, \`padding: 1\` and a power-of-two column count.
 
 Read ${SKILL_URI} (or call \`read_skill\`) for the craft guide - section 7 covers animation.`);

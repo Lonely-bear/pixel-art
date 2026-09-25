@@ -14,6 +14,7 @@
  * edit, defaulting to the active one) and `expectedVersion` (optimistic
  * concurrency, so a stale agent edit fails loudly instead of clobbering work).
  */
+import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -21,6 +22,7 @@ import type { CallToolResult, ContentBlock, ToolAnnotations } from '@modelcontex
 import { SKILL_FINGERPRINT } from './server.js';
 import {
   animationSequence,
+  blendInto,
   buildSpritesheet,
   compositeFrame,
   compositeWithOnion,
@@ -45,6 +47,7 @@ import {
   resolveTilemap,
   scaleAtlas,
   scaleNearest,
+  serializeSprite,
   spriteFromAseprite,
   spriteFromPng,
   tileCount,
@@ -174,6 +177,59 @@ const pngExportSchema = z
   })
   .strict();
 
+const exportOutputSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('png'),
+    path: z.string(),
+    frame: frameRefSchema.optional(),
+    scale: z.number().int().min(1).max(32).optional(),
+    background: previewBackgroundSchema,
+  }).strict(),
+  z.object({
+    type: z.literal('frames'),
+    path: z.string().describe('Filename template; `_0`, `_1`, … are inserted before the extension.'),
+    scale: z.number().int().min(1).max(32).optional(),
+    background: previewBackgroundSchema,
+  }).strict(),
+  z.object({
+    type: z.literal('sheet'),
+    path: z.string(),
+    json: z.string().optional(),
+    layout: z.enum(['horizontal', 'vertical', 'grid']).optional(),
+    columns: z.number().int().min(1).optional(),
+    padding: z.number().int().min(0).optional(),
+    margin: z.number().int().min(0).optional(),
+    scale: z.number().int().min(1).max(32).optional(),
+  }).strict(),
+  z.object({
+    type: z.literal('gif'),
+    path: z.string(),
+    tag: z.union([z.string(), z.number().int()]).optional(),
+    scale: z.number().int().min(1).max(32).optional(),
+    background: z.string().optional(),
+    loop: z.boolean().optional(),
+  }).strict(),
+  z.object({
+    type: z.literal('contact'),
+    path: z.string(),
+    tag: z.union([z.string(), z.number().int()]).optional(),
+    frameOrder: z.enum(['timeline', 'playback']).optional(),
+    layout: z.enum(['strip', 'grid']).optional(),
+    columns: z.number().int().min(1).optional(),
+    padding: z.number().int().min(0).optional(),
+    margin: z.number().int().min(0).optional(),
+    scale: z.number().int().min(1).max(32).optional(),
+    background: previewBackgroundSchema,
+  }).strict(),
+]);
+
+const exportManifestSchema = z
+  .object({
+    path: z.string().describe('Destination manifest JSON path.'),
+    hashes: z.boolean().optional().describe('Include SHA-256 hashes. Defaults to true.'),
+  })
+  .strict();
+
 /**
  * Commands that only read. Core commands declare this themselves via `readOnly`, so
  * the editor keeps them out of the undo history; this set is for the hand-registered
@@ -185,6 +241,7 @@ const READ_ONLY_TOOLS = new Set([
   'get_palette',
   'get_history',
   'get_preview',
+  'preview_animation',
   'preview_tilemap',
   'get_pixels',
   'histogram',
@@ -206,6 +263,7 @@ const SESSION_TOOLS: Array<{ name: string; description: string }> = [
   { name: 'redo', description: 'Redo undone edit(s).' },
   { name: 'get_history', description: 'Recent commands with labels and summaries.' },
   { name: 'get_preview', description: 'Render the sprite (or a rect) as a PNG to look at.' },
+  { name: 'preview_animation', description: 'Render a timeline or tag-expanded playback contact sheet with optional onion skin.' },
   { name: 'preview_tilemap', description: 'Render an unbaked tilemap with optional grid, tile-index and changed-cell overlays.' },
   { name: 'get_pixels', description: 'Exact pixel colours in a small region.' },
   { name: 'histogram', description: 'Per-colour pixel counts and unused palette slots for a region.' },
@@ -216,7 +274,7 @@ const SESSION_TOOLS: Array<{ name: string; description: string }> = [
   { name: 'create_document', description: 'Create a blank sprite document.' },
   { name: 'open_document', description: 'Load a `.pixel` document.' },
   { name: 'save_document', description: 'Save to a `.pixel` file.' },
-  { name: 'finalize_document', description: 'Save the editable source and export one or more PNGs in one call.' },
+  { name: 'finalize_document', description: 'Save the editable source and render PNG/frame/sheet/GIF/contact outputs plus an optional manifest.' },
   { name: 'import_image', description: 'Import a PNG or Aseprite file.' },
   { name: 'select_document', description: 'Make a document active.' },
   { name: 'close_document', description: 'Drop a document from the session.' },
@@ -287,13 +345,16 @@ function fail(message: string, details?: Record<string, unknown>): CallToolResul
   };
 }
 
-function imageContent(buffer: PixelBuffer): ContentBlock {
-  const bytes = encodePNG(buffer);
+function binaryImageContent(bytes: Uint8Array, mimeType: string): ContentBlock {
   return {
     type: 'image',
     data: Buffer.from(bytes).toString('base64'),
-    mimeType: 'image/png',
+    mimeType,
   };
+}
+
+function imageContent(buffer: PixelBuffer): ContentBlock {
+  return binaryImageContent(encodePNG(buffer), 'image/png');
 }
 
 /** Integer upscale so a 16x16 sprite is actually legible to a vision model. */
@@ -473,6 +534,176 @@ function previewPayload(
       imageHeight: shown.height,
     },
   };
+}
+
+interface PreviewAnimationOptions {
+  tag?: string | number;
+  frameOrder?: 'timeline' | 'playback';
+  format?: 'png' | 'gif';
+  loop?: boolean;
+  layout?: 'strip' | 'grid';
+  columns?: number;
+  padding?: number;
+  margin?: number;
+  onion?: {
+    before?: number;
+    after?: number;
+    opacity?: number;
+    loop?: boolean;
+    beforeTint?: string;
+    afterTint?: string;
+  };
+  layers?: Array<string | number>;
+  scale?: number;
+  background?: string | null;
+  includeMetadata?: boolean;
+}
+
+function blendAnimationFrame(
+  target: PixelBuffer,
+  source: PixelBuffer,
+  opacity: number,
+  tint: ReturnType<typeof parseColor> | null,
+): void {
+  if (opacity <= 0) return;
+  for (let i = 0; i < source.data.length; i += 4) {
+    const alpha = source.data[i + 3];
+    if (alpha === 0) continue;
+    const color = tint
+      ? { r: tint.r, g: tint.g, b: tint.b, a: alpha }
+      : { r: source.data[i], g: source.data[i + 1], b: source.data[i + 2], a: alpha };
+    blendInto(target.data, i, color, { opacity });
+  }
+}
+
+/** Render an animation in raw timeline or tag-expanded playback order as one contact sheet. */
+function animationPreviewPayload(
+  sprite: Sprite,
+  options: PreviewAnimationOptions = {},
+): { blocks: ContentBlock[]; meta: Record<string, unknown>; image?: PixelBuffer } {
+  const frameOrder = options.frameOrder ?? (options.tag === undefined ? 'timeline' : 'playback');
+  if (frameOrder === 'playback' && options.tag === undefined) {
+    throw new Error('Playback preview requires a `tag`; use frameOrder: "timeline" to preview the whole document.');
+  }
+  const sequence = frameOrder === 'timeline'
+    ? animationSequence(sprite)
+    : animationSequence(sprite, options.tag);
+  if (sequence.frames.length === 0) throw new Error('Animation preview has no frames.');
+
+  if (options.format === 'gif') {
+    const scale = Math.max(1, Math.floor(options.scale ?? 1));
+    const playbackTag = frameOrder === 'playback' ? options.tag : undefined;
+    const bytes = encodeGIF(sprite, {
+      tag: playbackTag,
+      scale,
+      background: options.background,
+      loop: options.loop,
+    });
+    return {
+      blocks: [binaryImageContent(bytes, 'image/gif')],
+      meta: {
+        mode: 'animation-preview',
+        format: 'gif',
+        frameOrder,
+        tag: sequence.name,
+        frameCount: sequence.frames.length,
+        loops: options.loop ?? sequence.loops,
+        durationMs: sequence.durationMs,
+        scale,
+        imageWidth: sprite.width * scale,
+        imageHeight: sprite.height * scale,
+        ...(options.includeMetadata === false
+          ? {}
+          : {
+              sequence: sequence.frames.map((frame, position) => ({
+                position,
+                index: frame.index,
+                frameId: frame.frameId,
+                durationMs: frame.durationMs,
+              })),
+            }),
+      },
+    };
+  }
+
+  const count = sequence.frames.length;
+  const layout = options.layout ?? 'grid';
+  const padding = Math.max(0, Math.floor(options.padding ?? 1));
+  const margin = Math.max(0, Math.floor(options.margin ?? 1));
+  const columns = layout === 'strip'
+    ? count
+    : Math.max(1, Math.min(count, options.columns ?? Math.ceil(Math.sqrt(count))));
+  const rows = Math.ceil(count / columns);
+  const sheetWidth = margin * 2 + columns * sprite.width + Math.max(0, columns - 1) * padding;
+  const sheetHeight = margin * 2 + rows * sprite.height + Math.max(0, rows - 1) * padding;
+  const factor = options.scale ?? previewFactor(sheetWidth, sheetHeight, 256, 16);
+  assertPreviewOutputSize(sheetWidth, sheetHeight, factor);
+
+  const background = resolveBackground(options.background);
+  const layerIds = options.layers?.map((ref) => resolveLayer(sprite, ref).id);
+  const onion = options.onion;
+  const onionOpacity = Math.min(1, Math.max(0, onion?.opacity ?? 0.35));
+  const beforeTint = onion?.beforeTint === undefined ? null : parseColor(onion.beforeTint);
+  const afterTint = onion?.afterTint === undefined ? null : parseColor(onion.afterTint);
+  const sheet = new PixelBuffer(sheetWidth, sheetHeight);
+
+  sequence.frames.forEach((entry, position) => {
+    const cell = new PixelBuffer(sprite.width, sprite.height);
+    if (background !== undefined && background !== null) cell.fill(background);
+    const neighbor = (offset: number): typeof entry | undefined => {
+      let index = position + offset;
+      if (onion?.loop) index = ((index % count) + count) % count;
+      if (index < 0 || index >= count || index === position) return undefined;
+      return sequence.frames[index];
+    };
+    const ghost = (offset: number, tint: ReturnType<typeof parseColor> | null): void => {
+      const frame = neighbor(offset);
+      if (!frame) return;
+      blendAnimationFrame(
+        cell,
+        compositeFrame(sprite, frame.frameId, { layers: layerIds }),
+        onionOpacity,
+        tint,
+      );
+    };
+    for (let offset = onion?.before ?? 0; offset >= 1; offset--) ghost(-offset, beforeTint);
+    for (let offset = onion?.after ?? 0; offset >= 1; offset--) ghost(offset, afterTint);
+    blendAnimationFrame(cell, compositeFrame(sprite, entry.frameId, { layers: layerIds }), 1, null);
+
+    const column = position % columns;
+    const row = Math.floor(position / columns);
+    sheet.blit(cell, margin + column * (sprite.width + padding), margin + row * (sprite.height + padding));
+  });
+
+  const shown = factor > 1 ? scaleNearest(sheet, factor) : sheet;
+  const metadata = {
+    mode: 'animation-preview',
+    format: 'png',
+    frameOrder,
+    tag: sequence.name,
+    layout,
+    columns,
+    rows,
+    frameCount: count,
+    loops: sequence.loops,
+    durationMs: sequence.durationMs,
+    onion: onion ?? null,
+    layers: layerIds ?? null,
+    scale: factor,
+    imageWidth: shown.width,
+    imageHeight: shown.height,
+    ...(options.includeMetadata === false
+      ? {}
+      : {
+          sequence: sequence.frames.map((frame, position) => ({
+            position,
+            index: frame.index,
+            frameId: frame.frameId,
+            durationMs: frame.durationMs,
+          })),
+        }),
+  };
+  return { blocks: [imageContent(shown)], meta: metadata, image: shown };
 }
 
 /** Best-effort structured description of a sprite for `get_document`. */
@@ -1566,6 +1797,126 @@ function absPath(path: string): string {
   return resolve(path);
 }
 
+type ExportOutputSpec = z.infer<typeof exportOutputSchema>;
+
+interface RenderedExportFile {
+  path: string;
+  bytes: Uint8Array;
+  type: string;
+  width?: number;
+  height?: number;
+  details?: Record<string, unknown>;
+}
+
+function indexedOutputPath(path: string, index: number): string {
+  const dot = path.lastIndexOf('.');
+  return dot > 0 ? `${path.slice(0, dot)}_${index}${path.slice(dot)}` : `${path}_${index}`;
+}
+
+function renderExportOutputs(sprite: Sprite, outputs: ExportOutputSpec[]): RenderedExportFile[] {
+  const files: RenderedExportFile[] = [];
+  const addPng = (
+    path: string,
+    image: PixelBuffer,
+    type: string,
+    details?: Record<string, unknown>,
+  ): void => {
+    files.push({ path, bytes: encodePNG(image), type, width: image.width, height: image.height, details });
+  };
+
+  for (const output of outputs) {
+    if (output.type === 'png') {
+      const frame = resolveFrame(sprite, output.frame ?? 0);
+      let image = compositeFrame(sprite, frame.id, { background: output.background });
+      const scale = output.scale ?? 1;
+      if (scale > 1) image = scaleNearest(image, scale);
+      addPng(output.path, image, 'png', {
+        frame: sprite.frames.findIndex((item) => item.id === frame.id),
+        frameId: frame.id,
+        scale,
+      });
+      continue;
+    }
+
+    if (output.type === 'frames') {
+      const scale = output.scale ?? 1;
+      sprite.frames.forEach((frame, index) => {
+        let image = compositeFrame(sprite, frame.id, { background: output.background });
+        if (scale > 1) image = scaleNearest(image, scale);
+        addPng(indexedOutputPath(output.path, index), image, 'png', {
+          frame: index,
+          frameId: frame.id,
+          scale,
+          output: 'frames',
+        });
+      });
+      continue;
+    }
+
+    if (output.type === 'sheet') {
+      const atlas = buildSpritesheet(sprite, {
+        layout: output.layout,
+        columns: output.columns,
+        padding: output.padding,
+        margin: output.margin,
+      });
+      const sheet = scaleAtlas(atlas, output.scale ?? 1);
+      const fileName = output.path.split(/[\\/]/).pop() ?? 'sheet.png';
+      const jsonPath = output.json ?? output.path.replace(/\.png$/i, '') + '.json';
+      addPng(output.path, sheet.image, 'sheet', { columns: sheet.columns, rows: sheet.rows, tags: sheet.tags });
+      files.push({
+        path: jsonPath,
+        bytes: Buffer.from(JSON.stringify(toAsepriteJson(sprite, sheet, fileName), null, 2), 'utf8'),
+        type: 'json',
+        details: { companion: 'sheet' },
+      });
+      continue;
+    }
+
+    if (output.type === 'gif') {
+      const sequence = animationSequence(sprite, output.tag);
+      const bytes = encodeGIF(sprite, {
+        tag: output.tag,
+        scale: output.scale,
+        background: output.background,
+        loop: output.loop,
+      });
+      files.push({
+        path: output.path,
+        bytes,
+        type: 'gif',
+        width: sprite.width * (output.scale ?? 1),
+        height: sprite.height * (output.scale ?? 1),
+        details: {
+          tag: sequence.name,
+          frameCount: sequence.frames.length,
+          durationMs: sequence.durationMs,
+          loops: sequence.loops,
+        },
+      });
+      continue;
+    }
+
+    const contact = animationPreviewPayload(sprite, {
+      tag: output.tag,
+      frameOrder: output.frameOrder,
+      layout: output.layout,
+      columns: output.columns,
+      padding: output.padding,
+      margin: output.margin,
+      scale: output.scale,
+      background: output.background,
+      includeMetadata: true,
+    });
+    addPng(output.path, contact.image!, 'contact', contact.meta);
+  }
+
+  if (files.length > 512) {
+    throw new Error(`Export plan would write ${files.length} files, above the 512-file safety limit.`);
+  }
+  return files;
+}
+
 interface RawOp {
   command?: unknown;
   name?: unknown;
@@ -1765,73 +2116,125 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     server,
     'finalize_document',
     {
-      title: 'Save and export in one call',
+      title: 'Save and export an asset bundle',
       description:
-        'Fast finalisation path: save the editable `.pixel` source and write one or more composited PNGs in a single MCP round trip. Typical agent output is a scale-1 original plus a larger nearest-neighbour preview. Returns every written path, output size, version and a clean document summary.',
+        'Save the editable `.pixel` source and render a validated multi-format export plan in one call. `outputs` supports PNG, all-frame PNGs, spritesheet+JSON, GIF, and animation contact sheets. Every output is rendered before writing; an optional manifest records source version, frame/tag metadata, paths, sizes, and SHA-256 hashes. The legacy `exports` PNG array remains supported.',
       inputSchema: z.object({
         document: documentRef,
         path: z.string().optional().describe('Destination `.pixel` path. Defaults to the document\'s current path.'),
+        outputs: z
+          .array(exportOutputSchema)
+          .max(32)
+          .optional()
+          .describe('Typed outputs to render. An all-frame or contact output may expand to several files.'),
         exports: z
           .array(pngExportSchema)
           .max(8)
           .optional()
-          .describe('PNG files to write in order. Each may select a frame, integer scale and background.'),
+          .describe('Legacy PNG-only output list. Converted to `{type: "png"}` outputs.'),
+        manifest: exportManifestSchema.optional().describe('Write a bundle manifest describing the source and outputs.'),
       }),
       annotations: { destructiveHint: false },
     },
     (args) => {
       const doc = store.require(args.document as string | undefined);
       const path = (args.path as string | undefined) ?? doc.path;
-      if (!path) {
-        return fail('No path given and this document has never been saved. Pass `path`.');
-      }
-      const exports = (args.exports as Array<{
-        path: string;
-        frame?: number | string;
-        scale?: number;
-        background?: string | null;
-      }>) ?? [];
+      if (!path) return fail('No path given and this document has never been saved. Pass `path`.');
+
+      const legacy = (args.exports as z.infer<typeof pngExportSchema>[] | undefined) ?? [];
+      const legacyOutputs: ExportOutputSpec[] = legacy.map((output) => ({ type: 'png', ...output }));
+      const outputs: ExportOutputSpec[] = [
+        ...legacyOutputs,
+        ...((args.outputs as ExportOutputSpec[] | undefined) ?? []),
+      ];
+      const manifestSpec = args.manifest as z.infer<typeof exportManifestSchema> | undefined;
 
       try {
-        // Resolve every export before writing anything, so a bad frame reference
-        // cannot leave behind a source file that looks like a complete finalisation.
-        const rendered = exports.map((spec) => {
-          const frame = resolveFrame(doc.editor.sprite, spec.frame ?? 0);
-          const scale = spec.scale ?? 1;
-          const background = resolveBackground(spec.background);
-          const composited = compositeFrame(doc.editor.sprite, frame.id, { background });
-          const image = scale > 1 ? scaleNearest(composited, scale) : composited;
-          return {
-            path: spec.path,
-            bytes: encodePNG(image),
-            width: image.width,
-            height: image.height,
-            frame: doc.editor.sprite.frames.findIndex((item) => item.id === frame.id),
-            frameId: frame.id,
-            scale,
-          };
-        });
+        // Render and validate the complete plan before writing anything.
+        const sourceBytes = serializeSprite(doc.editor.sprite);
+        const rendered = renderExportOutputs(doc.editor.sprite, outputs);
+        const manifestPath = manifestSpec?.path;
+        const allPaths = [path, ...rendered.map((output) => output.path)];
+        if (manifestPath) allPaths.push(manifestPath);
+        const normalizedPaths = new Map<string, string>();
+        for (const candidate of allPaths) {
+          const key = resolve(candidate).toLowerCase();
+          const previous = normalizedPaths.get(key);
+          if (previous) throw new Error(`Export path collision: ${previous} and ${candidate}.`);
+          normalizedPaths.set(key, candidate);
+        }
 
-        const sourceBytes = store.save(doc);
+        let manifestBytes: Uint8Array | undefined;
+        if (manifestSpec) {
+          const includeHashes = manifestSpec.hashes !== false;
+          const hash = (bytes: Uint8Array): string | undefined =>
+            includeHashes ? createHash('sha256').update(bytes).digest('hex') : undefined;
+          const manifest = {
+            format: 'dotloom-mcp/export-manifest',
+            version: 1,
+            source: {
+              path,
+              name: doc.editor.sprite.name,
+              width: doc.editor.sprite.width,
+              height: doc.editor.sprite.height,
+              documentVersion: doc.editor.version,
+              bytes: sourceBytes.byteLength,
+              sha256: hash(sourceBytes),
+            },
+            frames: doc.editor.sprite.frames.map((frame, index) => ({
+              index,
+              id: frame.id,
+              durationMs: frame.durationMs,
+            })),
+            tags: doc.editor.sprite.tags,
+            outputs: rendered.map((output) => ({
+              type: output.type,
+              path: output.path,
+              bytes: output.bytes.byteLength,
+              width: output.width,
+              height: output.height,
+              sha256: hash(output.bytes),
+              details: output.details,
+            })),
+          };
+          manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+        }
+
+        // Write derived files first and the source last, so a successful response is
+        // the completion signal. Session dirty state is cleared only after every write.
+        for (const output of rendered) writeFile(output.path, output.bytes);
+        if (manifestPath && manifestBytes) writeFile(manifestPath, manifestBytes);
         writeFile(path, sourceBytes);
         doc.path = path;
-        for (const output of rendered) writeFile(output.path, output.bytes);
+        store.markSaved(doc);
 
         const files = [path, ...rendered.map((output) => output.path)];
+        if (manifestPath) files.push(manifestPath);
         return ok({
           ok: true,
           path,
           absolute: absPath(path),
           bytes: sourceBytes.byteLength,
-          exports: rendered.map((output) => ({
+          manifest: manifestPath
+            ? {
+                path: manifestPath,
+                absolute: absPath(manifestPath),
+                bytes: manifestBytes!.byteLength,
+                hashes: manifestSpec!.hashes !== false,
+              }
+            : null,
+          outputs: rendered.map((output) => ({
+            type: output.type,
             path: output.path,
             width: output.width,
             height: output.height,
-            frame: output.frame,
-            frameId: output.frameId,
-            scale: output.scale,
             bytes: output.bytes.byteLength,
+            details: output.details,
           })),
+          // Preserve the old response key for clients that only understand PNG exports.
+          exports: rendered
+            .filter((output) => output.type !== 'json')
+            .map((output) => ({ path: output.path, width: output.width, height: output.height, bytes: output.bytes.byteLength, ...output.details })),
           files,
           absoluteFiles: files.map(absPath),
           version: doc.editor.version,
@@ -1989,6 +2392,73 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           { ok: true, document: store.summary(doc), ...rendered.meta },
           rendered.blocks,
         );
+      } catch (error) {
+        return fail((error as Error).message);
+      }
+    },
+  );
+
+  addTool(
+    server,
+    'preview_animation',
+    {
+      title: 'Preview a complete animation',
+      description:
+        'Render an animation as a contact-sheet PNG or animated GIF. With `tag`, the default order follows that tag\'s direction and repeat; `frameOrder: "timeline"` shows raw frame order instead. Supports strip/grid layout, frame metadata, and sequence-aware onion skin for forward/reverse/pingpong playback.',
+      inputSchema: z.object({
+        document: documentRef,
+        tag: z.union([z.string(), z.number().int()]).optional().describe('Animation tag ID, name, or index.'),
+        frameOrder: z
+          .enum(['timeline', 'playback'])
+          .optional()
+          .describe('"playback" expands the tag; "timeline" uses raw frame order. Defaults from tag presence.'),
+        format: z
+          .enum(['png', 'gif'])
+          .optional()
+          .describe('PNG contact sheet (default) or animated GIF for client playback.'),
+        loop: z.boolean().optional().describe('GIF playback loop override. By default the tag repeat controls it.'),
+        layout: z.enum(['strip', 'grid']).optional().describe('Contact-sheet layout. Defaults to grid.'),
+        columns: z.number().int().min(1).max(256).optional().describe('Grid columns. Defaults to a near-square arrangement.'),
+        padding: z.number().int().min(0).max(64).optional().describe('Pixel gap between cells. Defaults to 1.'),
+        margin: z.number().int().min(0).max(64).optional().describe('Transparent border. Defaults to 1.'),
+        onion: z
+          .object({
+            before: z.number().int().min(0).max(8).optional(),
+            after: z.number().int().min(0).max(8).optional(),
+            opacity: z.number().min(0).max(1).optional(),
+            loop: z.boolean().optional(),
+            beforeTint: z.string().optional(),
+            afterTint: z.string().optional(),
+          })
+          .strict()
+          .optional()
+          .describe('Ghost neighbouring positions in the selected timeline/playback order.'),
+        layers: previewLayersSchema,
+        scale: previewScaleSchema,
+        background: previewBackgroundSchema,
+        includeMetadata: z.boolean().optional().describe('Return the expanded frame sequence and durations. Defaults to true.'),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    (args) => {
+      try {
+        const doc = store.require(args.document as string | undefined);
+        const rendered = animationPreviewPayload(doc.editor.sprite, {
+          tag: args.tag as string | number | undefined,
+          frameOrder: args.frameOrder as 'timeline' | 'playback' | undefined,
+          format: args.format as 'png' | 'gif' | undefined,
+          loop: args.loop as boolean | undefined,
+          layout: args.layout as 'strip' | 'grid' | undefined,
+          columns: args.columns as number | undefined,
+          padding: args.padding as number | undefined,
+          margin: args.margin as number | undefined,
+          onion: args.onion as PreviewAnimationOptions['onion'],
+          layers: args.layers as Array<string | number> | undefined,
+          scale: args.scale as number | undefined,
+          background: args.background as string | null | undefined,
+          includeMetadata: args.includeMetadata as boolean | undefined,
+        });
+        return ok({ ok: true, document: store.summary(doc), ...rendered.meta }, rendered.blocks);
       } catch (error) {
         return fail((error as Error).message);
       }

@@ -9,6 +9,9 @@ All notable changes to dotloom-mcp are documented in this file.
 - `run_script.dryRun` executes against an isolated document snapshot and returns structured source-relative error diagnostics.
 - Inline `apply_ops`/`run_script` previews now accept `frames: "all"` and onion-skin options.
 - `list_commands` supports exact `name`, parameter-name `param`, result `limit`, and command `readOnly` metadata.
+- Added `set_frame_durations`, `upsert_tags`, and dry-run-by-default `prune_palette` core commands.
+- Added `preview_animation` contact sheets in raw timeline or tag-expanded playback order with sequence-aware onion skin.
+- `finalize_document` now accepts typed PNG/frame/sheet/GIF/contact output plans and can write a hashed bundle manifest while preserving the legacy PNG `exports` field.
 
 ### Fixed
 

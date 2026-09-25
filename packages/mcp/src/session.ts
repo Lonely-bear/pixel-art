@@ -188,10 +188,15 @@ export class DocumentStore {
   /** Serialize a document back to `.pixel` bytes. */
   save(doc: PixelDocument): Uint8Array {
     const bytes = serializeSprite(doc.editor.sprite);
+    this.markSaved(doc);
+    return bytes;
+  }
+
+  /** Update session bookkeeping after an export plan has written every file successfully. */
+  markSaved(doc: PixelDocument): void {
     doc.name = doc.editor.sprite.name;
     doc.dirty = false;
     doc.updatedAt = Date.now();
-    return bytes;
   }
 
   list(): PixelDocument[] {

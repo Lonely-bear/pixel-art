@@ -81,10 +81,14 @@ describe('tool surface', () => {
     expect(names).toContain('ridge_line');
     expect(names).toContain('scatter');
     expect(names).toContain('finalize_document');
+    expect(names).toContain('preview_animation');
+    expect(names).toContain('set_frame_durations');
+    expect(names).toContain('upsert_tags');
+    expect(names).toContain('prune_palette');
     expect(names).toContain('export_sheet');
     expect(names).toContain('read_skill');
-    // 61 core commands plus the session/perception/export tools; plugins and
-    // follow-up session tools may add more without changing this baseline.
+    // Generated core commands plus session/perception/export tools; plugins and
+    // follow-up tools may add more without changing this baseline.
     expect(names.length).toBeGreaterThanOrEqual(83);
   });
 
@@ -1156,6 +1160,57 @@ describe('export', () => {
     ]);
     expect((body.document as { dirty: boolean }).dirty).toBe(false);
   });
+
+  it('renders a multi-format export plan and manifest in one finalisation call', async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 4, height: 4, name: 'Bundle', layers: ['base'], frames: 2 },
+    });
+    await client.callTool({ name: 'draw_rect', arguments: { frame: 0, rect: { x: 0, y: 0, w: 2, h: 2 }, color: '#ff0000', fill: true } });
+    await client.callTool({ name: 'draw_rect', arguments: { frame: 1, rect: { x: 2, y: 2, w: 2, h: 2 }, color: '#0000ff', fill: true } });
+    await client.callTool({ name: 'add_tag', arguments: { name: 'blink', from: 0, to: 1, direction: 'pingpong' } });
+
+    const source = join(tempDir, 'bundle.pixel');
+    const manifestPath = join(tempDir, 'bundle.manifest.json');
+    const result = (await client.callTool({
+      name: 'finalize_document',
+      arguments: {
+        path: source,
+        outputs: [
+          { type: 'png', path: join(tempDir, 'bundle.png'), frame: 0 },
+          { type: 'frames', path: join(tempDir, 'bundle-frame.png') },
+          { type: 'sheet', path: join(tempDir, 'bundle-sheet.png'), layout: 'grid', columns: 2, padding: 1 },
+          { type: 'gif', path: join(tempDir, 'bundle.gif'), tag: 'blink' },
+          { type: 'contact', path: join(tempDir, 'bundle-contact.png'), tag: 'blink', layout: 'strip', scale: 1 },
+        ],
+        manifest: { path: manifestPath, hashes: true },
+      },
+    })) as ToolResult;
+    const body = payload(result);
+
+    expect(result.isError).toBeFalsy();
+    expect(body.files).toEqual(expect.arrayContaining([
+      source,
+      join(tempDir, 'bundle.png'),
+      join(tempDir, 'bundle-frame_0.png'),
+      join(tempDir, 'bundle-frame_1.png'),
+      join(tempDir, 'bundle-sheet.png'),
+      join(tempDir, 'bundle-sheet.json'),
+      join(tempDir, 'bundle.gif'),
+      join(tempDir, 'bundle-contact.png'),
+      manifestPath,
+    ]));
+    expect((body.outputs as Array<{ type: string }>).map((output) => output.type)).toEqual(
+      expect.arrayContaining(['png', 'sheet', 'json', 'gif', 'contact']),
+    );
+
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    expect(manifest).toMatchObject({ format: 'dotloom-mcp/export-manifest', version: 1 });
+    expect(manifest.source.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(manifest.frames).toHaveLength(2);
+    expect(manifest.tags[0]).toMatchObject({ name: 'blink', direction: 'pingpong' });
+    expect(manifest.outputs.every((output: { sha256?: string }) => /^[a-f0-9]{64}$/.test(output.sha256))).toBe(true);
+  });
 });
 
 describe('iteration ergonomics', () => {
@@ -1319,6 +1374,68 @@ describe('layered and onion previews', () => {
     expect(future.b).toBe(255);
     expect(future.a).toBeGreaterThan(0);
     expect(future.a).toBeLessThan(255);
+  });
+});
+
+describe('animation preview', () => {
+  it('renders tag-expanded playback order with sequence-aware onion skin', async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 4, height: 4, layers: ['base'], frames: 3 },
+    });
+    await client.callTool({ name: 'draw_rect', arguments: { frame: 0, rect: { x: 0, y: 0, w: 1, h: 1 }, color: '#ff0000', fill: true } });
+    await client.callTool({ name: 'draw_rect', arguments: { frame: 1, rect: { x: 1, y: 1, w: 1, h: 1 }, color: '#00ff00', fill: true } });
+    await client.callTool({ name: 'draw_rect', arguments: { frame: 2, rect: { x: 2, y: 2, w: 1, h: 1 }, color: '#0000ff', fill: true } });
+    await client.callTool({ name: 'add_tag', arguments: { name: 'idle', from: 0, to: 2, direction: 'pingpong' } });
+
+    const result = (await client.callTool({
+      name: 'preview_animation',
+      arguments: {
+        tag: 'idle',
+        layout: 'strip',
+        padding: 1,
+        margin: 0,
+        scale: 1,
+        onion: { before: 1, after: 1, opacity: 0.5 },
+      },
+    })) as ToolResult;
+    const body = payload(result);
+    expect(body).toMatchObject({
+      mode: 'animation-preview',
+      frameOrder: 'playback',
+      tag: 'idle',
+      frameCount: 4,
+      layout: 'strip',
+      imageWidth: 19,
+      imageHeight: 4,
+    });
+    expect((body.sequence as Array<{ index: number }>).map((frame) => frame.index)).toEqual([0, 1, 2, 1]);
+    expect(decodedImage(result).getColor(6, 1).a).toBeGreaterThan(0);
+  });
+
+  it('returns an animated GIF for clients that support playback', async () => {
+    await client.callTool({ name: 'create_document', arguments: { width: 4, height: 4, frames: 2 } });
+    await client.callTool({ name: 'draw_rect', arguments: { frame: 0, rect: { x: 0, y: 0, w: 1, h: 1 }, color: '#ff0000', fill: true } });
+    await client.callTool({ name: 'add_tag', arguments: { name: 'idle', from: 0, to: 1, direction: 'pingpong' } });
+
+    const result = (await client.callTool({
+      name: 'preview_animation',
+      arguments: { tag: 'idle', format: 'gif', scale: 2 },
+    })) as ToolResult;
+    const image = result.content.find((content) => content.type === 'image');
+    expect(image?.mimeType).toBe('image/gif');
+    expect(Buffer.from(image!.data!, 'base64').subarray(0, 6).toString('latin1')).toBe('GIF89a');
+    expect(payload(result)).toMatchObject({ format: 'gif', tag: 'idle', frameCount: 2, imageWidth: 8, imageHeight: 8 });
+  });
+
+  it('rejects an unknown animation tag instead of falling back to the timeline', async () => {
+    await client.callTool({ name: 'create_document', arguments: { width: 4, height: 4 } });
+    const result = (await client.callTool({
+      name: 'preview_animation',
+      arguments: { tag: 'missing' },
+    })) as ToolResult;
+    expect(result.isError).toBe(true);
+    expect(firstText(result)).toMatch(/Unknown animation tag: missing/);
   });
 });
 

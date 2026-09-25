@@ -229,7 +229,7 @@ To connect to a running desktop app instead of the standalone server, append
 - **A generated tool catalog plus session tools.** Every core command is generated straight from its zod schema, alongside
   hand-written session and perception tools: `create_document`, `open_document`,
   `save_document`, `finalize_document`, `import_image` (PNG or Aseprite), `select_document`, `close_document`,
-  `list_documents`, `get_document`, `get_preview`, `preview_tilemap`, `get_pixels`, `quality_report`, `get_palette`, `get_history`,
+  `list_documents`, `get_document`, `get_preview`, `preview_animation`, `preview_tilemap`, `get_pixels`, `quality_report`, `get_palette`, `get_history`,
   `undo`, `redo`, `apply_ops`, `export_png`, `export_sheet`, `export_tiled`, `export_gif`,
   `list_commands`, `read_skill`, and the scripting tools `run_script`, `load_plugin`,
   `list_plugins`. Loading a plugin registers its commands as real tools on the fly.
@@ -285,10 +285,12 @@ To connect to a running desktop app instead of the standalone server, append
    lands on exactly the pixels a solid one would, and it composes with `clip`. On large
    canvases prefer `cluster2`/`cluster4`: the same coverage lands as 2×2/4×4 blocks instead
    of digital 1px stipple.
-6. **`finalize_document` closes the loop in one call.** It saves the editable `.pixel` source
-   and writes up to eight PNG exports in one request. A static asset normally needs one
-   scale-1 original plus one 6–8x preview, replacing separate save/export round trips while
-   returning every absolute path, output size, version and final document summary.
+6. **`finalize_document` closes the production loop in one call.** It saves the editable
+   `.pixel` source and renders a typed output plan: individual PNGs, all-frame PNGs,
+   spritesheet + Aseprite JSON, tag-aware GIF, and timeline/playback contact sheets. Every
+   output is rendered before any file is written. An optional manifest records source version,
+   frame durations, tags, actual output paths/sizes, and SHA-256 hashes. The legacy PNG-only
+   `exports` array remains accepted.
 7. **`quality_report` turns "it feels harsh" into a checklist.** It reports isolated-pixel
    ratio, colour-outlier ratio, mean edge contrast, clipped-highlight ratio and palette
    usage, plus a 0–100 `defectScore` (higher means cleaner, not finished) and warnings.
@@ -302,7 +304,9 @@ To connect to a running desktop app instead of the standalone server, append
    dark end toward blue/violet and the light end toward amber by `hueShift` degrees
    (default 20). `shadowHue`/`highlightHue` set absolute endpoint hues, `saturationBoost`
    adds mid-ramp richness, and `mode: "replace"` can swap the whole palette for a single
-   coherent ramp.
+   coherent ramp. `prune_palette` scans the raw cels in a document/frame/tag scope (including
+   hidden layers), defaults to dry-run, protects explicit `keep` indices, and returns an
+   old-to-new index map before removing genuinely unused slots.
 9. **Binary and generative primitives avoid per-pixel JSON overhead.** `put_pixels` writes
    a base64 RGBA8888 rectangle in one command, with the script convenience API
    `putPixels(rect, data, options?)`; the core raster API also exposes
@@ -318,6 +322,13 @@ To connect to a running desktop app instead of the standalone server, append
 
 ### Commands built for animation
 
+- `set_frame_durations { updates: [...] }` applies multiple all/range/list/tag duration
+  updates with one validation pass, one undo step, previous/current values, and total duration.
+- `upsert_tags { tags: [...] }` creates and updates many tags atomically, validates every frame
+  range and rejects duplicate final names before writing anything.
+- `preview_animation` returns one contact-sheet PNG in raw timeline or tag-expanded playback
+  order. Its onion neighbours follow that selected sequence, so reverse/pingpong previews show
+  the motion the tag actually plays rather than adjacent timeline indices.
 - `translate { layer: "*", dx, dy }` shifts every layer of a frame together and clears the
   band it vacates. A 3-frame bob used to cost a `copy_region` plus a `clear_region` per
   layer per frame — 24 operations to say "move it down one".
@@ -375,6 +386,12 @@ structure for terrain, walls and floors, and it is what an agent uses to build a
   playback order and looping. An explicitly named tag that does not exist is an error rather
   than a silent whole-timeline fallback. `scale` upscales by an integer factor and
   `background` fills transparency.
+- `preview_animation` renders a review-only contact sheet. Use `tag` for expanded playback
+  order or `frameOrder: "timeline"` for the raw source order; `layout`, `columns`, `padding`,
+  `margin`, `onion`, `layers`, `scale`, and `background` control the view. Set
+  `format: "gif"` to return an animated image for clients that support playback.
+- `finalize_document.outputs` can deliver a contact sheet beside source, sheet, frames and GIF;
+  `manifest: {path, hashes}` produces an engine-facing bundle inventory.
 - `export_sheet` writes the raw timeline as a spritesheet PNG plus Aseprite-compatible JSON,
   with animation tags exported as `meta.frameTags`. `export_png` with `frames: "all"`
   writes one file per raw timeline frame. This keeps engine slicing deterministic; use the

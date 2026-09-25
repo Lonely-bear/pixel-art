@@ -230,11 +230,12 @@ render. Break them and no amount of extra shading recovers the result.
 - Animate by duplicating a frame (\`duplicate_frame\`) and moving one thing. Keep
   the parts that should not move identical between frames.
 - 2-4 frames is enough for a walk cycle at small sizes; 6-8 for a full run.
-- Set frame durations explicitly with \`update_frame\` (100-150 ms is a normal
-  baseline; a run cycle is faster than a walk).
-- Tag the sequences you intend to export: \`add_tag\` with \`from\`/\`to\` indices and
-  a \`direction\` of \`forward\`, \`reverse\` or \`pingpong\`. \`pingpong\` halves the
-  frames you have to draw for a breathing or idle loop.
+- Set frame durations explicitly (100-150 ms is a normal baseline; a run cycle is faster
+  than a walk). Use \`set_frame_durations\` for all/range/tag updates in one command;
+  \`update_frame\` remains the single-frame shorthand.
+- Tag the sequences you intend to export with \`upsert_tags\` when creating or changing
+  several tags, or \`add_tag\` for one. A \`direction\` of \`forward\`, \`reverse\` or
+  \`pingpong\` controls playback; pingpong halves the frames needed for an idle loop.
 - For a squash-and-stretch or bounce, move the whole silhouette, not individual
   limbs. \`translate {layer: "*", dx, dy}\` shifts every layer of the frame together and
   clears the band it vacates, so a bob costs one operation instead of a copy plus a
@@ -247,9 +248,9 @@ render. Break them and no amount of extra shading recovers the result.
   ran first. A named pivot is measured against the artwork's bounding box, which
   includes any outline you have drawn - so \`pivot: "bottom"\` sits on the outline's
   bottom row, one pixel below the body.
-- Check the loop: the last frame should lead back into the first. Ask for
-  \`previewOptions: {frames: "all", onion: {before: 1, after: 1}}\` from the mutation that
-  finishes the sequence; do not inspect only the individual frames.
+- Check the loop: the last frame should lead back into the first. After tags exist, call
+  \`preview_animation {tag, onion: {before: 1, after: 1}}\` so reverse/pingpong neighbours
+  follow the actual playback order; do not inspect only individual timeline frames.
 
 ## 8. Iterating
 
@@ -318,7 +319,7 @@ render. Break them and no amount of extra shading recovers the result.
   \`planeSeparation\` above about 15 means the depth planes are actually told apart, below
   6 means two of them have merged; \`lightConcentration\` near 1 means a real source.
   Those are working thresholds, not laws — trust the warnings over the numbers.
-- It also reports \`palette.unusedIndices\` (the exact slot numbers, so you can drop
+- It also reports \`palette.unusedIndices\` (the exact slot numbers, so you can inspect
   them), \`palette.crowded\` (used pairs too close in distance to read as separate
   tones), \`structure.strongBands\` (full-width tonal edges big enough to flatten a
   composition — a smooth gradient has many gentler steps and is not flagged),
@@ -327,7 +328,9 @@ render. Break them and no amount of extra shading recovers the result.
   horizon/ridge/waterline candidates, reports each boundary's straightness/regularity,
   and measures whether a bright or coherent vertical/diagonal guiding line crosses the
   lower frame. It is evidence, not a beauty score: read \`landscape.conclusion\` and
-  its warnings alongside the presence half.
+  its warnings alongside the presence half. Before removing slots, use
+  \`prune_palette {dryRun: true}\`; it scans every selected raw cel (including hidden
+  layers) and returns a removal list plus an old-to-new index map.
 - If a high-frequency region is deliberate texture — sparkle, grain, foliage, water
   glitter — pass it as \`textureRects\`. Outliers inside are counted as
   \`noise.texturedOutliers\` and stop raising the noise warning, **and** their bright
@@ -527,8 +530,10 @@ export const SKILL_SUMMARY =
   '(cluster levels quantise to sixteenths); place shading inside the layer-visible band; ' +
   'and break up repeated shapes. Run quality_report before finalising and read its ' +
   'presence half as well as its defect half - a clean defectScore with a narrow ' +
-  'presence.valueRange means the piece was sanded flat, not finished. Finish with one ' +
-  'finalize_document call. Read pixel://skill before drawing anything non-trivial.';
+  'presence.valueRange means the piece was sanded flat, not finished. For animation, batch ' +
+  'durations/tags with set_frame_durations/upsert_tags and review tag order with ' +
+  'preview_animation. Finish with one finalize_document export plan. Read pixel://skill ' +
+  'before drawing anything non-trivial.';
 
 /** URI of the scripting/plugin guide resource. */
 export const SCRIPT_GUIDE_URI = 'pixel://script-guide';
