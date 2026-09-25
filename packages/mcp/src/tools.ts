@@ -410,6 +410,12 @@ interface QualityAnalysisOptions {
   alphaThreshold?: number;
   /** Optional square grid for per-region outlier/isolated counts. */
   grid?: number;
+  /**
+   * Regions filled with deliberate texture - `scatter`, grain, foliage, sparkle.
+   * Outliers inside them are counted separately instead of raising noise warnings,
+   * because high-frequency detail is the point there, not a defect.
+   */
+  textureRects?: Array<{ x: number; y: number; w: number; h: number }>;
 }
 
 type PixelAt = (x: number, y: number) => { r: number; g: number; b: number; a: number } | null;
@@ -499,6 +505,152 @@ function coefficientOfVariation(values: number[]): number {
   if (mean === 0) return 0;
   const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
   return Math.sqrt(variance) / Math.abs(mean);
+}
+
+/**
+ * Presence checks: does the piece still *have* the things it needs?
+ *
+ * Every other metric here is a defect detector - it answers "is anything wrong".
+ * That is a trap on its own: driving a defect score to zero flattens the piece,
+ * because intentional texture (sparkle, grain, foliage) scores identically to noise.
+ * A piece can be flawless on every defect metric and still be a dark, flat, lifeless
+ * rectangle, so these measure the positive side instead.
+ */
+function analyzePresence(
+  at: PixelAt,
+  width: number,
+  height: number,
+  alphaThreshold: number,
+): {
+  valueRange: number;
+  darkShare: number;
+  lightShare: number;
+  brightestShare: number;
+  brightClusterShare: number;
+  planes: Array<{ y0: number; y1: number; mean: number }>;
+  flatestBand: { y0: number; y1: number; share: number; value: number };
+} {
+  const lum: number[] = [];
+  const rowMean: number[] = [];
+  for (let y = 0; y < height; y++) {
+    let sum = 0;
+    let count = 0;
+    for (let x = 0; x < width; x++) {
+      const c = at(x, y);
+      if (!c || c.a < alphaThreshold) continue;
+      const l = luminanceOf(c);
+      lum.push(l);
+      sum += l;
+      count++;
+    }
+    rowMean.push(count > 0 ? sum / count : -1);
+  }
+
+  // Value spread: a piece that has collapsed into a narrow band has lost its form
+  // even when every defect metric is clean.
+  let min = 255;
+  let max = 0;
+  for (const l of lum) {
+    if (l < min) min = l;
+    if (l > max) max = l;
+  }
+  const valueRange = lum.length > 0 ? max - min : 0;
+
+  // Weighting the extremes by how much of the canvas they occupy is what separates
+  // "a calm scene that is legitimately dark" from "everything went dark".
+  let dark = 0;
+  let light = 0;
+  for (const l of lum) {
+    if (l < 48) dark++;
+    if (l > 192) light++;
+  }
+  const total = Math.max(1, lum.length);
+  const darkShare = dark / total;
+  const lightShare = light / total;
+
+  // Light source detection. A scene that is genuinely lit has a *concentrated* bright
+  // region; a scene that is merely bright has many mid-to-light pixels spread evenly.
+  // Both the total bright share and the size of the largest single bright cluster are
+  // needed: a large flat sky is high on the first and low on the second.
+  let brightPixels = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const c = at(x, y);
+      if (c && c.a >= alphaThreshold && luminanceOf(c) > 192) brightPixels++;
+    }
+  }
+  const brightMask = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const c = at(x, y);
+      if (c && c.a >= alphaThreshold && luminanceOf(c) > 192) brightMask[y * width + x] = 1;
+    }
+  }
+  // Largest 4-connected bright cluster, by flood fill over the mask.
+  let brightCluster = 0;
+  const seen = new Uint8Array(width * height);
+  const stack: number[] = [];
+  for (let start = 0; start < brightMask.length; start++) {
+    if (brightMask[start] === 0 || seen[start] === 1) continue;
+    let size = 0;
+    stack.length = 0;
+    stack.push(start);
+    seen[start] = 1;
+    while (stack.length > 0) {
+      const index = stack.pop()!;
+      size++;
+      const cx = index % width;
+      const cy = (index - cx) / width;
+      for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as Array<[number, number]>) {
+        const nx = cx + ox;
+        const ny = cy + oy;
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+        const next = ny * width + nx;
+        if (brightMask[next] === 0 || seen[next] === 1) continue;
+        seen[next] = 1;
+        stack.push(next);
+      }
+    }
+    if (size > brightCluster) brightCluster = size;
+  }
+
+  // Four horizontal planes, so depth can be checked rather than assumed.
+  const planes: Array<{ y0: number; y1: number; mean: number }> = [];
+  const planeHeight = Math.max(1, Math.floor(height / 4));
+  for (let p = 0; p < 4; p++) {
+    const y0 = p * planeHeight;
+    const y1 = p === 3 ? height : y0 + planeHeight;
+    let sum = 0;
+    let count = 0;
+    for (let y = y0; y < y1; y++) {
+      if (rowMean[y] < 0) continue;
+      sum += rowMean[y];
+      count++;
+    }
+    planes.push({ y0, y1, mean: count > 0 ? sum / count : -1 });
+  }
+
+  // The most common single value: a "dead flat" region is a large share of the
+  // frame sitting on one colour, which reads as a hole rather than a surface.
+  const histogram = new Uint32Array(256);
+  for (const l of lum) histogram[Math.max(0, Math.min(255, Math.round(l)))]++;
+  let flatValue = 0;
+  let flatCount = 0;
+  for (let i = 0; i < 256; i++) {
+    if (histogram[i] > flatCount) {
+      flatCount = histogram[i];
+      flatValue = i;
+    }
+  }
+  return {
+    valueRange,
+    darkShare,
+    lightShare,
+    brightestShare: brightPixels / total,
+    brightClusterShare: brightCluster / total,
+    planes,
+    flatestBand: { y0: 0, y1: height, share: flatCount / total, value: flatValue },
+  };
 }
 
 /**
@@ -682,7 +834,22 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
   let edgeCount = 0;
   let isolated = 0;
   let outliers = 0;
+  let texturedOutliers = 0;
   let overexposed = 0;
+  // textureRects arrive in canvas space; the analysis may run on an extracted rect.
+  const textureOffsetX = options.rect?.x ?? 0;
+  const textureOffsetY = options.rect?.y ?? 0;
+  const isTextured = (x: number, y: number): boolean => {
+    const tex = options.textureRects;
+    if (!tex || tex.length === 0) return false;
+    const cx = x + textureOffsetX;
+    const cy = y + textureOffsetY;
+    for (let i = 0; i < tex.length; i++) {
+      const r = tex[i];
+      if (cx >= r.x && cy >= r.y && cx < r.x + r.w && cy < r.y + r.h) return true;
+    }
+    return false;
+  };
   const offsets: Array<[number, number]> = [
     [0, -1], [1, -1], [1, 0], [1, 1],
     [0, 1], [-1, 1], [-1, 0], [-1, -1],
@@ -740,7 +907,10 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
         isolated++;
       } else if (matching <= 1) {
         const avg = { r: nr / neighbours, g: ng / neighbours, b: nb / neighbours };
-        if (distance(c, avg) > noiseThreshold) outliers++;
+        if (distance(c, avg) > noiseThreshold) {
+          if (isTextured(x, y)) texturedOutliers++;
+          else outliers++;
+        }
       }
     }
   }
@@ -759,7 +929,19 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
   const paletteUsage = analyzePaletteUsage(paletteColors, unique, 6);
   const bands = countHorizontalBands(at, width, height, alphaThreshold, 20, 32);
   const rhythm = analyzeSkylineRhythm(at, width, height, alphaThreshold);
-  const softnessScore = Math.max(
+  const presence = analyzePresence(at, width, height, alphaThreshold);
+  const planeMeans = presence.planes.map((p) => p.mean).filter((m) => m >= 0);
+  // Depth only exists if adjacent planes differ. Equal means mean the scene has
+  // stacked into one tonal slab, which no defect metric notices.
+  const planeSeparation = planeMeans.length >= 2
+    ? Math.min(
+        ...planeMeans.slice(1).map((mean, index) => Math.abs(mean - planeMeans[index])),
+      )
+    : -1;
+  // Named `defectScore` rather than "softness": a high score means the measurable
+  // defects are absent, which is necessary but not sufficient. A deliberately
+  // sanded-flat piece scores 100 here, which is exactly the trap this had become.
+  const defectScore = Math.max(
     0,
     Math.min(
       100,
@@ -780,10 +962,14 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
     });
   }
   if (outlierRatio > 0.01) {
+    const exempt = options.textureRects?.length ?? 0;
     warnings.push({
       code: 'high_frequency_noise',
       severity: 'warning',
-      message: `${(outlierRatio * 100).toFixed(2)}% of solid pixels are colour outliers against their neighbourhood. Prefer cluster dither (\`cluster2\`/\`cluster4\`) or \`despeckle\`.`,
+      message:
+        `${(outlierRatio * 100).toFixed(2)}% of solid pixels are colour outliers against their neighbourhood` +
+        (exempt > 0 ? `, excluding ${exempt} declared texture region(s)` : '') +
+        '. If this area is deliberate texture - sparkle, grain, foliage - pass it as `textureRects` rather than despeckling it; otherwise prefer cluster dither (`cluster2`/`cluster4`) or `despeckle`.',
     });
   }
   if (meanEdge > 16) {
@@ -822,6 +1008,63 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
       code: 'horizontal_banding',
       severity: 'warning',
       message: `${bands.strongBands} strong full-width tonal edges (${bands.horizontalBands} edges in total). Past about three strong ones the composition reads as stacked stripes rather than depth. Break them with a vertical or diagonal element - a light path, a foreground silhouette, a waterfall.`,
+    });
+  }
+  // Presence checks. These fire on a piece that is *missing* something, which is the
+  // failure the defect metrics above structurally cannot see.
+  // A strong local maximum is the signature of a light source. If there is no such a
+  // peak, a scene that needs one (a sky, a room, a landscape) has lost its key light,
+  // which no aggregate - a mean, a standard deviation - can express: a dim image and a
+  // dark image have the same average.
+  // A light source is a *concentrated* highlight. Compare the largest bright cluster
+  // against the total bright area rather than using a fixed threshold, so the check
+  // scales with how bright a piece is overall: an evenly-lit sky is bright but not lit.
+  const brightestShare = presence.brightestShare;
+  const brightClusterShare = presence.brightClusterShare;
+  const concentration = brightestShare > 0 ? brightClusterShare / brightestShare : 0;
+  const hasLightSource = brightestShare > 0.0008 && concentration > 0.3;
+  if (!hasLightSource && presence.valueRange >= 90 && brightestShare > 0.0008) {
+    warnings.push({
+      code: 'no_light_source',
+      severity: 'warning',
+      message: `Bright pixels cover ${(brightestShare * 100).toFixed(2)}% of the canvas but the largest single bright cluster is only ${(concentration * 100).toFixed(0)}% of them, so the light is spread evenly and the piece reads as ambient rather than lit. A scene needs a concentrated source - a sun, a lamp, a specular edge.`,
+    });
+  }
+  if (presence.valueRange < 90) {
+    warnings.push({
+      code: 'narrow_value_range',
+      severity: 'warning',
+      message: `The whole piece spans only ${presence.valueRange.toFixed(0)}/255 of luminance. Without a wide spread there are no darks, no lights and no room to read form - a clean defect score with a narrow range means the shading was sanded away, not that the piece is correct.`,
+    });
+  }
+  if (presence.darkShare > 0.75) {
+    warnings.push({
+      code: 'value_collapse_dark',
+      severity: 'warning',
+      message: `${(presence.darkShare * 100).toFixed(1)}% of solid pixels sit below luminance 48. Deep shadow is legitimate, but past roughly three quarters of the canvas it reads as an underexposed image rather than a dark scene.`,
+    });
+  }
+  // Flag a pair of planes that sit at the same value, but only when the piece as a
+  // whole has real tonal range. Without the range guard this fires on scenes that are
+  // legitimately narrow-band (a moonlit night, a flat graphic) and buries the collapse
+  // warning that actually matters.
+  if (planeSeparation >= 0 && planeSeparation < 6 && presence.valueRange >= 90) {
+    const pair = planeMeans
+      .map((mean, index) => ({ index, delta: index > 0 ? Math.abs(mean - planeMeans[index - 1]) : Infinity }))
+      .filter((entry) => entry.delta < 6)
+      .map((entry) => `plane ${entry.index - 1} and ${entry.index} (${planeMeans[entry.index - 1].toFixed(0)} vs ${planeMeans[entry.index].toFixed(0)})`)
+      .join(', ');
+    warnings.push({
+      code: 'flat_depth_planes',
+      severity: 'warning',
+      message: `${pair} sit at nearly the same value, so that depth boundary is not readable (all plane means: ${planeMeans.map((m) => m.toFixed(0)).join(', ')}). Push one plane darker or the other lighter.`,
+    });
+  }
+  if (presence.flatestBand.share > 0.45) {
+    warnings.push({
+      code: 'dead_flat_region',
+      severity: 'warning',
+      message: `${(presence.flatestBand.share * 100).toFixed(1)}% of the canvas sits on a single luminance value (about ${presence.flatestBand.value}). A large uniform area reads as a hole in the piece; give it a value gradient or break it with texture.`,
     });
   }
   if (rhythm.uniform) {
@@ -928,6 +1171,18 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
       strongBands: bands.strongBands,
       rhythm,
     },
+    presence: {
+      valueRange: presence.valueRange,
+      darkShare: presence.darkShare,
+      lightShare: presence.lightShare,
+      brightestShare,
+      brightClusterShare,
+      lightConcentration: concentration,
+      hasLightSource,
+      flatShare: presence.flatestBand.share,
+      planeSeparation,
+      planes: presence.planes,
+    },
     luminance: {
       mean: meanLuminance,
       std: luminanceStd,
@@ -940,10 +1195,14 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
       isolatedRatio,
       outliers,
       outlierRatio,
+      texturedOutliers,
+      textureRects: options.textureRects ?? [],
       threshold: noiseThreshold,
     },
     overexposedRatio,
-    softnessScore,
+    defectScore,
+    // Kept as a deprecated alias so existing callers do not break on the rename.
+    softnessScore: defectScore,
     ...(regions.length > 0 ? { regions } : {}),
     warnings,
   };
@@ -1635,7 +1894,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Measure softness and noise quality',
       description:
-        'Read-only heuristic report over an objective raster: isolated-pixel ratio, colour-outlier ratio, mean edge contrast, near-white highlight ratio, palette usage and a rough 0-100 softness score, plus actionable warnings. Also reports composition diagnostics: `palette.unusedIndices` (exact slot numbers to drop), `palette.crowded` (used pairs closer than 6/255, i.e. steps that will not read as separate tones), `structure.strongBands` (full-width tonal edges large enough to flatten a composition; many gentle gradient steps are deliberately not counted) and `structure.rhythm` (evenness of the silhouette skyline, which flags hedge/wallpaper repetition - check `measurable` first, a frame with no silhouette has nothing to judge). Use it before finalising a detailed canvas, then fix the flagged layers with `despeckle` and `antialias`. Pass `rect` to inspect only the region you just drew.',
+        'Read-only report over an objective raster, in two halves. DEFECT metrics: isolated-pixel ratio, colour-outlier ratio, mean edge contrast, near-white highlight ratio, palette usage, a 0-100 defect score, and warnings you can act on. PRESENCE metrics: `presence.valueRange`, `darkShare`, `flatShare`, `planeSeparation` and the per-plane means, which catch the failure the defect half structurally cannot - a piece that has been sanded perfectly clean and has lost its form, depth and light. Driving a defect score to zero is not the same as finishing: intentional texture scores identically to noise, so declare it with `textureRects` and let the outliers inside it be counted separately. Also reports `palette.unusedIndices`, `palette.crowded`, `structure.strongBands` and `structure.rhythm`. Use it before finalising, fix what it flags, then re-read the presence half to confirm you did not flatten the piece on the way.',
       inputSchema: z.object({
         document: documentRef,
         frame: frameRefSchema.optional().describe('Frame id or 0-based index. Defaults to frame 0.'),
@@ -1653,6 +1912,24 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           .max(255)
           .optional()
           .describe('Alpha at or above this counts as solid. Defaults to 1.'),
+        textureRects: z
+          .array(
+            z.object({
+              x: z.number().int(),
+              y: z.number().int(),
+              w: z.number().int().min(1),
+              h: z.number().int().min(1),
+            }),
+          )
+          .max(32)
+          .optional()
+          .describe(
+            'Regions deliberately filled with texture - `scatter` output, grain, foliage, sparkle. ' +
+              'Colour outliers inside them are counted as `noise.texturedOutliers` and do not raise ' +
+              'the high-frequency warning, because high-frequency detail is the point there. Pass the ' +
+              'rects you textured rather than lowering `noiseThreshold`, which would hide real defects ' +
+              'everywhere instead.',
+          ),
         grid: z
           .number()
           .int()
@@ -1674,6 +1951,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
             noiseThreshold: args.noiseThreshold as number | undefined,
             alphaThreshold: args.alphaThreshold as number | undefined,
             grid: args.grid as number | undefined,
+            textureRects: args.textureRects as Array<{ x: number; y: number; w: number; h: number }> | undefined,
           }),
         });
       } catch (error) {

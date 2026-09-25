@@ -275,6 +275,188 @@ describe('quality_report composition diagnostics', () => {
   });
 });
 
+describe('presence checks: catching a piece that has been sanded flat', () => {
+  // Regression guard. A defect-only report scored this "perfect" while the image had
+  // lost its form: the defect metrics cannot see absence, only presence of faults.
+  const fill = async (color: string) => {
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { rect: { x: 0, y: 0, w: 64, h: 64 }, color, fill: true },
+    });
+  };
+  const makeDoc = async (width: number, height: number) => {
+    await client.callTool({ name: 'create_document', arguments: { width, height, layers: ['base'] } });
+  };
+
+  it('passes a piece with real tonal range and depth', async () => {
+    await client.callTool({ name: 'create_document', arguments: { width: 64, height: 64, layers: ['base'] } });
+    await client.callTool({
+      name: 'banded_gradient',
+      arguments: { rect: { x: 0, y: 0, w: 64, h: 64 }, from: '#08080f', to: '#fff0cc', direction: 'vertical', steps: 24 },
+    });
+    // A treeline, so the planes genuinely differ.
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { rect: { x: 0, y: 44, w: 64, h: 20 }, color: '#101018', fill: true },
+    });
+
+    const body = payload((await client.callTool({ name: 'quality_report', arguments: {} })) as ToolResult);
+    const presence = body.presence as {
+      valueRange: number; darkShare: number; flatShare: number; planeSeparation: number;
+    };
+    expect(presence.valueRange).toBeGreaterThan(90);
+    expect(presence.darkShare).toBeLessThan(0.75);
+    expect(presence.planeSeparation).toBeGreaterThanOrEqual(6);
+    expect(presence.flatShare).toBeLessThan(0.45);
+    const codes = warningCodes((await client.callTool({ name: 'quality_report', arguments: {} })) as ToolResult);
+    expect(codes).not.toContain('narrow_value_range');
+    expect(codes).not.toContain('value_collapse_dark');
+    expect(codes).not.toContain('flat_depth_planes');
+    expect(codes).not.toContain('dead_flat_region');
+  });
+
+  it('flags a defect-perfect but dead-flat piece', async () => {
+    await client.callTool({ name: 'create_document', arguments: { width: 64, height: 64, layers: ['base'] } });
+    await fill('#2b3560');
+
+    const result = (await client.callTool({ name: 'quality_report', arguments: {} })) as ToolResult;
+    const body = payload(result);
+    const presence = body.presence as { valueRange: number; flatShare: number; planeSeparation: number };
+
+    // The point of the test: every defect is clean, and it is still a bad image.
+    const noise = body.noise as { isolatedRatio: number; outlierRatio: number };
+    expect(noise.isolatedRatio).toBe(0);
+    expect(noise.outlierRatio).toBe(0);
+    expect(noise.outliers).toBe(0);
+    expect(presence.valueRange).toBe(0);
+    expect(presence.flatShare).toBe(1);
+    expect(presence.planeSeparation).toBe(0);
+
+    const codes = warningCodes(result);
+    expect(codes).toContain('narrow_value_range');
+    expect(codes).toContain('dead_flat_region');
+    // The plane check is suppressed here on purpose: a single-valued piece has no
+    // tonal range to judge depth by, and `narrow_value_range` already says so.
+    expect(codes).not.toContain('flat_depth_planes');
+  });
+
+  it('does not report flat planes on a narrow-band piece, only on a collapsed one', async () => {
+    // Both are single-valued, so both trip `dead_flat_region`. Only the second should
+    // also trip the plane check: a deliberately narrow palette is a choice, a collapse
+    // is a defect, and the difference is the value range.
+    await makeDoc(64, 64);
+    await fill('#2b3560');
+    const narrow = payload((await client.callTool({ name: 'quality_report', arguments: {} })) as ToolResult);
+    expect((narrow.presence as { valueRange: number }).valueRange).toBe(0);
+    expect((narrow.presence as { planeSeparation: number }).planeSeparation).toBe(0);
+
+    await client.callTool({ name: 'create_document', arguments: { width: 64, height: 64, layers: ['base'] } });
+    await client.callTool({
+      name: 'banded_gradient',
+      arguments: { rect: { x: 0, y: 0, w: 64, h: 32 }, from: '#f0e8d0', to: '#203050', direction: 'vertical', steps: 20 },
+    });
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { rect: { x: 0, y: 32, w: 64, h: 32 }, color: '#203050', fill: true },
+    });
+    const wide = payload((await client.callTool({ name: 'quality_report', arguments: {} })) as ToolResult);
+    // Full tonal range, but the sky and the ground share one value.
+    expect((wide.presence as { valueRange: number }).valueRange).toBeGreaterThan(90);
+    expect((wide.presence as { planeSeparation: number }).planeSeparation).toBeLessThan(6);
+    expect(warningCodes((await client.callTool({ name: 'quality_report', arguments: {} })) as ToolResult))
+      .toContain('flat_depth_planes');
+  });
+
+  it('separates a concentrated light source from an evenly bright one', async () => {
+    // A scene with a real sun: the bright area is one tight cluster.
+    await makeDoc(64, 64);
+    await client.callTool({
+      name: 'banded_gradient',
+      arguments: { rect: { x: 0, y: 0, w: 64, h: 64 }, from: '#2a2040', to: '#b08050', direction: 'vertical', steps: 12 },
+    });
+    await client.callTool({
+      name: 'draw_ellipse',
+      arguments: { rect: { x: 28, y: 20, w: 8, h: 8 }, color: '#fff4d0', fill: true },
+    });
+    const lit = payload((await client.callTool({ name: 'quality_report', arguments: {} })) as ToolResult);
+    const litPresence = lit.presence as { hasLightSource: boolean; lightConcentration: number };
+    expect(litPresence.hasLightSource).toBe(true);
+    expect(litPresence.lightConcentration).toBeGreaterThan(0.3);
+    expect(warningCodes((await client.callTool({ name: 'quality_report', arguments: {} })) as ToolResult))
+      .not.toContain('no_light_source');
+
+    // Same tonal range, but the highlights are spread across the whole frame.
+    await makeDoc(64, 64);
+    await client.callTool({
+      name: 'banded_gradient',
+      arguments: { rect: { x: 0, y: 0, w: 64, h: 64 }, from: '#2b3550', to: '#6a7a96', direction: 'vertical', steps: 10 },
+    });
+    // An evenly stippled light: bright everywhere, concentrated nowhere. A gradient
+    // would not do this, because its bright end is itself one contiguous block.
+    await client.callTool({
+      name: 'dither_fill',
+      arguments: { rect: { x: 0, y: 0, w: 64, h: 64 }, color: '#fff4d0', pattern: 'checker', level: 0.5 },
+    });
+    const ambient = payload((await client.callTool({ name: 'quality_report', arguments: {} })) as ToolResult);
+    const ambientPresence = ambient.presence as { hasLightSource: boolean; valueRange: number; lightConcentration: number };
+    expect(ambientPresence.valueRange).toBeGreaterThan(90);
+    expect(ambientPresence.lightConcentration).toBeLessThan(0.3);
+    expect(ambientPresence.hasLightSource).toBe(false);
+    expect(warningCodes((await client.callTool({
+      name: 'quality_report',
+      // The speckle is deliberate; declare it or the noise warning buries the signal.
+      arguments: { textureRects: [{ x: 0, y: 0, w: 64, h: 64 }] },
+    })) as ToolResult)).toContain('no_light_source');
+  });
+
+  it('flags a value collapse that keeps internal variety', async () => {
+    await client.callTool({ name: 'create_document', arguments: { width: 64, height: 64, layers: ['base'] } });
+    // Everything is dark but not uniform: no defect, no form.
+    await client.callTool({
+      name: 'banded_gradient',
+      arguments: { rect: { x: 0, y: 0, w: 64, h: 64 }, from: '#101018', to: '#1c2438', direction: 'vertical', steps: 8 },
+    });
+
+    const result = (await client.callTool({ name: 'quality_report', arguments: {} })) as ToolResult;
+    const presence = payload(result).presence as { darkShare: number };
+    expect(presence.darkShare).toBeGreaterThan(0.75);
+    expect(warningCodes(result)).toContain('value_collapse_dark');
+  });
+
+  it('keeps deliberate texture out of the high-frequency noise warning', async () => {
+    await client.callTool({ name: 'create_document', arguments: { width: 64, height: 64, layers: ['base'] } });
+    await fill('#203040');
+    // A genuine speckle field over the lower half.
+    await client.callTool({
+      name: 'scatter',
+      arguments: { rect: { x: 0, y: 32, w: 64, h: 32 }, count: 60, color: '#ffffff', radius: 1, cluster: 0.4 },
+    });
+
+    const noisy = (await client.callTool({ name: 'quality_report', arguments: {} })) as ToolResult;
+    expect((payload(noisy).noise as { outlierRatio: number }).outlierRatio).toBeGreaterThan(0.01);
+    expect(warningCodes(noisy)).toContain('high_frequency_noise');
+
+    // Declaring that region as texture moves its outliers out of the warning.
+    const declared = (await client.callTool({
+      name: 'quality_report',
+      arguments: { textureRects: [{ x: 0, y: 32, w: 64, h: 32 }] },
+    })) as ToolResult;
+    const noise = payload(declared).noise as { outliers: number; texturedOutliers: number; outlierRatio: number };
+    expect(noise.outliers).toBe(0);
+    expect(noise.texturedOutliers).toBeGreaterThan(0);
+    expect(warningCodes(declared)).not.toContain('high_frequency_noise');
+  });
+
+  it('reports the defect score under a name that is not mistaken for quality', async () => {
+    await client.callTool({ name: 'create_document', arguments: { width: 16, height: 16, layers: ['base'] } });
+    await fill('#406080');
+    const body = payload((await client.callTool({ name: 'quality_report', arguments: {} })) as ToolResult);
+    expect(typeof body.defectScore).toBe('number');
+    // The old alias still resolves, so existing callers keep working.
+    expect(body.softnessScore).toBe(body.defectScore);
+  });
+});
+
 describe('dither advisories', () => {
   it('warns that a large low-coverage dither field reads as a lattice', async () => {
     await client.callTool({ name: 'create_document', arguments: { width: 64, height: 64, layers: ['base'] } });

@@ -47,6 +47,12 @@ render. Break them and no amount of extra shading recovers the result.
 8. **If the preview contradicts your data, trust the data.** When an image looks wrong,
    confirm with \`get_pixels\` or \`quality_report\` before you start "fixing" it. Inline
    previews can be stale.
+9. **A clean defect report is not a finished piece.** \`quality_report\` has two halves and
+   you must read both. The defect half says what is *wrong*; the presence half
+   (\`presence.valueRange\`, \`darkShare\`, \`flatShare\`, \`planeSeparation\`) says whether the
+   piece still *has* light, depth and form. Driving \`defectScore\` to 100 sanded a lake
+   scene into a dark flat rectangle once already, because sparkle and grain score
+   identically to noise. After every cleanup pass, re-read the presence half.
 
 ## 1. Plan the canvas before drawing
 
@@ -287,17 +293,22 @@ render. Break them and no amount of extra shading recovers the result.
   both \`scale\` and \`upscale\`. \`export_png\` also takes \`rect\`, so a 1:1 crop can be
   written straight to disk - the dependable fallback when an inline preview looks wrong
   and you need a file you can open yourself.
-- Before finishing, run \`quality_report\`. It returns isolated-pixel ratio, colour
-  outlier ratio, edge contrast, highlight clipping, palette usage, a rough softness
-  score, and several composition diagnostics: \`palette.unusedIndices\` (the exact slot
-  numbers, so you can drop them), \`palette.crowded\` (used pairs too close in distance
-  to read as separate tones), \`structure.strongBands\` (full-width tonal edges big
-  enough to flatten a composition - keep it near three; a smooth gradient legitimately
-  has many gentler steps and is not flagged), and \`structure.rhythm\` (how regular the
-  silhouette peaks are - \`uniform: true\` means hedge/wallpaper spacing). Check
-  \`rhythm.measurable\` first: a frame with no silhouette has nothing to measure, and
-  \`rhythm.note\` says so. Treat the warnings as a checklist: \`despeckle\` for speckle,
-  \`antialias\` for harsh edges, less glow for clipped highlights.
+- Before finishing, run \`quality_report\`, and read **both** halves of it. The defect
+  half returns isolated-pixel ratio, colour outlier ratio, edge contrast, highlight
+  clipping, palette usage and a 0-100 \`defectScore\`. The presence half returns
+  \`presence.valueRange\`, \`darkShare\`, \`lightShare\`, \`flatShare\`, \`planeSeparation\` and
+  the per-plane means — these catch the piece having been flattened, which no defect
+  metric can see. It also reports \`palette.unusedIndices\` (the exact slot numbers, so
+  you can drop them), \`palette.crowded\` (used pairs too close in distance to read as
+  separate tones), \`structure.strongBands\` (full-width tonal edges big enough to
+  flatten a composition — a smooth gradient has many gentler steps and is not flagged)
+  and \`structure.rhythm\` (silhouette peak regularity; check \`measurable\` first, since
+  a frame with no silhouette has nothing to measure).
+- If a high-frequency region is deliberate texture — sparkle, grain, foliage — pass it
+  as \`textureRects\`. Outliers inside are counted as \`noise.texturedOutliers\` and stop
+  raising the noise warning. Do **not** lower \`noiseThreshold\` to silence it: that
+  hides real defects everywhere, whereas \`textureRects\` is scoped to the region you
+  meant.
 - At the end, \`finalize_document\` saves the \`.pixel\` source and writes one or more
   PNG exports in a single call. A usual static asset is a scale-1 original plus a
   scale-6/8 preview. Keep \`save_document\` plus repeated \`export_png\` calls only when
@@ -467,7 +478,9 @@ export const SKILL_SUMMARY =
   'then shade with add_palette_ramp hue-shifted ramps and outline selectively. ' +
   'Judge the whole piece at 100% before zooming; keep dither to 3-5px seams only ' +
   '(cluster levels quantise to sixteenths); place shading inside the layer-visible band; ' +
-  'and break up repeated shapes. Run quality_report before finalising and finish with one ' +
+  'and break up repeated shapes. Run quality_report before finalising and read its ' +
+  'presence half as well as its defect half - a clean defectScore with a narrow ' +
+  'presence.valueRange means the piece was sanded flat, not finished. Finish with one ' +
   'finalize_document call. Read pixel://skill before drawing anything non-trivial.';
 
 /** URI of the scripting/plugin guide resource. */
@@ -532,6 +545,10 @@ last read. \`finalize_document\` saves the source and writes PNG exports in one 
   loop is killed and reported as \`Script timed out after Nms\`. A script that generates
   a whole 256x256 scene is a few hundred command calls, so raise \`timeoutMs\` rather than
   splitting the work across scripts.
+- \`scatter\` and dithered \`dither_fill\` register as intentional texture, and
+  \`quality_report\` does not raise \`high_frequency_noise\` over a region you filled with
+  them. Paint sparkle, grain and foliage with \`scatter\` rather than with per-pixel
+  literals, and the tool can tell deliberate texture from stray noise.
 
 ## Undo
 
