@@ -1,6 +1,6 @@
 {
   "name": "dotloom-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A pixel-art engine for humans and AI agents, with a scriptable CLI and Model Context Protocol server.",
   "license": "Apache-2.0",
   "author": "Lonely-bear",
@@ -29,6 +29,7 @@
     "url": "https://github.com/Lonely-bear/pixel-art/issues"
   },
   "bin": {
+    "dotloom-mcp": "dist/pixel-mcp.js",
     "pixel": "dist/pixel.js",
     "pixel-mcp": "dist/pixel-mcp.js",
     "pixel-art-mcp": "dist/pixel-mcp.js"
@@ -69,7 +70,7 @@
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
-  "main": "index.js",
+  "main": "dist/index.js",
   "directories": {
     "doc": "docs"
   }

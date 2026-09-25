@@ -65,15 +65,21 @@ jobs:
           npm init -y >/dev/null
           npm install "$GITHUB_WORKSPACE/$TARBALL"
           ./node_modules/.bin/pixel --version | tee version.json
-          node -e "const v=require('./version.json'); if (v.name !== 'dotloom-mcp' || v.version !== '0.1.0') process.exit(1)"
+          node -e "const v=require('./version.json'); if (v.name !== 'dotloom-mcp' || v.version !== '0.1.1') process.exit(1)"
           ./node_modules/.bin/pixel-mcp --version
           ./node_modules/.bin/pixel-art-mcp --version
+          ./node_modules/.bin/dotloom-mcp --version
           ./node_modules/.bin/pixel new smoke.pixel --width 8 --height 8 --layers Ink --frames 1
           ./node_modules/.bin/pixel export smoke.pixel --out smoke.png --scale 2
           test -s smoke.png
           node --input-type=module <<'NODE'
           import { Client } from '@modelcontextprotocol/sdk/client/index.js';
           import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+          import { VERSION, core, mcp, script } from 'dotloom-mcp';
+          if (VERSION !== '0.1.1') throw new Error(`unexpected package version: ${VERSION}`);
+          if (core.createSprite({ width: 2, height: 2 }).width !== 2) throw new Error('core API unavailable');
+          if (typeof mcp.createPixelServer !== 'function') throw new Error('MCP API unavailable');
+          if (typeof script.ScriptRuntime !== 'function') throw new Error('script API unavailable');
           const transport = new StdioClientTransport({
             command: process.execPath,
             args: ['node_modules/dotloom-mcp/dist/pixel-mcp.js'],

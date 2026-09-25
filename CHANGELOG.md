@@ -2,6 +2,13 @@
 
 All notable changes to Pixel Art MCP are documented in this file.
 
+## [0.1.1] - 2026-09-25
+
+### Fixed
+
+- Added the `dotloom-mcp` executable alias so `npx -y dotloom-mcp` starts the MCP server directly.
+- Added a valid `dotloom-mcp` library entry exposing version metadata plus the core, MCP, and script APIs.
+
 ## [0.1.0] - 2026-09-25
 
 ### Added

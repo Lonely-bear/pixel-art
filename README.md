@@ -70,6 +70,15 @@ pixel --version
 pixel-mcp --version
 ```
 
+The package also exposes namespaced library APIs without starting a CLI process:
+
+```js
+import { VERSION, core, mcp, script } from 'dotloom-mcp';
+
+const document = core.createSprite({ width: 32, height: 32 });
+console.log(VERSION, document.width, typeof mcp.createPixelServer, typeof script.ScriptRuntime);
+```
+
 No global install is required for one-off use:
 
 ```bash
@@ -315,7 +324,7 @@ npm pack --dry-run
 
 The repository uses pnpm workspaces, strict TypeScript, Vitest, and a clean-build CI gate. The public package bundles the internal workspace code while keeping normal npm dependencies external.
 
-> **Distribution scope:** `dotloom-mcp@0.1.0` publishes the CLI and standalone MCP server. The Electron application remains a source-based application in this release; desktop installers are not part of the npm tarball.
+> **Distribution scope:** `dotloom-mcp@0.1.1` publishes the CLI, library entry, and standalone MCP server. The Electron application remains a source-based application in this release; desktop installers are not part of the npm tarball.
 
 ## Security and local trust
 
@@ -333,7 +342,7 @@ The repository uses pnpm workspaces, strict TypeScript, Vitest, and a clean-buil
 
 ## Project status
 
-`0.1.0` is the first installable CLI/MCP release.
+`0.1.1` is the current installable CLI/MCP release.
 
 - [x] Core document model, rasteriser, command bus, history, and native serialisation
 - [x] PNG, spritesheet, GIF, Aseprite import, and Tiled export

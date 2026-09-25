@@ -10,6 +10,7 @@ await rm(outdir, { recursive: true, force: true });
 
 await build({
   entryPoints: {
+    index: path.join(root, 'scripts/npm-index.ts'),
     pixel: path.join(root, 'packages/cli/src/index.ts'),
     'pixel-mcp': path.join(root, 'packages/mcp/src/cli.ts'),
   },
@@ -17,7 +18,7 @@ await build({
   bundle: true,
   platform: 'node',
   format: 'esm',
-  target: 'node22.12',
+  target: 'node22.13',
   sourcemap: true,
   treeShaking: true,
   legalComments: 'eof',
@@ -31,4 +32,4 @@ await build({
   logLevel: 'info',
 });
 
-console.log(`Built npm binaries in ${path.relative(root, outdir)}/`);
+console.log(`Built npm distribution in ${path.relative(root, outdir)}/`);
