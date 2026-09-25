@@ -11,3 +11,4 @@ export * from './tools.js';
 export * from './resources.js';
 export * from './prompts.js';
 export * from './attach.js';
+export * from './discovery.js';

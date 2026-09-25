@@ -53,6 +53,28 @@ export interface AttachBridge {
   close(): Promise<void>;
 }
 
+/**
+ * Is a real app listening at this endpoint?
+ *
+ * Completes a full MCP handshake and hangs up, which is the only trustworthy
+ * answer to "is the client running?": an open port proves something is bound,
+ * not that it is the editor. Used by `discoverHost` to vet candidates before
+ * committing a bridge to one, so a stale `host.json` or an unrelated service on
+ * 7331 is rejected here instead of turning into a silent no-op later.
+ */
+export async function probeAttach(rawUrl: string): Promise<boolean> {
+  const url = normalizeAttachUrl(rawUrl);
+  const remote = new Client(BRIDGE_INFO, { capabilities: {} });
+  try {
+    await remote.connect(new StreamableHTTPClientTransport(new URL(url)));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await remote.close().catch(() => undefined);
+  }
+}
+
 export interface AttachOptions {
   /** Diagnostics sink. Defaults to stderr; never stdout, which carries JSON-RPC. */
   log?: (line: string) => void;

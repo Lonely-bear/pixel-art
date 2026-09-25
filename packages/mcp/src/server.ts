@@ -140,6 +140,15 @@ export interface PixelServerOptions {
    * promotion path turns out to be missing.
    */
   commands?: CommandExposure;
+  /**
+   * Appended to the built-in instructions.
+   *
+   * The agent reads `instructions`, so this is the one channel that reaches the
+   * model itself rather than the human. When the desktop app is absent the CLI
+   * uses it to say so, which turns a silent "my edits went nowhere" into
+   * something the agent volunteers before the user wonders.
+   */
+  instructionsNote?: string;
 }
 
 export interface PixelServer {
@@ -157,7 +166,9 @@ export function createPixelServer(options: PixelServerOptions = {}): PixelServer
       title: 'dotloom-mcp',
     },
     {
-      instructions: SERVER_INSTRUCTIONS,
+      instructions: options.instructionsNote
+        ? `${SERVER_INSTRUCTIONS}\n\n${options.instructionsNote}`
+        : SERVER_INSTRUCTIONS,
     },
   );
 

@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, ipcMain, Menu, shell } from 'electron';
+import { removeHostFile, writeHostFile } from '@pixel/mcp';
 import { CHANNELS, type AppLocale } from '../shared/types.js';
 import { DEFAULT_MCP_PORT, startMcpHost, type McpHost } from './mcp-host.js';
 import { registerIpc } from './ipc.js';
@@ -191,6 +192,17 @@ async function start(): Promise<void> {
     mcpStatus = mcp.status();
     if (mcpStatus.url) {
       console.error(`[dotloom-mcp] MCP server listening on ${mcpStatus.url}`);
+      // Publish the endpoint so an installed `dotloom-mcp` finds this app on its
+      // own. It cannot be configured client-side: the port is only known after
+      // the retry loop picks one, and a client config holding a stale port fails
+      // silently rather than loudly.
+      const file = await writeHostFile({
+        url: mcpStatus.url,
+        port: mcpStatus.port ?? DEFAULT_MCP_PORT,
+        pid: process.pid,
+        startedAt: Date.now(),
+      });
+      console.error(`[dotloom-mcp] published ${file}`);
     }
   } catch (error) {
     mcpStatus = {
@@ -236,5 +248,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('before-quit', () => {
     void mcp?.close();
+    // Leave no record pointing at a port that is about to stop answering.
+    void removeHostFile();
   });
 }
