@@ -28,6 +28,12 @@ function firstText(result: ToolResult): string {
   return result.content.find((c) => c.type === 'text')?.text ?? '';
 }
 
+function decodedImage(result: ToolResult) {
+  const image = result.content.find((content) => content.type === 'image');
+  expect(image?.mimeType).toBe('image/png');
+  return decodePNG(Buffer.from(image!.data!, 'base64'));
+}
+
 /** Read the dimensions straight out of a PNG's IHDR, independent of our encoder. */
 function pngSize(path: string): { width: number; height: number } {
   const bytes = readFileSync(path);
@@ -65,6 +71,7 @@ describe('tool surface', () => {
     expect(names).toContain('quantize_to_palette');
     expect(names).toContain('apply_ops');
     expect(names).toContain('get_preview');
+    expect(names).toContain('finalize_document');
     expect(names).toContain('export_sheet');
     expect(names).toContain('read_skill');
     // 39 commands plus the session/perception/export tools.
@@ -621,6 +628,7 @@ describe('follow-up ergonomics', () => {
     expect(names).toContain('undo');
     expect(names).toContain('redo');
     expect(names).toContain('get_history');
+    expect(names).toContain('finalize_document');
   });
 });
 
@@ -812,6 +820,47 @@ describe('export', () => {
     expect((detail.layers as Array<{ name: string }>).map((l) => l.name)).toEqual(['base', 'shade']);
     expect((detail.palette as { size: number }).size).toBeGreaterThan(0);
   });
+
+  it('saves the source and writes multiple PNG exports in one finalisation call', async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 8, height: 8, name: 'Fast finish', layers: ['base', 'light'] },
+    });
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { layer: 'base', rect: { x: 0, y: 0, w: 8, h: 8 }, color: '#2255aa', fill: true },
+    });
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { layer: 'light', rect: { x: 2, y: 2, w: 4, h: 4 }, color: '#ffcc66', fill: true },
+    });
+
+    const source = join(tempDir, 'fast-finish.pixel');
+    const original = join(tempDir, 'fast-finish.png');
+    const preview = join(tempDir, 'fast-finish-preview.png');
+    const result = (await client.callTool({
+      name: 'finalize_document',
+      arguments: {
+        path: source,
+        exports: [
+          { path: original, scale: 1 },
+          { path: preview, scale: 4 },
+        ],
+      },
+    })) as ToolResult;
+
+    const body = payload(result);
+    expect(body.ok).toBe(true);
+    expect(body.files).toEqual([source, original, preview]);
+    expect(readFileSync(source).subarray(0, 2).toString('hex')).toBe('504b');
+    expect(pngSize(original)).toEqual({ width: 8, height: 8 });
+    expect(pngSize(preview)).toEqual({ width: 32, height: 32 });
+    expect((body.exports as Array<{ width: number; height: number }>).map(({ width, height }) => ({ width, height }))).toEqual([
+      { width: 8, height: 8 },
+      { width: 32, height: 32 },
+    ]);
+    expect((body.document as { dirty: boolean }).dirty).toBe(false);
+  });
 });
 
 describe('iteration ergonomics', () => {
@@ -923,12 +972,6 @@ describe('iteration ergonomics', () => {
 });
 
 describe('layered and onion previews', () => {
-  function decodedImage(result: ToolResult) {
-    const image = result.content.find((c) => c.type === 'image');
-    expect(image?.mimeType).toBe('image/png');
-    return decodePNG(Buffer.from(image!.data!, 'base64'));
-  }
-
   it('renders only the requested layers', async () => {
     const created = (await client.callTool({
       name: 'create_document',
@@ -1001,6 +1044,57 @@ describe('apply_ops preview', () => {
     const body = payload(result);
     expect(body.ok).toBe(true);
     expect(body.preview).toBeTruthy();
+  });
+
+  it('uses previewOptions to return the requested post-batch frame, crop and scale', async () => {
+    const created = (await client.callTool({
+      name: 'create_document',
+      arguments: { width: 8, height: 8, layers: ['base'], frames: 2 },
+    })) as ToolResult;
+    const id = (payload(created).document as { id: string }).id;
+    const result = (await client.callTool({
+      name: 'apply_ops',
+      arguments: {
+        document: id,
+        ops: [
+          { command: 'draw_rect', layer: 'base', frame: 0, rect: { x: 0, y: 0, w: 2, h: 2 }, color: '#ff0000', fill: true },
+          { command: 'draw_rect', layer: 'base', frame: 1, rect: { x: 4, y: 4, w: 4, h: 4 }, color: '#00ff00', fill: true },
+        ],
+        preview: true,
+        previewOptions: { frame: 1, rect: { x: 4, y: 4, w: 4, h: 4 }, scale: 2 },
+      },
+    })) as ToolResult;
+
+    const body = payload(result);
+    const image = decodedImage(result);
+    expect(body.preview).toMatchObject({ frame: 1, rect: { x: 4, y: 4, w: 4, h: 4 }, scale: 2, imageWidth: 8, imageHeight: 8 });
+    expect(image.width).toBe(8);
+    expect(image.height).toBe(8);
+    expect(image.getColor(0, 0)).toEqual({ r: 0, g: 255, b: 0, a: 255 });
+  });
+
+  it('rejects previewOptions without preview before running any op', async () => {
+    const created = (await client.callTool({
+      name: 'create_document',
+      arguments: { width: 4, height: 4, layers: ['base'] },
+    })) as ToolResult;
+    const id = (payload(created).document as { id: string }).id;
+    const result = (await client.callTool({
+      name: 'apply_ops',
+      arguments: {
+        document: id,
+        ops: [{ command: 'draw_rect', rect: { x: 0, y: 0, w: 1, h: 1 }, color: '#ff0000', fill: true }],
+        previewOptions: { scale: 2 },
+      },
+    })) as ToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(payload(result).error).toContain('requires `preview: true`');
+    const measured = (await client.callTool({
+      name: 'measure_region',
+      arguments: { document: id, layer: 'base', frame: 0 },
+    })) as ToolResult;
+    expect((payload(measured).summary as { opaque: number }).opaque).toBe(0);
   });
 
   it('stays text-only by default', async () => {
@@ -1108,14 +1202,76 @@ describe('scripting and plugins', () => {
     expect(buf.getColor(1, 0).a).toBe(0);
   });
 
-  it('returns an image alongside the result when preview is set', async () => {
+  it('returns the edited document as a configured inline preview', async () => {
     const id = await makeDoc();
     const run = (await client.callTool({
       name: 'run_script',
-      arguments: { document: id, source: 'return 7;', preview: true },
+      arguments: {
+        document: id,
+        source: `
+          const base = layers()[0].id;
+          exec('draw_rect', { layer: base, frame: 0, rect: { x: 0, y: 0, w: 2, h: 2 }, color: '#ff0000', fill: true });
+          return 7;
+        `,
+        preview: true,
+        previewOptions: { scale: 3 },
+      },
     })) as ToolResult;
-    expect(run.content.some((c) => c.type === 'image')).toBe(true);
-    expect(payload(run).preview).toBeTruthy();
+
+    const body = payload(run);
+    const image = decodedImage(run);
+    expect(body.result).toBe(7);
+    expect(body.preview).toMatchObject({ scale: 3, imageWidth: 12, imageHeight: 12 });
+    expect(image.getColor(0, 0)).toEqual({ r: 255, g: 0, b: 0, a: 255 });
+    expect(image.getColor(9, 9).a).toBe(0);
+  });
+
+  it('honours expectedVersion before running a script', async () => {
+    const id = await makeDoc();
+    const result = (await client.callTool({
+      name: 'run_script',
+      arguments: {
+        document: id,
+        expectedVersion: 99,
+        source: `exec('draw_rect', { layer: layers()[0].id, frame: 0, rect: { x: 0, y: 0, w: 1, h: 1 }, color: '#ff0000', fill: true });`,
+      },
+    })) as ToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(payload(result).code).toBe('version_conflict');
+    const measured = (await client.callTool({
+      name: 'measure_region',
+      arguments: { document: id, layer: 'base', frame: 0 },
+    })) as ToolResult;
+    expect((payload(measured).summary as { opaque: number }).opaque).toBe(0);
+  });
+
+  it('reports a post-script preview error without hiding the committed edit', async () => {
+    const created = (await client.callTool({
+      name: 'create_document',
+      arguments: { width: 4, height: 4, layers: ['base'], frames: 2 },
+    })) as ToolResult;
+    const id = (payload(created).document as { id: string }).id;
+    const run = (await client.callTool({
+      name: 'run_script',
+      arguments: {
+        document: id,
+        source: `exec('remove_frame', { frame: 1 }); return 'removed';`,
+        preview: true,
+        previewOptions: { frame: 1 },
+      },
+    })) as ToolResult;
+
+    const body = payload(run);
+    expect(body.ok).toBe(false);
+    expect(body.editCommitted).toBe(true);
+    expect(String(body.previewError)).toMatch(/frame/i);
+    expect(run.content.some((content) => content.type === 'image')).toBe(false);
+    const detail = (await client.callTool({
+      name: 'get_document',
+      arguments: { document: id },
+    })) as ToolResult;
+    expect((payload(detail).document as { frameCount: number }).frameCount).toBe(1);
   });
 
   it('reports a script failure with its logs', async () => {
