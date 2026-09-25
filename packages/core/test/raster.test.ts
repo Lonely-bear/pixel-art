@@ -11,6 +11,7 @@ import {
   floodFill,
   outline,
   putPixel,
+  putPixels,
   replaceColor,
 } from '../src/raster.js';
 
@@ -35,6 +36,32 @@ describe('putPixel', () => {
     const buf = PixelBuffer.filled(2, 2, RED);
     putPixel(buf, 0, 0, { r: 0, g: 0, b: 0, a: 0 });
     expect(buf.getColor(0, 0)).toEqual({ r: 255, g: 0, b: 0, a: 255 });
+  });
+});
+
+describe('putPixels', () => {
+  it('writes an in-memory RGBA buffer with clipping and optional colour mapping', () => {
+    const buf = new PixelBuffer(4, 4);
+    const result = putPixels(
+      buf,
+      { x: 1, y: 1, w: 2, h: 1 },
+      new Uint8ClampedArray([255, 0, 0, 255, 0, 255, 0, 128]),
+      { mapColor: (color) => ({ ...color, b: 32 }) },
+    );
+    expect(result).toEqual({ requested: 2, written: 2, painted: 2, cleared: 0, clipped: 0 });
+    expect(buf.getColor(1, 1)).toEqual({ r: 255, g: 0, b: 32, a: 255 });
+    expect(buf.getColor(2, 1)).toEqual({ r: 0, g: 255, b: 32, a: 128 });
+  });
+
+  it('can clear transparent samples and validates the byte length', () => {
+    const buf = PixelBuffer.filled(2, 1, RED);
+    const result = putPixels(buf, { x: 0, y: 0, w: 2, h: 1 }, new Uint8ClampedArray([0, 0, 0, 0, 0, 0, 255, 255]), {
+      clearTransparent: true,
+    });
+    expect(result).toMatchObject({ written: 2, cleared: 1 });
+    expect(buf.getColor(0, 0).a).toBe(0);
+    expect(buf.getColor(1, 0).a).toBe(255);
+    expect(() => putPixels(buf, { x: 0, y: 0, w: 1, h: 1 }, new Uint8ClampedArray([1, 2, 3]))).toThrow(/expected 4 RGBA bytes/);
   });
 });
 

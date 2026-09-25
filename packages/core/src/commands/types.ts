@@ -99,11 +99,11 @@ export const rectSchema = z
 
 export const layerRefSchema = z
   .union([z.string(), z.number().int()])
-  .describe('Layer ID, layer name, or 0-based index counting from the bottom.');
+  .describe('Layer ID, layer name, or 0-based index counting from the bottom. Generated tools and script exec may fill the bottom layer when omitted.');
 
 export const frameRefSchema = z
   .union([z.string(), z.number().int()])
-  .describe('Frame ID or 0-based frame index.');
+  .describe('Frame ID or 0-based frame index. Generated tools and script exec may fill frame 0 when omitted.');
 
 export const blendOptionsShape = {
   blend: blendSchema.optional().describe('Blend mode against existing pixels. Defaults to `normal`.'),

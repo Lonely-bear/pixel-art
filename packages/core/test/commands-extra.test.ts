@@ -419,4 +419,58 @@ describe('antialias and despeckle', () => {
     expect(merged.merged).toBe(1);
     expect(celOf(outlier).getColor(4, 4)).toMatchObject({ r: 128, g: 0, b: 0, a: 255 });
   });
+
+  it('protects intentional pointillism clusters with minClusterSize', () => {
+    const editor = createEditor(createSprite({ width: 8, height: 8, name: 'Pointillism' }));
+    editor.execute('draw_rect', { layer: 0, frame: F, rect: { x: 2, y: 2, w: 2, h: 2 }, color: '#ffffff', fill: true });
+    const result = editor.execute('despeckle', {
+      layer: 0,
+      frame: F,
+      mode: 'remove-isolated',
+      minClusterSize: 2,
+    }) as { removed: number };
+    expect(result.removed).toBe(0);
+    expect(celOf(editor).getColor(2, 2).a).toBe(255);
+  });
+});
+
+describe('ellipse fill default and pixel rounding', () => {
+  it('fills an ellipse unless fill:false is explicit', () => {
+    const editor = createEditor(createSprite({ width: 8, height: 8, name: 'Ellipse' }));
+    const result = editor.execute('draw_ellipse', {
+      layer: 0,
+      frame: F,
+      rect: { x: 1, y: 1, w: 6, h: 6 },
+      color: '#ffffff',
+    }) as { painted: number };
+    expect(result.painted).toBeGreaterThan(10);
+
+    const outline = createEditor(createSprite({ width: 8, height: 8, name: 'Ellipse' }));
+    const outlineResult = outline.execute('draw_ellipse', {
+      layer: 0,
+      frame: F,
+      rect: { x: 1, y: 1, w: 6, h: 6 },
+      color: '#ffffff',
+      fill: false,
+    }) as { painted: number };
+    expect(outlineResult.painted).toBeLessThan(result.painted);
+  });
+
+  it('rounds fractional pixel coordinates and returns the first samples', () => {
+    const editor = createEditor(createSprite({ width: 8, height: 8, name: 'Round' }));
+    const result = editor.execute('draw_pixels', {
+      layer: 0,
+      frame: F,
+      pixels: [
+        { x: 1.2, y: 2.8, color: '#ffffff' },
+        { x: 3.6, y: 4.1, color: '#ffffff' },
+      ],
+    }) as { rounded: number; roundedSamples: Array<{ x: number; y: number; value: { x: number; y: number } }>; warning?: string };
+
+    expect(result.rounded).toBe(2);
+    expect(result.roundedSamples).toHaveLength(2);
+    expect(result.roundedSamples[0]).toMatchObject({ x: 1.2, y: 2.8, value: { x: 1, y: 3 } });
+    expect(result.warning).toContain('Rounded 2');
+    expect(celOf(editor).getColor(1, 3).a).toBe(255);
+  });
 });

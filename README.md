@@ -191,9 +191,28 @@ Client configuration (Claude Desktop, or any `mcpServers` JSON):
 }
 ```
 
+### OpenCode project configuration
+
+在项目根目录创建 `.opencode/opencode.json` 后，可以让 OpenCode 直接加载本项目的 stdio MCP（先执行一次 `pnpm build`）：
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "pixel-art": {
+      "type": "local",
+      "command": ["node", "D:/AI项目/pixel-art/packages/mcp/dist/cli.js"],
+      "enabled": true
+    }
+  }
+}
+```
+
+使用当前项目目录启动 OpenCode 后，工具会显示在 `pixel-art` MCP 命名空间；如果要连接桌面应用而不是独立 server，可把 `command` 改为带 `--attach http://127.0.0.1:7331/mcp` 的参数数组。
+
 ### What it exposes
 
-- **79 tools.** Every core command (53) is generated straight from its zod schema, plus
+- **83 tools.** Every core command (57) is generated straight from its zod schema, plus
   hand-written session and perception tools: `create_document`, `open_document`,
   `save_document`, `finalize_document`, `import_image` (PNG or Aseprite), `select_document`, `close_document`,
   `list_documents`, `get_document`, `get_preview`, `get_pixels`, `quality_report`, `get_palette`, `get_history`,
@@ -204,7 +223,9 @@ Client configuration (Claude Desktop, or any `mcpServers` JSON):
   `undo`/`redo`/`get_history` and the perception/export tools are discoverable from one
   call. `undo`/`redo` take `steps` (alias `count`). `create_document` takes `select: false`
   to build a scratch document without stealing focus, `select_document` accepts an id or a
-  name, and `get_preview` takes `rect` to crop-zoom a detail.
+  name, and `get_preview` takes `rect` to crop-zoom a detail. Document summaries expose
+  both `active` and `activeDocumentId`; an explicit `get_document {document}` reads without
+  changing the session focus.
 - **6 resources** (4 static + 2 templates). `pixel://documents`, `pixel://commands`,
   `pixel://skill` (a pixel-art craft guide), `pixel://script-guide` (the sandbox/plugin API),
   plus the templates `pixel://documents/{id}` and
@@ -214,7 +235,7 @@ Client configuration (Claude Desktop, or any `mcpServers` JSON):
   (plus `?onionBefore`, `?onionAfter`, `?onionOpacity`, `?loop`, `?beforeTint`, `?afterTint`).
 - **4 prompts.** `draw_sprite`, `animate_sprite`, `improve_sprite`, `pixel_art_basics`.
 
-### Eight details that matter for agents
+### Nine details that matter for agents
 
 1. **`get_preview` returns an actual PNG image**, not a pixel array. A 32x32 sprite is ~10k
    tokens as JSON and ~200 tokens as an image, and the model can actually look at it. It also
@@ -263,6 +284,13 @@ Client configuration (Claude Desktop, or any `mcpServers` JSON):
    (default 20). `shadowHue`/`highlightHue` set absolute endpoint hues, `saturationBoost`
    adds mid-ramp richness, and `mode: "replace"` can swap the whole palette for a single
    coherent ramp.
+9. **Binary and generative primitives avoid per-pixel JSON overhead.** `put_pixels` writes
+   a base64 RGBA8888 rectangle in one command, with the script convenience API
+   `putPixels(rect, data, options?)`; the core raster API also exposes
+   `putPixels(buffer, rect, rgba, options?)` for an in-memory `Uint8Array`/`Uint8ClampedArray`.
+   `banded_gradient`, `noise_fill` (value noise/fBm via `octaves`) and `scatter` generate
+   deterministic seeded fields in one batch command, with palette-aware colours, clipping
+   and a safety limit for scatter.
 
 ### Commands built for animation
 

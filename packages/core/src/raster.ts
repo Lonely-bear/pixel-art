@@ -137,6 +137,95 @@ export function drawPixels(
   return painted;
 }
 
+export type RgbaBuffer = Uint8Array | Uint8ClampedArray;
+
+export interface PutPixelsOptions extends BlendOptions {
+  /** One byte per destination pixel; zero values are skipped. */
+  mask?: Uint8Array | null;
+  /** Clear a destination pixel when its source alpha is zero. Defaults to false. */
+  clearTransparent?: boolean;
+  /** Optional palette/constraint transform applied before blending. */
+  mapColor?: (color: Color) => Color;
+}
+
+export interface PutPixelsResult {
+  requested: number;
+  written: number;
+  painted: number;
+  cleared: number;
+  clipped: number;
+}
+
+/**
+ * Write a row-major RGBA8888 buffer into a rectangle in one pass.
+ *
+ * This is the in-memory counterpart to the `put_pixels` command's base64 wire
+ * format. Keeping the loop here means a script/plugin, a CLI integration, or a
+ * future binary transport can share exactly the same clipping and blending rules
+ * without allocating a `{x, y, color}` object for every pixel.
+ */
+export function putPixels(
+  buf: PixelBuffer,
+  rect: Rect,
+  rgba: RgbaBuffer,
+  opts: PutPixelsOptions = {},
+): PutPixelsResult {
+  if (!Number.isInteger(rect.w) || !Number.isInteger(rect.h) || rect.w <= 0 || rect.h <= 0) {
+    throw new RangeError(`putPixels rect must have positive integer width and height, got ${rect.w}x${rect.h}`);
+  }
+  const requested = rect.w * rect.h;
+  if (!Number.isSafeInteger(requested) || requested > 4096 * 4096) {
+    throw new RangeError(`putPixels rect ${rect.w}x${rect.h} exceeds the supported size`);
+  }
+  const expected = requested * 4;
+  if (rgba.length !== expected) {
+    throw new RangeError(`putPixels data length ${rgba.length} does not match ${rect.w}x${rect.h} (expected ${expected} RGBA bytes)`);
+  }
+
+  let written = 0;
+  let cleared = 0;
+  let clipped = 0;
+  for (let ly = 0; ly < rect.h; ly++) {
+    const y = rect.y + ly;
+    if (y < 0 || y >= buf.height) {
+      clipped += rect.w;
+      continue;
+    }
+    for (let lx = 0; lx < rect.w; lx++) {
+      const x = rect.x + lx;
+      if (x < 0 || x >= buf.width) {
+        clipped++;
+        continue;
+      }
+      const i = buf.index(x, y);
+      if (opts.mask && opts.mask[y * buf.width + x] === 0) {
+        clipped++;
+        continue;
+      }
+      const source = (ly * rect.w + lx) * 4;
+      const alpha = rgba[source + 3];
+      if (alpha === 0) {
+        if (opts.clearTransparent) {
+          buf.data[i] = 0;
+          buf.data[i + 1] = 0;
+          buf.data[i + 2] = 0;
+          buf.data[i + 3] = 0;
+          written++;
+          cleared++;
+        } else {
+          clipped++;
+        }
+        continue;
+      }
+      const sourceColor: Color = { r: rgba[source], g: rgba[source + 1], b: rgba[source + 2], a: alpha };
+      const color = opts.mapColor ? opts.mapColor(sourceColor) : sourceColor;
+      blendInto(buf.data, i, color, opts);
+      written++;
+    }
+  }
+  return { requested, written, painted: written, cleared, clipped };
+}
+
 export function drawLine(
   buf: PixelBuffer,
   x0: number,
@@ -830,6 +919,12 @@ export interface DespeckleOptions {
   mode?: 'remove-isolated' | 'merge-outliers' | 'both';
   /** Remove a solid pixel with fewer than this many solid 8-neighbours. Defaults to 1. */
   minNeighbors?: number;
+  /**
+   * Preserve a same-colour cluster this large, even if it is locally surrounded by
+   * different colours. 1 disables the protection; 2 keeps pointillism pairs, 4 keeps
+   * 2x2 style clusters. Defaults to 1.
+   */
+  minClusterSize?: number;
   /** Colour distance above which a pixel is an outlier. Defaults to 32. */
   threshold?: number;
   /** Alpha at or above this counts as solid. Defaults to 1. */
@@ -853,6 +948,7 @@ export interface DespeckleResult {
 export function despeckle(buf: PixelBuffer, opts: DespeckleOptions = {}): DespeckleResult {
   const mode = opts.mode ?? 'both';
   const minNeighbors = Math.max(0, Math.floor(opts.minNeighbors ?? 1));
+  const minClusterSize = Math.max(1, Math.floor(opts.minClusterSize ?? 1));
   const threshold = Math.max(0, Math.min(255, opts.threshold ?? 32));
   const alphaThreshold = Math.max(1, Math.min(255, Math.floor(opts.alphaThreshold ?? 1)));
   const region = clipRect(opts.rect ?? fullRect(buf.width, buf.height), buf.width, buf.height);
@@ -895,10 +991,15 @@ export function despeckle(buf: PixelBuffer, opts: DespeckleOptions = {}): Despec
       const p = readColor(src, i);
       if (p.a < alphaThreshold) continue;
       const neighbours: Color[] = [];
+      let sameColorNeighbors = 0;
       for (const [ox, oy] of offsets) {
         const n = solid(x + ox, y + oy);
-        if (n) neighbours.push(n);
+        if (n) {
+          neighbours.push(n);
+          if (colorDistance(p, n) <= 8) sameColorNeighbors++;
+        }
       }
+      if (minClusterSize > 1 && sameColorNeighbors + 1 >= minClusterSize) continue;
       if ((mode === 'remove-isolated' || mode === 'both') && neighbours.length < minNeighbors) {
         write(i, null);
         removed++;

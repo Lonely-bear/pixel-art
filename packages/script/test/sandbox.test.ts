@@ -75,6 +75,40 @@ describe('ScriptRuntime.run', () => {
     });
   });
 
+  it('fills script command defaults and supports layer-specific sample()', () => {
+    const editor = createEditor(
+      createSprite({ width: 8, height: 8, layers: ['base', 'top'], palette: createPalette('test', ['#ff0000', '#00ff00']) }),
+    );
+    const runtime = new ScriptRuntime();
+    const outcome = runtime.run(
+      `exec('draw_rect', { rect: { x: 0, y: 0, w: 2, h: 2 }, color: '#ff0000', fill: true });
+       exec('draw_rect', { layer: 1, rect: { x: 4, y: 4, w: 2, h: 2 }, color: '#00ff00', fill: true });
+       return { base: sample(1, 1, { layer: 'base' }), composite: sample(5, 5), defaulted: getPixel(0, 0) };`,
+      editor,
+    );
+    expect(outcome.ok).toBe(true);
+    expect(outcome.result).toEqual({
+      base: { r: 255, g: 0, b: 0, a: 255 },
+      composite: { r: 0, g: 255, b: 0, a: 255 },
+      defaulted: { r: 255, g: 0, b: 0, a: 255 },
+    });
+  });
+
+  it('exposes putPixels() for a base64 RGBA batch', () => {
+    const editor = makeEditor();
+    const runtime = new ScriptRuntime();
+    // 1x2 RGBA: red opaque, green half-transparent.
+    const data = '/wAA/wD/AIA=';
+    const outcome = runtime.run(
+      `return putPixels({ x: 1, y: 1, w: 2, h: 1 }, '${data}');`,
+      editor,
+    );
+    expect(outcome.ok, outcome.error).toBe(true);
+    expect((outcome.result as { written: number }).written).toBe(2);
+    expect(pixel(editor, 1, 1)).toEqual({ r: 255, g: 0, b: 0, a: 255 });
+    expect(pixel(editor, 2, 1)).toEqual({ r: 0, g: 255, b: 0, a: 128 });
+  });
+
   it('reports a thrown script error without killing the runtime', () => {
     const editor = makeEditor();
     const runtime = new ScriptRuntime();

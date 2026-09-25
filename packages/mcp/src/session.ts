@@ -96,6 +96,8 @@ export interface DocumentSummary {
   version: number;
   dirty: boolean;
   active: boolean;
+  /** The session's current focus; explicit document reads do not change it. */
+  activeDocumentId: string | null;
 }
 
 /**
@@ -264,6 +266,7 @@ export class DocumentStore {
       version: doc.editor.version,
       dirty: doc.dirty,
       active: doc.id === this.activeId,
+      activeDocumentId: this.activeId,
     };
   }
 

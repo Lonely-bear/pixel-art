@@ -8,6 +8,7 @@ import {
   describeCommand,
   resolveFrame,
   resolveLayer,
+  type Command,
   type CommandRegistry,
   type CommandSummary,
   type Draft,
@@ -123,6 +124,12 @@ const BOOTSTRAP = `(function () {
   globalThis.log = log;
   globalThis.exec = exec;
   globalThis.tryExec = tryExec;
+  globalThis.putPixels = function (rect, data, options) {
+    var params = options && typeof options === "object" ? Object.assign({}, options) : {};
+    params.rect = rect;
+    params.data = data;
+    return exec("put_pixels", params);
+  };
   globalThis.commands = function () { return call("commands", null); };
   globalThis.command = function (name) { return call("command", { name: name }); };
   globalThis.document = function () { return call("document", null); };
@@ -133,8 +140,11 @@ const BOOTSTRAP = `(function () {
   globalThis.getPixel = function (x, y, layer, frame) {
     return call("getPixel", { x: x, y: y, layer: layer, frame: frame });
   };
-  globalThis.sample = function (x, y, frame) {
-    return call("sample", { x: x, y: y, frame: frame });
+  globalThis.sample = function (x, y, optionsOrFrame) {
+    var options = optionsOrFrame !== null && typeof optionsOrFrame === "object"
+      ? optionsOrFrame
+      : { frame: optionsOrFrame };
+    return call("sample", { x: x, y: y, frame: options.frame, layer: options.layer });
   };
 
   globalThis.defineCommand = function (def) {
@@ -149,6 +159,7 @@ const BOOTSTRAP = `(function () {
     log: log,
     exec: exec,
     tryExec: tryExec,
+    putPixels: globalThis.putPixels,
     commands: globalThis.commands,
     command: globalThis.command,
     document: globalThis.document,
@@ -198,6 +209,23 @@ function draftExecutor(draft: Draft, registry: CommandRegistry): Executor {
       }
     },
   };
+}
+
+/**
+ * The MCP command surface makes layer/frame optional and fills the obvious
+ * defaults. Keep the script bridge on the same contract instead of making a
+ * perfectly good `exec('draw_rect', { layer, rect, ... })` fail merely because
+ * frame 0 was omitted.
+ */
+function fillScriptDefaults(command: Command, params: unknown, sprite: Sprite): unknown {
+  if (!params || typeof params !== 'object' || Array.isArray(params)) return params;
+  const filled = { ...(params as Record<string, unknown>) };
+  const required = (describeCommand(command).params.required ?? []) as string[];
+  if (required.includes('frame') && filled.frame === undefined) filled.frame = 0;
+  if (required.includes('layer') && filled.layer === undefined && sprite.layers[0]) {
+    filled.layer = sprite.layers[0].id;
+  }
+  return filled;
 }
 
 /**
@@ -350,8 +378,12 @@ export class ScriptRuntime {
     switch (method) {
       case 'exec': {
         if (!executor) return { ok: false, error: 'No document is available', code: 'no_document' };
-        const command = String(payload?.command ?? '');
-        return executor.exec(command, payload?.params ?? {});
+        const commandName = String(payload?.command ?? '');
+        const command = executor.registry.get(commandName);
+        const params = command
+          ? fillScriptDefaults(command, payload?.params ?? {}, executor.sprite())
+          : payload?.params ?? {};
+        return executor.exec(commandName, params);
       }
       case 'commands':
         return (executor?.registry.list() ?? []).map((command) => ({
@@ -398,8 +430,16 @@ export class ScriptRuntime {
         if (!sprite) return null;
         const frame = safeResolve(() => resolveFrame(sprite, (payload?.frame as string | number) ?? 0));
         if (!frame) return null;
+        const x = Number(payload?.x);
+        const y = Number(payload?.y);
+        if (payload?.layer !== undefined && payload?.layer !== null) {
+          const layer = safeResolve(() => resolveLayer(sprite, payload.layer as string | number));
+          if (!layer) return null;
+          const color = frame.cels.get(layer.id)?.getColor(x, y);
+          return color ? { ...color } : null;
+        }
         const buffer = compositeFrame(sprite, frame.id, { background: null });
-        const color = buffer.getColor(Number(payload?.x), Number(payload?.y));
+        const color = buffer.getColor(x, y);
         return color ? { ...color } : null;
       }
       default:

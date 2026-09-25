@@ -88,7 +88,8 @@ passes, and look at the result between passes.
 - \`dither_fill\` with \`pattern: "sparse"\` reads as texture (dirt, cloth, grain).
 - If a pass leaves isolated single pixels, run \`despeckle\` with \`mode: "both"\` under a
   \`rect\`. It removes lone speckles and pulls colour outliers toward their local
-  neighbourhood before you finalise.
+  neighbourhood before you finalise. Set \`minClusterSize: 2-4\` when the art intentionally
+  uses pointillism or small same-colour clusters.
 - \`draw_line\` with a translucent colour and \`blend\` is an alternative for
   soft-edged shading, but hard-edged ramps are usually better pixel art.
 - Banding is the classic error: two adjacent shades whose boundary is a straight
@@ -331,11 +332,24 @@ last read. \`finalize_document\` saves the source and writes PNG exports in one 
 
 - \`exec(command, params)\` runs a normal editor command and throws on failure.
   \`tryExec(command, params)\` returns \`{ ok, summary }\` or \`{ ok:false, error, code }\`
-  instead of throwing. Use \`exec\` when a failure should abort the script.
+  instead of throwing. Use \`exec\` when a failure should abort the script. Required
+  \`layer\`/\`frame\` arguments are filled with the bottom layer/frame 0 exactly like
+  the MCP command surface when the command permits it.
+- \`putPixels(rect, base64RGBA, options?)\` is the compact bulk path for generated fields:
+  it writes a row-major RGBA8888 buffer in one command/undo step. The decoded payload
+  must contain exactly \`rect.w * rect.h * 4\` bytes; set \`clearTransparent\` when
+  zero-alpha samples should erase. In-process core callers can pass a
+  \`Uint8Array\`/\`Uint8ClampedArray\` to the matching \`putPixels\` raster helper.
+- Use \`banded_gradient\` for a deterministic directional ramp, \`noise_fill\` with
+  \`octaves: 1\` for value noise or 2–6 for fBm, and \`scatter\` for seeded stars, grit,
+  foam or foliage. These emit one batch command instead of thousands of pixels.
 - \`commands()\` lists every available command as \`{ name, description, readOnly }\`.
   \`command(name)\` returns one command's full JSON Schema, or \`null\`.
 - Read state: \`document()\`, \`layers()\`, \`frames()\`, \`tags()\`, \`palette()\`,
   \`getPixel(x, y, layer?, frame?)\` and \`sample(x, y, frame?)\` (the composited colour).
+  For a layer-specific sample, call \`sample(x, y, { layer, frame })\`; the default
+  composite sample can hit an opaque water/sky layer and hide a nearby silhouette.
+  \`getPixel\` is already layer-specific.
 - \`log(...)\` records output; everything logged is returned in the tool result's \`logs\`.
 - The script's return value is JSON-serialised into \`result\`. Return a plain object
   or array; functions and class instances are not preserved.

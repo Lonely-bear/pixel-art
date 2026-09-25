@@ -7,16 +7,19 @@ export * from './types.js';
 export * from './catalog.js';
 export * from './plugin.js';
 export * from './draw.js';
+export * from './generative.js';
 export * from './structure.js';
 export * from './transform.js';
 export * from './tilemap.js';
 
+import { generativeCommands } from './generative.js';
 import {
   antialiasCommand,
   clearRegionCommand,
   copyRegionCommand,
   despeckleCommand,
   ditherFillCommand,
+  putPixelsCommand,
   drawEllipseCommand,
   drawLineCommand,
   drawPixelsCommand,
@@ -74,6 +77,7 @@ import { tilemapCommands } from './tilemap.js';
 export const allCommands: Command[] = [
   // Drawing
   drawPixelsCommand,
+  putPixelsCommand,
   drawLineCommand,
   drawRectCommand,
   drawEllipseCommand,
@@ -87,6 +91,7 @@ export const allCommands: Command[] = [
   clearRegionCommand,
   copyRegionCommand,
   measureRegionCommand,
+  ...generativeCommands,
   // Structure
   addLayerCommand,
   removeLayerCommand,

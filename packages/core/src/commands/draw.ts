@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { blendInto } from '../blend.js';
+import { decodeBase64 } from '../binary.js';
 import { clipRect, fullRect } from '../geometry.js';
 import { frameMask, compositeFrame } from '../render.js';
 import {
@@ -11,6 +12,7 @@ import {
   drawLine,
   drawPolygon,
   drawPixels,
+  putPixels,
   drawRect,
   extractRegion,
   fillShape,
@@ -74,7 +76,7 @@ function withReplace(
 export const drawPixelsCommand = defineCommand({
   name: 'draw_pixels',
   description:
-    'Write an explicit list of pixels. There is no top-level `color`: every entry in `pixels` carries its own `{x, y, color}`, and `color: null` erases that pixel. Coordinates outside the canvas are ignored. Use this for precise, hand-authored detail; prefer the shape and dither commands for anything regular.',
+    'Write an explicit list of pixels. There is no top-level `color`: every entry in `pixels` carries its own `{x, y, color}`, and `color: null` erases that pixel. Non-integer coordinates are rounded to the nearest pixel and the first three rounded samples are returned in the summary. Coordinates outside the canvas are ignored. Use this for precise, hand-authored detail; prefer the shape and dither commands for anything regular.',
   params: z.object({
     layer: layerRefSchema,
     frame: frameRefSchema,
@@ -84,8 +86,8 @@ export const drawPixelsCommand = defineCommand({
         // not a silently dropped property.
         z
           .object({
-            x: z.number().int(),
-            y: z.number().int(),
+            x: z.number().describe('X coordinate; rounded to the nearest pixel when fractional.'),
+            y: z.number().describe('Y coordinate; rounded to the nearest pixel when fractional.'),
             color: nullableColorSchema.describe('Colour to write, or null to erase.'),
           })
           .strict(),
@@ -99,7 +101,17 @@ export const drawPixelsCommand = defineCommand({
   }),
   apply(ctx, p) {
     const buf = celOf(ctx, p.layer, p.frame);
-    const pixels = p.pixels.map((px) => ({ x: px.x, y: px.y, color: resolveColor(ctx.sprite, px.color) }));
+    let rounded = 0;
+    const roundedSamples: Array<{ index: number; x: number; y: number; value: { x: number; y: number } }> = [];
+    const pixels = p.pixels.map((px, index) => {
+      const x = Math.round(px.x);
+      const y = Math.round(px.y);
+      if (x !== px.x || y !== px.y) {
+        rounded++;
+        if (roundedSamples.length < 3) roundedSamples.push({ index, x: px.x, y: px.y, value: { x, y } });
+      }
+      return { x, y, color: resolveColor(ctx.sprite, px.color) };
+    });
     const painted = drawPixels(buf, pixels, {
       blend: p.blend,
       opacity: p.opacity,
@@ -107,12 +119,67 @@ export const drawPixelsCommand = defineCommand({
       level: p.level,
       mask: clipMask(ctx, p.clip, p.layer, p.frame),
     });
+    const clipSummary = clipWarning(ctx, p.clip, p.layer);
+    const roundedWarning = rounded > 0
+      ? `Rounded ${rounded} non-integer pixel coordinate(s); first samples: ${JSON.stringify(roundedSamples)}`
+      : undefined;
     return {
       layer: layerIdOf(ctx.sprite, p.layer),
       frame: frameIdOf(ctx.sprite, p.frame),
       requested: p.pixels.length,
       painted,
       clipped: p.pixels.length - painted,
+      rounded,
+      roundedSamples,
+      ...clipSummary,
+      ...(roundedWarning ? { warning: [clipSummary.warning, roundedWarning].filter(Boolean).join('; ') } : {}),
+    };
+  },
+});
+
+export const putPixelsCommand = defineCommand({
+  name: 'put_pixels',
+  description:
+    'Write a rectangular RGBA8888 buffer supplied as base64. This is the compact bulk path for large generated fields: one payload, one command, one undo step, instead of tens of thousands of `{x,y,color}` objects. Data is row-major RGBA bytes; the decoded length must equal `rect.w * rect.h * 4`. Set `clearTransparent: true` when zero-alpha samples should erase rather than be ignored.',
+  params: z.object({
+    layer: layerRefSchema,
+    frame: frameRefSchema,
+    rect: rectSchema.describe('Destination rectangle in canvas pixels.'),
+    data: z.string().min(1).describe('Base64-encoded row-major RGBA8888 bytes.'),
+    clearTransparent: z.boolean().optional().describe('Erase destination pixels whose source alpha is zero. Defaults to false.'),
+    clip: clipSchema,
+    ...blendOptionsShape,
+  }),
+  apply(ctx, p) {
+    if (p.rect.w <= 0 || p.rect.h <= 0) {
+      throw new Error(`put_pixels rect must have positive width and height, got ${p.rect.w}x${p.rect.h}`);
+    }
+    const pixelCount = p.rect.w * p.rect.h;
+    if (!Number.isSafeInteger(pixelCount) || pixelCount > 4096 * 4096) {
+      throw new Error(`Invalid put_pixels rect: ${p.rect.w}x${p.rect.h} is too large`);
+    }
+    const bytes = decodeBase64(p.data);
+    const expected = pixelCount * 4;
+    if (bytes.length !== expected) {
+      throw new Error(
+        `put_pixels data length mismatch: expected ${expected} RGBA bytes for ${p.rect.w}x${p.rect.h}, decoded ${bytes.length}`,
+      );
+    }
+
+    const buf = celOf(ctx, p.layer, p.frame);
+    const result = putPixels(buf, p.rect, bytes, {
+      blend: p.blend,
+      opacity: p.opacity,
+      mask: clipMask(ctx, p.clip, p.layer, p.frame),
+      clearTransparent: p.clearTransparent,
+      mapColor: (color) => resolveColor(ctx.sprite, color),
+    });
+    return {
+      layer: layerIdOf(ctx.sprite, p.layer),
+      frame: frameIdOf(ctx.sprite, p.frame),
+      bytes: bytes.length,
+      expectedBytes: expected,
+      ...result,
       ...clipWarning(ctx, p.clip, p.layer),
     };
   },
@@ -183,13 +250,13 @@ export const drawRectCommand = defineCommand({
 export const drawEllipseCommand = defineCommand({
   name: 'draw_ellipse',
   description:
-    'Draw an ellipse inscribed in the given rect, correct for both odd and even diameters. Set `fill: true` for a solid disc. `replace: true` erases the pixels this shape covers first.',
+    'Draw an ellipse inscribed in the given rect, correct for both odd and even diameters. It is filled by default; pass `fill: false` for an outline. `replace: true` erases the pixels this shape covers first.',
   params: z.object({
     layer: layerRefSchema,
     frame: frameRefSchema,
     rect: rectSchema.describe('Bounding box the ellipse is inscribed in.'),
     color: nullableColorSchema,
-    fill: z.boolean().optional(),
+    fill: z.boolean().optional().describe('Fill the ellipse. Defaults to true; pass false for an outline.'),
     replace: z.boolean().optional().describe('Erase the pixels this shape covers before drawing. Defaults to false.'),
     clip: clipSchema,
     ...ditherOptionsShape,
@@ -199,7 +266,7 @@ export const drawEllipseCommand = defineCommand({
     const buf = celOf(ctx, p.layer, p.frame);
     const { painted, replaced } = withReplace(
       p.replace,
-      (color, opts) => drawEllipse(buf, p.rect, color, { ...opts, fill: p.fill }),
+      (color, opts) => drawEllipse(buf, p.rect, color, { ...opts, fill: p.fill ?? true }),
       resolveColor(ctx.sprite, p.color),
       {
         blend: p.blend,
@@ -414,7 +481,7 @@ export const antialiasCommand = defineCommand({
 export const despeckleCommand = defineCommand({
   name: 'despeckle',
   description:
-    'Remove the single-pixel noise that makes pixel art look digital/harsh. `mode: "remove-isolated"` erases solid pixels with too few solid neighbours, `"merge-outliers"` recolours a lone pixel whose colour is far from its local neighbourhood, and `"both"` (default) does both. Pair it with `antialias` for a softer result; use `rect` to keep the cleanup local.',
+    'Remove the single-pixel noise that makes pixel art look digital/harsh. `mode: "remove-isolated"` erases solid pixels with too few solid neighbours, `"merge-outliers"` recolours a lone pixel whose colour is far from its local neighbourhood, and `"both"` (default) does both. `minClusterSize` protects intentional pointillism or small same-colour clusters. Pair it with `antialias` for a softer result; use `rect` to keep the cleanup local.',
   params: z.object({
     layer: layerRefSchema,
     frame: frameRefSchema,
@@ -429,6 +496,13 @@ export const despeckleCommand = defineCommand({
       .max(8)
       .optional()
       .describe('Remove a solid pixel with fewer than this many solid 8-neighbours. Defaults to 1.'),
+    minClusterSize: z
+      .number()
+      .int()
+      .min(1)
+      .max(64)
+      .optional()
+      .describe('Preserve same-colour clusters at least this large. Defaults to 1; use 2–4 to protect pointillism.'),
     threshold: z
       .number()
       .min(0)
@@ -449,6 +523,7 @@ export const despeckleCommand = defineCommand({
     const result = despeckle(buf, {
       mode: p.mode,
       minNeighbors: p.minNeighbors,
+      minClusterSize: p.minClusterSize,
       threshold: p.threshold,
       alphaThreshold: p.alphaThreshold,
       rect: p.rect,

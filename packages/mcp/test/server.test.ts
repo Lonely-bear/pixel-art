@@ -75,11 +75,15 @@ describe('tool surface', () => {
     expect(names).toContain('antialias');
     expect(names).toContain('despeckle');
     expect(names).toContain('add_palette_ramp');
+    expect(names).toContain('put_pixels');
+    expect(names).toContain('banded_gradient');
+    expect(names).toContain('noise_fill');
+    expect(names).toContain('scatter');
     expect(names).toContain('finalize_document');
     expect(names).toContain('export_sheet');
     expect(names).toContain('read_skill');
-    // 39 commands plus the session/perception/export tools.
-    expect(names.length).toBeGreaterThanOrEqual(55);
+    // 57 core commands plus the session/perception/export tools.
+    expect(names.length).toBe(83);
   });
 
   it('exposes command descriptions and their own schemas', async () => {
@@ -97,7 +101,7 @@ describe('tool surface', () => {
   it('lists commands compactly by default and in full on request', async () => {
     const compact = (await client.callTool({ name: 'list_commands', arguments: {} })) as ToolResult;
     const body = payload(compact);
-    expect(body.count).toBeGreaterThanOrEqual(39);
+    expect(body.count).toBe(57);
 
     const entry = (body.commands as Array<Record<string, unknown>>).find((c) => c.name === 'draw_rect');
     expect(entry?.required).toContain('rect');
@@ -106,8 +110,10 @@ describe('tool surface', () => {
 
     // This used to be ~188 kB of JSON Schema, which an agent had to script around.
     // It now also carries the hand-registered session tools (undo/redo/history,
-    // perception, export, quality) and a richer palette-ramp command.
-    expect(JSON.stringify(body).length).toBeLessThan(26_000);
+    // perception, export, quality), the bulk/generative commands, and a richer
+    // palette-ramp command. Keep the default response comfortably below the
+    // previous full-schema scale while leaving room for their parameter hints.
+    expect(JSON.stringify(body).length).toBeLessThan(30_000);
 
     const verbose = (await client.callTool({
       name: 'list_commands',
@@ -593,6 +599,26 @@ describe('follow-up ergonomics', () => {
     expect(payload(list).activeDocument).toBe(firstId);
   });
 
+  it('reports session focus separately from an explicit document read', async () => {
+    const first = (await client.callTool({
+      name: 'create_document',
+      arguments: { width: 4, height: 4, name: 'Focused' },
+    })) as ToolResult;
+    const firstId = (payload(first).document as { id: string }).id;
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 4, height: 4, name: 'Scratch', select: false },
+    });
+
+    const explicit = (await client.callTool({
+      name: 'get_document',
+      arguments: { document: firstId },
+    })) as ToolResult;
+    const summary = payload(explicit).document as { active: boolean; activeDocumentId: string | null };
+    expect(summary.active).toBe(true);
+    expect(summary.activeDocumentId).toBe(firstId);
+  });
+
   it('crops get_preview to a rect and upscales it', async () => {
     await client.callTool({
       name: 'create_document',
@@ -706,11 +732,12 @@ describe('quality and softness tools', () => {
       arguments: { layer: 'base', pixels: [{ x: 4, y: 4, color: '#ffffff' }] },
     });
 
-    const result = (await client.callTool({ name: 'quality_report', arguments: {} })) as ToolResult;
+    const result = (await client.callTool({ name: 'quality_report', arguments: { grid: 2 } })) as ToolResult;
     const body = payload(result);
     expect(body.ok).toBe(true);
     expect((body.noise as { outliers: number }).outliers).toBeGreaterThan(0);
     expect(typeof body.softnessScore).toBe('number');
+    expect((body.regions as unknown[]).length).toBe(4);
     const warnings = body.warnings as Array<{ code: string }>;
     expect(warnings.map((warning) => warning.code)).toContain('high_frequency_noise');
   });
@@ -760,6 +787,39 @@ describe('quality and softness tools', () => {
 
     const palette = (await client.callTool({ name: 'get_palette', arguments: {} })) as ToolResult;
     expect(payload(palette).size).toBe(7);
+  });
+
+  it('exposes base64 and deterministic generative primitives over MCP', async () => {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 8, height: 8, name: 'Generative' },
+    });
+    const bulk = (await client.callTool({
+      name: 'put_pixels',
+      arguments: {
+        rect: { x: 0, y: 0, w: 2, h: 1 },
+        data: '/wAA/wD/AIA=',
+      },
+    })) as ToolResult;
+    expect((payload(bulk).summary as { written: number }).written).toBe(2);
+
+    const gradient = (await client.callTool({
+      name: 'banded_gradient',
+      arguments: { rect: { x: 0, y: 2, w: 8, h: 4 }, from: '#10182c', to: '#f0c16b', seed: 4 },
+    })) as ToolResult;
+    expect((payload(gradient).summary as { pixels: number }).pixels).toBe(32);
+
+    const noise = (await client.callTool({
+      name: 'noise_fill',
+      arguments: { rect: { x: 0, y: 0, w: 4, h: 4 }, from: '#10182c', to: '#83b7b0', octaves: 4, seed: 4 },
+    })) as ToolResult;
+    expect((payload(noise).summary as { mode: string }).mode).toBe('fbm');
+
+    const scatter = (await client.callTool({
+      name: 'scatter',
+      arguments: { rect: { x: 4, y: 4, w: 4, h: 4 }, count: 4, colors: ['#fff2c7'], seed: 4 },
+    })) as ToolResult;
+    expect((payload(scatter).summary as { points: number }).points).toBe(4);
   });
 });
 

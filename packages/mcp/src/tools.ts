@@ -406,6 +406,8 @@ interface QualityAnalysisOptions {
   rect?: { x: number; y: number; w: number; h: number };
   noiseThreshold?: number;
   alphaThreshold?: number;
+  /** Optional square grid for per-region outlier/isolated counts. */
+  grid?: number;
 }
 
 /**
@@ -569,6 +571,69 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
     });
   }
 
+  const regions: Array<Record<string, unknown>> = [];
+  const grid = Math.max(1, Math.floor(options.grid ?? 1));
+  if (grid > 1) {
+    const cellWidth = Math.ceil(width / grid);
+    const cellHeight = Math.ceil(height / grid);
+    for (let ry = 0; ry < grid; ry++) {
+      for (let rx = 0; rx < grid; rx++) {
+        const x0 = rx * cellWidth;
+        const y0 = ry * cellHeight;
+        const x1 = Math.min(width, x0 + cellWidth);
+        const y1 = Math.min(height, y0 + cellHeight);
+        let regionOpaque = 0;
+        let regionIsolated = 0;
+        let regionOutliers = 0;
+        let regionEdgeSum = 0;
+        let regionEdgeCount = 0;
+        for (let y = y0; y < y1; y++) {
+          for (let x = x0; x < x1; x++) {
+            const c = at(x, y)!;
+            if (c.a < alphaThreshold) continue;
+            regionOpaque++;
+            let neighbours = 0;
+            let matching = 0;
+            let nr = 0;
+            let ng = 0;
+            let nb = 0;
+            for (const [ox, oy] of offsets) {
+              const n = at(x + ox, y + oy);
+              if (!n || n.a < alphaThreshold) continue;
+              neighbours++;
+              nr += n.r;
+              ng += n.g;
+              nb += n.b;
+              if (distance(c, n) <= 8) matching++;
+            }
+            if (neighbours === 0) {
+              regionIsolated++;
+            } else if (matching <= 1 && distance(c, { r: nr / neighbours, g: ng / neighbours, b: nb / neighbours }) > noiseThreshold) {
+              regionOutliers++;
+            }
+            for (const [ox, oy] of [[1, 0], [0, 1]] as Array<[number, number]>) {
+              const n = at(x + ox, y + oy);
+              if (!n || n.a < alphaThreshold) continue;
+              const lum = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+              regionEdgeSum += Math.abs(lum - (0.2126 * n.r + 0.7152 * n.g + 0.0722 * n.b));
+              regionEdgeCount++;
+            }
+          }
+        }
+        regions.push({
+          x: x0,
+          y: y0,
+          w: x1 - x0,
+          h: y1 - y0,
+          opaque: regionOpaque,
+          isolated: regionIsolated,
+          outliers: regionOutliers,
+          meanAdjacentDelta: regionEdgeCount > 0 ? regionEdgeSum / regionEdgeCount : 0,
+        });
+      }
+    }
+  }
+
   return {
     frame: sprite.frames.findIndex((f) => f.id === frame.id),
     frameId: frame.id,
@@ -604,6 +669,7 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
     },
     overexposedRatio,
     softnessScore,
+    ...(regions.length > 0 ? { regions } : {}),
     warnings,
   };
 }
@@ -1028,7 +1094,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Inspect a document',
       description:
-        'Full structure of a document: size, layers (bottom first) with their visibility/opacity/blend mode, frames with durations and which layers have pixels on them, animation tags, palette size, and the current version. Call this before editing so you know the layer names and frame indices.',
+        'Full structure of a document: size, layers (bottom first) with their visibility/opacity/blend mode, frames with durations and which layers have pixels on them, animation tags, palette size, and the current version. Passing an explicit `document` reads it without changing session focus; use `select_document` when you want to make it active.',
       inputSchema: z.object({ document: documentRef }),
       annotations: { readOnlyHint: true },
     },
@@ -1225,6 +1291,13 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           .max(255)
           .optional()
           .describe('Alpha at or above this counts as solid. Defaults to 1.'),
+        grid: z
+          .number()
+          .int()
+          .min(1)
+          .max(8)
+          .optional()
+          .describe('Optional grid size for per-region isolated/outlier counts. 1 (default) returns one aggregate report.'),
       }),
       annotations: { readOnlyHint: true },
     },
@@ -1238,6 +1311,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
             rect: args.rect as { x: number; y: number; w: number; h: number } | undefined,
             noiseThreshold: args.noiseThreshold as number | undefined,
             alphaThreshold: args.alphaThreshold as number | undefined,
+            grid: args.grid as number | undefined,
           }),
         });
       } catch (error) {
