@@ -12,7 +12,7 @@ model** in `packages/core`. The Electron app and the MCP server are both just cl
 | Package | Role |
 | --- | --- |
 | `packages/core` | Pure TypeScript. Document model, command bus, rasteriser, PNG, serialisation. **No DOM, no Electron, no Node APIs.** |
-| `packages/script` | Sandboxed JavaScript runtime + plugin loader (`node:vm`). **Node only.** |
+| `packages/script` | Constrained JavaScript runtime + plugin loader (`node:vm`). **Node only; not an untrusted-code boundary.** |
 | `packages/cli` | Headless command line over `core` (M0). |
 | `packages/mcp` | MCP server exposing `core` as tools/resources/prompts (M1). |
 | `packages/app` | Electron + React + Vite editor, with the MCP server embedded (M2). |
@@ -351,12 +351,13 @@ structure for terrain, walls and floors, and it is what an agent uses to build a
 
 ## Scripting and plugins
 
-`packages/script` adds a sandboxed JavaScript layer on top of the same command bus. It is
+`packages/script` adds a constrained JavaScript layer on top of the same command bus. It is
 **Node-only** — `core` stays platform-free — and it is deliberately narrow: a script can only
 drive the editor through the commands, never touch the filesystem, the network or `process`.
 
-A script runs inside a hardened `node:vm` context with no `require`, no `process`, no `module`,
-no `eval`/`new Function` and no string code generation, under a timeout (2 s by default). It is
+A script runs inside a restricted `node:vm` context with no `require`, no `process`, no `module`,
+no `eval`/`new Function` and no string code generation, under a timeout (2 s by default). Node's
+`vm` API is not a security mechanism, so only run trusted scripts and plugins. It is
 handed a small **context-native** API — `exec`, `tryExec`, `putPixels`, `commands`, `command`,
 `document`, `layers`, `frames`, `tags`, `palette`, `getPixel`, `sample`, the explicit
 `sampleComposite`, and `log` — and its return

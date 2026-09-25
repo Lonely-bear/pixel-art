@@ -524,15 +524,16 @@ export const SCRIPT_GUIDE_URI = 'pixel://script-guide';
  * The scripting guide served as `pixel://script-guide`.
  *
  * The tool list tells an agent *that* `run_script` and `load_plugin` exist; this
- * tells it how to use them well, and exactly what the sandbox does and does not
- * allow, so it does not waste a call discovering the boundary by failure.
+ * tells it how to use them well, and exactly what the constrained runtime exposes,
+ * so it does not waste a call discovering the API by failure.
  */
 export const SCRIPT_GUIDE = `# Scripting and plugins
 
-\`run_script\` executes JavaScript against the current document inside a hardened
-\`node:vm\` sandbox. It is the escape hatch for anything the fixed command set does
-not cover: procedural patterns, maths-heavy placement, reading many pixels at once,
-or looping an edit over every frame.
+\`run_script\` executes trusted JavaScript against the current document inside a
+restricted \`node:vm\` context. The context limits the exposed API, but it is not a
+security boundary for hostile code. It is the extension point for anything the fixed
+command set does not cover: procedural patterns, maths-heavy placement, reading many
+pixels at once, or looping an edit over every frame.
 
 For a visual iteration, pass \`preview: true\` and leave \`previewOptions\` at its default;
 the PNG is returned with the script result, so no follow-up \`get_preview\` call is needed.
@@ -541,7 +542,7 @@ whole - pass \`previewOptions: {rect, scale}\` when you want to inspect one deta
 Use \`expectedVersion\` when another editor may have changed the document since your
 last read. \`finalize_document\` saves the source and writes PNG exports in one call.
 
-## What the sandbox gives you
+## What the scripting context gives you
 
 - \`exec(command, params)\` runs a normal editor command and throws on failure.
   \`tryExec(command, params)\` returns \`{ ok, summary }\` or \`{ ok:false, error, code }\`
@@ -578,7 +579,7 @@ last read. \`finalize_document\` saves the source and writes PNG exports in one 
 
 - No \`require\`, \`process\`, \`module\`, filesystem or network access.
 - No \`eval\` or \`new Function\` - dynamic code generation is disabled at the context
-  level, so the usual sandbox-escape tricks do not even start.
+  level, so the usual context-escape tricks do not even start.
 - A wall-clock timeout (default 15000 ms over MCP, override with \`timeoutMs\`). An infinite
   loop is killed and reported as \`Script timed out after Nms\`. A script that generates
   a whole 256x256 scene is a few hundred command calls, so raise \`timeoutMs\` rather than

@@ -572,7 +572,7 @@ const pixelsCommand: CommandSpec = {
 
 const scriptCommand: CommandSpec = {
   name: 'script',
-  summary: 'Run a sandboxed JavaScript snippet against a document (Node-only)',
+  summary: 'Run a constrained JavaScript snippet against a document (trusted code only)',
   usage:
     'pixel script <file.pixel> (--src <script.js> | --code <js>) [--out <file.pixel>] [--timeout <ms>] [--dry-run] [--preview <file.png>] [--plugin <file.js>]...',
   async run(ctx) {

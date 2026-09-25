@@ -2620,7 +2620,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Run a sandboxed script',
       description:
-        'Run JavaScript against the current document in a hardened sandbox. `exec(command, params)` / `tryExec(...)` drive the same command bus as the tools; `document()`, `layers()`, `frames()`, `tags()`, `palette()`, `getPixel(x, y)` and `sample(x, y)` read state; `log(...)` collects output; returning a value yields JSON. The whole script collapses into one undo step. For the fast draw→look loop, pass `preview: true` and optionally `previewOptions: {scale: 4, frame, rect, layers, background}` so the PNG arrives in this same response. There is no filesystem, network, `require` or `process` access, and it is killed after the timeout.',
+        'Run trusted JavaScript against the current document in a constrained `node:vm` context; it is not a security boundary for hostile code. `exec(command, params)` / `tryExec(...)` drive the same command bus as the tools; `document()`, `layers()`, `frames()`, `tags()`, `palette()`, `getPixel(x, y)` and `sample(x, y)` read state; `log(...)` collects output; returning a value yields JSON. The whole script collapses into one undo step. For the fast draw→look loop, pass `preview: true` and optionally `previewOptions: {scale: 4, frame, rect, layers, background}` so the PNG arrives in this same response. There is no intended filesystem, network, `require` or `process` access, and it is killed after the timeout.',
       inputSchema: z.object({
         document: documentRef,
         expectedVersion: versionRef,

@@ -31,7 +31,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.13.0
           cache: pnpm
 
       - name: Install dependencies
@@ -68,3 +68,20 @@ jobs:
           node -e "const v=require('./version.json'); if (v.name !== 'pixel-art-mcp' || v.version !== '0.1.0') process.exit(1)"
           ./node_modules/.bin/pixel-mcp --version
           ./node_modules/.bin/pixel-art-mcp --version
+          ./node_modules/.bin/pixel new smoke.pixel --width 8 --height 8 --layers Ink --frames 1
+          ./node_modules/.bin/pixel export smoke.pixel --out smoke.png --scale 2
+          test -s smoke.png
+          node --input-type=module <<'NODE'
+          import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+          import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+          const transport = new StdioClientTransport({
+            command: process.execPath,
+            args: ['node_modules/pixel-art-mcp/dist/pixel-mcp.js'],
+          });
+          const client = new Client({ name: 'tarball-smoke', version: '1.0.0' });
+          await client.connect(transport);
+          const result = await client.listTools();
+          if (result.tools.length === 0) throw new Error('installed MCP server exposed no tools');
+          console.log(JSON.stringify({ server: client.getServerVersion(), tools: result.tools.length }));
+          await client.close();
+          NODE

@@ -6,7 +6,7 @@
   <p>
     <a href="https://www.npmjs.com/package/pixel-art-mcp"><img src="https://img.shields.io/npm/v/pixel-art-mcp?label=npm&logo=npm&style=flat-square" alt="npm version" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="Apache-2.0 License" /></a>
-    <img src="https://img.shields.io/badge/node-%3E%3D22.12-5fa04e?style=flat-square" alt="Node.js 22.12 or newer" />
+    <img src="https://img.shields.io/badge/node-%3E%3D22.13-5fa04e?style=flat-square" alt="Node.js 22.13 or newer" />
     <img src="https://img.shields.io/badge/MCP-ready-8a5cf5?style=flat-square" alt="Model Context Protocol ready" />
   </p>
 </div>
@@ -54,7 +54,7 @@
 
 ### Requirements
 
-- Node.js **22.12 or newer**
+- Node.js **22.13 or newer**
 - npm, pnpm, or any MCP client capable of starting a local stdio server
 
 ### Install the CLI and MCP server
@@ -125,7 +125,7 @@ Check the connection with `opencode mcp list` or `/mcps`.
 
 ## CLI in 30 seconds
 
-Every command prints one JSON object, making the CLI easy to compose with shell scripts and CI.
+Document operations print one JSON object, making the CLI easy to compose with shell scripts and CI; help and human-readable command listings use plain text.
 
 ```bash
 # Create a layered, animated document
@@ -218,7 +218,7 @@ The attached GUI and agent then share documents and undo history: an agent edit 
 - **Tilemaps** — tilesets, editable grids, 16/47 auto-tiling, terrain offsets, pixel-layer baking, and Tiled `.tmj` export.
 - **Pixel craft** — hue-shifted ramps, palette locking, Bayer and clustered dithering, selective outlines, despeckle, and corner-aware antialiasing.
 - **Landscape diagnostics** — horizon, ridge, waterline, value-plane, light-concentration, and guiding-line evidence for full-bleed scenes.
-- **Scripting** — a hardened `node:vm` sandbox with commands, pixel buffers, document inspection, sampling, timeouts, and plugins.
+- **Scripting** — a constrained `node:vm` context with commands, pixel buffers, document inspection, sampling, timeouts, and plugins. It limits the scripting API, but is not a security boundary for untrusted code.
 
 <details>
 <summary><strong>Scripting API</strong></summary>

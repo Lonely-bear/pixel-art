@@ -20,19 +20,21 @@ import {
 } from '@pixel/core';
 
 /**
- * The scripting sandbox.
+ * The constrained scripting runtime.
  *
- * Scripts and plugins are JavaScript, but they never get `require`, `process`, `fetch`,
- * the filesystem or the network. They run in a hardened `node:vm` context whose only
- * door to the outside is a single JSON bridge back into the command bus — the same bus
- * the UI, the CLI and MCP use. That means a script can only do what a human with a mouse
- * could do, and every edit it makes lands in the normal undo history.
+ * Scripts and plugins are JavaScript, but they are not given `require`, `process`, `fetch`,
+ * the filesystem or the network. They run in a restricted `node:vm` context whose intended
+ * API is a single JSON bridge back into the command bus — the same bus the UI, the CLI and
+ * MCP use. Every edit therefore lands in the normal undo history.
  *
- * Two hard rules make the isolation hold:
+ * `node:vm` is not a security mechanism. These restrictions are API and defence-in-depth
+ * controls for trusted scripts, not an isolation boundary for hostile code.
+ *
+ * Two rules further reduce accidental escape:
  *
  *   1. `codeGeneration: { strings: false, wasm: false }` disables `eval` and the
  *      `Function` constructor *inside* the context, so a script cannot compile its way
- *      out of the sandbox.
+ *      out of the restricted context.
  *   2. Every function the script sees (`exec`, `log`, `document`, ...) is defined in the
  *      bootstrap *inside* the context, not injected from the host. A host function's
  *      `.constructor` is the host's `Function`, which is the classic escape hatch; a

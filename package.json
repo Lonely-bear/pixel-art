@@ -7,7 +7,7 @@
   "type": "module",
   "packageManager": "pnpm@11.6.0",
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=22.13.0"
   },
   "keywords": [
     "pixel-art",
@@ -38,7 +38,8 @@
     "README.md",
     "CHANGELOG.md",
     "LICENSE",
-    "assets"
+    "assets",
+    "docs"
   ],
   "scripts": {
     "build:libs": "pnpm --filter @pixel/core build && pnpm --filter @pixel/script build && pnpm --filter @pixel/cli build && pnpm --filter @pixel/mcp build",
@@ -67,9 +68,5 @@
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
-  },
-  "main": "index.js",
-  "directories": {
-    "doc": "docs"
   }
 }
