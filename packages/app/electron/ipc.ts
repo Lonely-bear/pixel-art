@@ -58,6 +58,14 @@ const dialogText = {
 } as const;
 const text = () => dialogText[appLocale];
 
+/**
+ * Push the current document list to every window.
+ *
+ * Driven by `store.onChange` rather than by the handlers below, so an edit
+ * made through the embedded MCP server repaints the window exactly like a local
+ * one, and a second window stays in sync. Sending to all windows is what makes
+ * that work: the store is shared, so the change is not window-local.
+ */
 function broadcast(): void {
   const activeId = store.activeDocumentId;
   for (const window of BrowserWindow.getAllWindows()) {
@@ -77,6 +85,12 @@ async function ensureDir(filePath: string): Promise<void> {
 }
 
 export function registerIpc(getMcpStatus: () => unknown): void {
+  // One notification path for every mutation, whoever made it. The store
+  // announces its own changes, so this is the only subscriber needed: the
+  // handlers below, a second window, and the MCP server's agent edits all
+  // reach the canvas by the same route.
+  store.onChange(broadcast);
+
   ipcMain.on(CHANNELS.setLocale, (_event, locale: AppLocale) => {
     if (locale === 'en' || locale === 'zh-CN') appLocale = locale;
   });
@@ -91,19 +105,16 @@ export function registerIpc(getMcpStatus: () => unknown): void {
 
   ipcMain.handle(CHANNELS.selectDocument, (_event, id: string) => {
     store.select(id);
-    broadcast();
     return store.summary(store.require(id));
   });
 
   ipcMain.handle(CHANNELS.createDocument, (_event, options: Record<string, unknown>) => {
     const doc = store.create(options as never);
-    broadcast();
     return describeDocument(doc);
   });
 
   ipcMain.handle(CHANNELS.closeDocument, (_event, id: string) => {
     store.remove(id);
-    broadcast();
     return summaries();
   });
 
@@ -118,22 +129,16 @@ export function registerIpc(getMcpStatus: () => unknown): void {
   ipcMain.handle(
     CHANNELS.execute,
     (_event, id: string | undefined, name: string, params: unknown, opts?: Record<string, unknown>) => {
-      const result = execute(store.require(id), name, params, opts ?? {});
-      if (result.ok) broadcast();
-      return result;
+      return execute(store.require(id), name, params, opts ?? {});
     },
   );
 
   ipcMain.handle(CHANNELS.undo, (_event, id: string | undefined, steps?: number) => {
-    const result = undo(store.require(id), steps ?? 1);
-    if (result.undone > 0) broadcast();
-    return result;
+    return undo(store.require(id), steps ?? 1);
   });
 
   ipcMain.handle(CHANNELS.redo, (_event, id: string | undefined, steps?: number) => {
-    const result = redo(store.require(id), steps ?? 1);
-    if (result.redone > 0) broadcast();
-    return result;
+    return redo(store.require(id), steps ?? 1);
   });
 
   ipcMain.handle(CHANNELS.history, (_event, id: string | undefined, limit?: number) =>
@@ -151,7 +156,6 @@ export function registerIpc(getMcpStatus: () => unknown): void {
     const filePath = picked.filePaths[0];
     const bytes = new Uint8Array(await readFile(filePath));
     const doc = store.load(bytes, { path: filePath, select: true });
-    broadcast();
     return describeDocument(doc);
   });
 
@@ -171,7 +175,6 @@ export function registerIpc(getMcpStatus: () => unknown): void {
     await writeFile(filePath, serializeSprite(doc.editor.sprite));
     doc.path = filePath;
     store.touch(doc, false);
-    broadcast();
     return { path: filePath };
   });
 
@@ -187,7 +190,6 @@ export function registerIpc(getMcpStatus: () => unknown): void {
     await writeFile(picked.filePath, serializeSprite(doc.editor.sprite));
     doc.path = picked.filePath;
     store.touch(doc, false);
-    broadcast();
     return { path: picked.filePath };
   });
 
@@ -374,7 +376,6 @@ export function registerIpc(getMcpStatus: () => unknown): void {
       name: path.basename(filePath).replace(/\.png$/i, ''),
     });
     const doc = store.add(sprite, { select: true });
-    broadcast();
     return describeDocument(doc);
   });
 

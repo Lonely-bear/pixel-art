@@ -131,6 +131,7 @@ export function resolveBuiltinPalette(name: string): Palette | undefined {
 export class DocumentStore {
   private readonly documents = new Map<string, PixelDocument>();
   private activeId: string | null = null;
+  private readonly changeListeners = new Set<() => void>();
 
   /**
    * One command registry for the whole session, shared by every document's editor.
@@ -176,6 +177,7 @@ export class DocumentStore {
     };
     this.documents.set(doc.id, doc);
     if (options.select !== false) this.activeId = doc.id;
+    this.announce();
     return doc;
   }
 
@@ -197,6 +199,7 @@ export class DocumentStore {
     doc.name = doc.editor.sprite.name;
     doc.dirty = false;
     doc.updatedAt = Date.now();
+    this.announce();
   }
 
   list(): PixelDocument[] {
@@ -215,9 +218,41 @@ export class DocumentStore {
     return this.activeId;
   }
 
+  /**
+   * Subscribe to every change in the store, whatever caused it.
+   *
+   * The store is deliberately shared, so a consumer that renders from it has to
+   * hear about edits made by *any* client - a second window, an agent, a script,
+   * a plugin. Announcing from the store rather than from each caller is what
+   * makes that true: an agent used to write pixels into the live document with
+   * no notification at all, so the window kept showing a stale canvas until the
+   * file was reopened. Returns an unsubscribe function.
+   */
+  onChange(listener: () => void): () => void {
+    this.changeListeners.add(listener);
+    return () => {
+      this.changeListeners.delete(listener);
+    };
+  }
+
+  /**
+   * Tell every subscriber that the store moved. A throwing subscriber must not
+   * abort the mutation that triggered it, nor stop the other subscribers.
+   */
+  private announce(): void {
+    for (const listener of [...this.changeListeners]) {
+      try {
+        listener();
+      } catch {
+        // Deliberately ignored: a broken listener is not a failed edit.
+      }
+    }
+  }
+
   select(id: string): PixelDocument {
     const doc = this.require(id);
     this.activeId = id;
+    this.announce();
     return doc;
   }
 
@@ -248,6 +283,7 @@ export class DocumentStore {
       const next = [...this.documents.keys()][0] ?? null;
       this.activeId = next;
     }
+    if (existed) this.announce();
     return existed;
   }
 
@@ -255,6 +291,7 @@ export class DocumentStore {
   touch(doc: PixelDocument, dirty = true): void {
     doc.updatedAt = Date.now();
     if (dirty) doc.dirty = true;
+    this.announce();
   }
 
   summary(doc: PixelDocument): DocumentSummary {
@@ -278,5 +315,6 @@ export class DocumentStore {
   clear(): void {
     this.documents.clear();
     this.activeId = null;
+    this.announce();
   }
 }
