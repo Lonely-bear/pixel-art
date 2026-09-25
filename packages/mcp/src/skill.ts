@@ -341,10 +341,15 @@ render. Break them and no amount of extra shading recovers the result.
   \`structure.landscape\` for full-bleed scenes. The landscape half locates internal
   horizon/ridge/waterline candidates, reports each boundary's straightness/regularity,
   and measures whether a bright or coherent vertical/diagonal guiding line crosses the
-  lower frame. It is evidence, not a beauty score: read \`landscape.conclusion\` and
-  its warnings alongside the presence half. For characters, pass
+  lower frame. It is evidence, not a beauty score: read
+  \`structure.landscape.conclusion\` and its warnings alongside the presence half. On a
+  frame that is not a scene the block collapses to
+  \`{measurable: false, scene, conclusion}\` — three fields, not a page of nulls. For
+  characters, pass
   \`assetType: "character"\` to suppress irrelevant landscape/band findings and analyse
   silhouette jumps, centroid drift, palette flicker and loop closure across frames.
+  Once you know which warning is firing, re-run with \`brief: true\` for the numbers and
+  warning codes alone; it is the same analysis with the scaffolding removed.
   Declare eyes, teeth, hair, fabric and weapon highlights as
   \`intentionalDetailRects\`, not as global texture that weakens real defect checks.
   One trap to know: \`intentionalDetailRects\` exempts a region from the defect checks but
@@ -615,8 +620,9 @@ The default integer scale targets about 256px on the long side. Judge the whole 
 \`previewOptions: {rect, scale: 4}\` for a detail, or \`{frames: "all", onion}\` to inspect
 an entire animation. Use \`dryRun: true\` to execute and validate against an isolated snapshot
 without touching the live document. Use \`expectedVersion\` when another editor may have
-changed the document since your last read. Runtime failures include source-relative
-\`errorInfo\` when a location is available. \`finalize_document\` saves the source and writes
+changed the document since your last read. Runtime failures report the error name, a
+branchable \`code\`, a stack in your own line numbers and the offending source line.
+\`finalize_document\` saves the source and writes
 PNG exports in one call.
 
 ## What the scripting context gives you
@@ -655,13 +661,29 @@ PNG exports in one call.
 - **An unpainted pixel reads as \`null\`, not a zeroed colour.** Both readers return
   \`null\` for a fully transparent pixel, so \`if (getPixel(x, y))\` is a valid emptiness
   test. Do not test \`a === 0\`; that branch is unreachable by design.
-- \`log(...)\` records output; everything logged is returned in the tool result's \`logs\`.
+- \`log(...)\` records output; everything logged is returned in the tool result's \`logs\`,
+  including on the failure path — a breadcrumb written just before a throw is the
+  cheapest bug report there is.
+- **\`params\` is your input.** \`run_script {path, params: {…}}\` exposes the object as the
+  global \`params\` (\`{}\` when omitted), so one file can be a function of its inputs.
+  Put the logic in the file and the numbers in \`params\`: tuning a value then costs one
+  short call instead of re-sending the whole program. Combine it with \`path\` — the file
+  is re-read on every call and never cached, so editing it takes effect immediately,
+  with no restart and no re-registration.
 - The script's return value is JSON-serialised into \`result\`. Return a plain object
   or array; functions and class instances are not preserved.
+- A failure reports \`errorInfo\` with the error \`name\`, a \`code\` you can branch on
+  (\`script_threw\` for a plain runtime error, \`unknown_command\` and friends for a
+  command), a \`stack\` whose frames use **your** line numbers and filename, and
+  \`sourceLine\`/\`before\`/\`after\` quoting the offending line. That is normally enough to
+  fix a bug without spending a second run to find it.
 
 ## What it does not allow
 
-- No \`require\`, \`process\`, \`module\`, filesystem or network access.
+- No \`require\`, \`process\`, \`module\`, filesystem or network access. The context also
+  has **no** \`btoa\`/\`atob\`, \`TextEncoder\`/\`TextDecoder\`, \`Buffer\`, \`structuredClone\`,
+  \`fetch\`, \`setTimeout\` or \`setInterval\`. Base64 for \`putPixels\` arrives as a string
+  argument to the \`putPixels(rect, data)\` helper; there is nothing to encode it with.
 - No \`eval\` or \`new Function\` - dynamic code generation is disabled at the context
   level, so the usual context-escape tricks do not even start.
 - A wall-clock timeout (default 15000 ms over MCP, override with \`timeoutMs\`). An infinite

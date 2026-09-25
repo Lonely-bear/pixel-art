@@ -57,7 +57,7 @@ describe('full-bleed landscape structure diagnostics', () => {
     ];
     for (const file of files) {
       const body = await report(file);
-      const landscape = body.landscape as {
+      const landscape = (body.structure as { landscape: unknown }).landscape as {
         measurable: boolean;
         horizontalBoundaries: unknown[];
         horizon: unknown;
@@ -79,7 +79,11 @@ describe('full-bleed landscape structure diagnostics', () => {
           diagonal: expect.any(Boolean),
         }),
       );
-      expect((body.structure as { landscape: unknown }).landscape).toBeTruthy();
+      // One home only. The block used to be reachable as `landscape` too, and its
+      // horizon/ridge/waterline/guideLines were each repeated a level up in `structure`.
+      expect(body.landscape, file).toBeUndefined();
+      expect((body.structure as Record<string, unknown>).horizon, file).toBeUndefined();
+      expect((body.structure as Record<string, unknown>).guideLines, file).toBeUndefined();
     }
   });
 
@@ -115,7 +119,7 @@ describe('full-bleed landscape structure diagnostics', () => {
     const warningCodes = (body: Record<string, unknown>) =>
       (body.warnings as Array<{ code: string }>).map((warning) => warning.code);
 
-    expect((good.landscape as { measurable: boolean }).measurable).toBe(true);
+    expect((good.structure as { landscape: { measurable: boolean } }).landscape.measurable).toBe(true);
     expect(warningCodes(good)).not.toContain('landscape_repeated_bands');
     expect(warningCodes(badAgent)).toContain('landscape_repeated_bands');
     expect(warningCodes(badV2)).toContain('landscape_repeated_bands');

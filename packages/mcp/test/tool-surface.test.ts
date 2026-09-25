@@ -11,6 +11,9 @@
  * The sizes below are the *ceiling*, not the current value. When a tool genuinely
  * needs to grow, raise the number in the same commit and say why in the test name.
  */
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -39,6 +42,10 @@ const DESCRIPTION_BUDGET: Record<string, number> = {
   // The tilemap preview is the one place a structural defect has to be seen rather
   // than described, so it names its overlays instead of deferring to the schema.
   preview_tilemap: 600,
+  // Three modes to choose between — full, `brief`, and `assetType: "character"` — and
+  // the report is the step every workflow ends on, so its description is the one worth
+  // being explicit in.
+  quality_report: 700,
 };
 const DESCRIPTION_FLOOR = 80;
 
@@ -194,6 +201,237 @@ describe('declared tool surface', () => {
     const { tools } = await connect({ commands: 'eager' });
     expect(tools.length).toBeGreaterThan(120);
     expect(tools.map((t) => t.name)).toContain('draw_rect');
+  });
+});
+
+describe('scripted work', () => {
+  it('runs a program from a file, re-read every call', async () => {
+    // Found by an agent generating art through run_script: a 10KB generator had to be
+    // re-sent on every parameter tweak because there was no way to name a file.
+    const dir = mkdtempSync(join(tmpdir(), 'pixel-mcp-script-'));
+    try {
+      await connect();
+      await client.callTool({ name: 'create_document', arguments: { width: 16, height: 16, layers: ['base'] } });
+      const file = join(dir, 'tint.js');
+      writeFileSync(file, "exec('draw_rect', { rect: { x: 0, y: 0, w: 4, h: 4 }, color: params.color, fill: true });\nreturn params.color;\n");
+
+      const first = payload((await client.callTool({
+        name: 'run_script',
+        arguments: { path: file, params: { color: '#ff0000' } },
+      })) as ToolResult);
+      expect(first.ok).toBe(true);
+      expect(first.result).toBe('#ff0000');
+      // Reported so a caller can see exactly which file ran, including after `~` or a
+      // relative path was expanded.
+      expect(first.resolvedPath).toBe(file);
+
+      // No caching: the same path, a changed file, a different result.
+      writeFileSync(file, "exec('draw_rect', { rect: { x: 0, y: 0, w: 4, h: 4 }, color: params.color, fill: true });\nreturn 'edited';\n");
+      const second = payload((await client.callTool({
+        name: 'run_script',
+        arguments: { path: file, params: { color: '#00ff00' } },
+      })) as ToolResult);
+      expect(second.result).toBe('edited');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('treats source and path as alternatives, and needs one', async () => {
+    await connect();
+    await client.callTool({ name: 'create_document', arguments: { width: 8, height: 8, layers: ['base'] } });
+
+    const both = (await client.callTool({
+      name: 'run_script',
+      arguments: { source: 'return 1;', path: 'nope.js' },
+    })) as ToolResult;
+    expect(both.isError).toBe(true);
+    expect(payload(both).remediation).toMatch(/not both|one or the other/i);
+
+    const neither = (await client.callTool({ name: 'run_script', arguments: {} })) as ToolResult;
+    expect(neither.isError).toBe(true);
+    expect(payload(neither).code).toBe('invalid_params');
+  });
+
+  it('reports an unreadable path with the path it tried', async () => {
+    await connect();
+    await client.callTool({ name: 'create_document', arguments: { width: 8, height: 8, layers: ['base'] } });
+    const result = (await client.callTool({
+      name: 'run_script',
+      arguments: { path: join(tmpdir(), 'definitely-not-here-9f2a.js') },
+    })) as ToolResult;
+    expect(result.isError).toBe(true);
+    const body = payload(result);
+    expect(body.code).toBe('script_not_readable');
+    expect(String(body.resolvedPath)).toContain('definitely-not-here-9f2a.js');
+    expect(body.remediation).toBeTruthy();
+  });
+
+  it('exposes params to a script run without any', async () => {
+    // One file has to work both ways, so `params` is always defined.
+    await connect();
+    await client.callTool({ name: 'create_document', arguments: { width: 8, height: 8, layers: ['base'] } });
+    const result = payload((await client.callTool({
+      name: 'run_script',
+      arguments: { source: 'return { type: typeof params, keys: Object.keys(params) };' },
+    })) as ToolResult);
+    expect(result.result).toEqual({ type: 'object', keys: [] });
+  });
+
+  it('reports a runtime error with a code, a remapped stack and the source line', async () => {
+    // The report that started this asked for a stack and line numbers. The line numbers
+    // were already there; the stack, the code and the excerpt were not, and the excerpt
+    // is what makes one run enough to find the bug.
+    await connect();
+    await client.callTool({ name: 'create_document', arguments: { width: 8, height: 8, layers: ['base'] } });
+    const source = [
+      'function fillRows(rows, col) {',
+      '  return rows.map(function (row, i) { return row[col[i]]; });',
+      '}',
+      'fillRows([[1, 2]]);',
+    ].join('\n');
+
+    const result = (await client.callTool({ name: 'run_script', arguments: { source } })) as ToolResult;
+    expect(result.isError).toBe(true);
+    const body = payload(result);
+    // Every failure is branchable, including a plain TypeError.
+    expect(body.code).toBe('script_threw');
+
+    const info = body.errorInfo as {
+      name: string;
+      phase: string;
+      line: number;
+      column: number;
+      sourceLine: string;
+      stack: string;
+    };
+    expect(info.name).toBe('TypeError');
+    expect(info.phase).toBe('runtime');
+    // Line 2 of the caller's own source, not line 4 of the VM wrapper.
+    expect(info.line).toBe(2);
+    expect(info.sourceLine).toBe(source.split('\n')[1]);
+    // The frames name the caller's file, not `pixel:script`.
+    expect(info.stack).toContain('fillRows');
+    expect(info.stack).not.toContain('pixel:script');
+  });
+
+  it('names the file in the stack when the program came from one', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pixel-mcp-script-'));
+    try {
+      await connect();
+      await client.callTool({ name: 'create_document', arguments: { width: 16, height: 16, layers: ['base'] } });
+      const file = join(dir, 'broken.js');
+      writeFileSync(file, 'const rows = [[1, 2]];\nreturn rows.map((r) => r[9].toFixed());\n');
+      const result = (await client.callTool({ name: 'run_script', arguments: { path: file } })) as ToolResult;
+      expect(result.isError).toBe(true);
+      const info = payload(result).errorInfo as { line: number; stack: string; sourceName: string };
+      expect(info.line).toBe(2);
+      expect(info.sourceName).toBe(file);
+      expect(info.stack).toContain('broken.js');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps logs on the failure path', async () => {
+    await connect();
+    await client.callTool({ name: 'create_document', arguments: { width: 8, height: 8, layers: ['base'] } });
+    const result = (await client.callTool({
+      name: 'run_script',
+      arguments: { source: "log('about to fail');\nthrow new Error('boom');" },
+    })) as ToolResult;
+    expect(result.isError).toBe(true);
+    // A breadcrumb written before the throw is the cheapest bug report there is.
+    expect(payload(result).logs).toEqual(['about to fail']);
+  });
+});
+
+describe('quality report payload', () => {
+  async function spriteReport(brief = false) {
+    await connect();
+    await client.callTool({ name: 'create_document', arguments: { width: 96, height: 96, layers: ['base'] } });
+    await client.callTool({
+      name: 'apply_ops',
+      arguments: {
+        ops: [
+          { command: 'draw_ellipse', rect: { x: 20, y: 12, w: 56, h: 60 }, color: '#8a5a3a', fill: true },
+          { command: 'draw_ellipse', rect: { x: 30, y: 24, w: 14, h: 10 }, color: '#ffffff', fill: true },
+        ],
+      },
+    });
+    return payload((await client.callTool({
+      name: 'quality_report',
+      arguments: brief ? { brief: true } : {},
+    })) as ToolResult) as Record<string, unknown>;
+  }
+
+  it('reaches no block from two paths', async () => {
+    // The same landscape object used to be serialised at `landscape` and
+    // `structure.landscape`, with its horizon/ridge/waterline/guideLines repeated a
+    // level up: five copies, 2.4KB of a 4.9KB response.
+    const report = await spriteReport();
+    const structure = report.structure as Record<string, unknown>;
+    expect(report.landscape).toBeUndefined();
+    expect(structure.horizon).toBeUndefined();
+    expect(structure.ridge).toBeUndefined();
+    expect(structure.waterline).toBeUndefined();
+    expect(structure.guideLines).toBeUndefined();
+    expect(structure.landscape).toBeTruthy();
+  });
+
+  it('drops the identity aliases that were three names for one number', async () => {
+    const report = await spriteReport();
+    expect(report.softnessScore).toBeUndefined();
+    const presence = report.presence as Record<string, unknown>;
+    expect(presence.lightShare).toBeUndefined();
+    // The two that remain still say the same thing, which is the point.
+    expect(typeof presence.brightestShare).toBe('number');
+    expect(report.overexposedRatio).toBe(presence.brightestShare);
+  });
+
+  it('collapses an unmeasurable landscape to a verdict', async () => {
+    const report = await spriteReport();
+    const landscape = (report.structure as { landscape: Record<string, unknown> }).landscape;
+    expect(landscape.measurable).toBe(false);
+    expect(landscape.scene).toBeTruthy();
+    expect(landscape.conclusion).toBeTruthy();
+    // The page of nulls is gone; the question it answered is not.
+    expect(landscape.horizon).toBeUndefined();
+    expect(landscape.horizontalBoundaries).toBeUndefined();
+  });
+
+  it('brief keeps every number the craft guide tells a model to read', async () => {
+    const brief = await spriteReport(true);
+    const at = (path: string): unknown => path.split('.').reduce<unknown>((n, k) => (n as Record<string, unknown>)?.[k], brief);
+    for (const path of [
+      'defectScore', 'defectScoreContext',
+      'noise.isolatedRatio', 'noise.outliers', 'noise.texturedOutliers',
+      'edges.meanAdjacentDelta', 'overexposedRatio',
+      'palette.outsideRatio', 'palette.unusedIndices', 'palette.crowded',
+      'structure.strongBands',
+      'presence.valueRange', 'presence.darkShare', 'presence.flatShare',
+      'presence.planeSeparation', 'presence.lightConcentration',
+    ]) {
+      expect(at(path), `brief is missing ${path}`).toBeDefined();
+    }
+    // And nothing that only adds weight.
+    expect(brief.brief).toBe(true);
+    expect((brief.structure as Record<string, unknown>).landscape).toBeUndefined();
+    expect((brief.presence as Record<string, unknown>).planes).toBeUndefined();
+    expect((brief.presence as Record<string, unknown>).lightShare).toBeUndefined();
+    for (const warning of brief.warnings as Array<Record<string, unknown>>) {
+      expect(Object.keys(warning).sort()).toEqual(['code', 'severity']);
+    }
+  });
+
+  it('brief is a fraction of the bytes and reports the same analysis', async () => {
+    const full = await spriteReport();
+    const brief = await spriteReport(true);
+    const size = (value: unknown) => Buffer.byteLength(JSON.stringify(value), 'utf8');
+    expect(size(brief)).toBeLessThan(size(full) * 0.5);
+    // Same analysis: the shared numbers are identical, not re-derived.
+    expect(brief.defectScore).toBe(full.defectScore);
+    expect(brief.opaqueRatio).toBe(full.opaqueRatio);
   });
 });
 

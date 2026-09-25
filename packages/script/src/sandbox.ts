@@ -72,6 +72,46 @@ export interface ScriptErrorInfo {
   sourceName?: string;
   /** Command name when the failure came through exec/tryExec. */
   command?: string;
+  /**
+   * The error's constructor name, e.g. `TypeError`.
+   *
+   * `TypeError: cannot read ...` already carries this, but a bare `undefined` or a
+   * non-Error throw does not, and a model debugging a 9000-line generator needs to
+   * know whether it threw a TypeError or a string.
+   */
+  name?: string;
+  /**
+   * The stack, with every frame remapped to the caller's line numbers and filename.
+   *
+   * The raw stack points at `pixel:script:12:86`, which is inside the VM wrapper and
+   * means nothing to the caller. Remapping it is the difference between a stack that
+   * locates the bug and one that has to be decoded first.
+   */
+  stack?: string;
+  /** The offending line of the caller's own source, verbatim. */
+  sourceLine?: string;
+  /** The line above `sourceLine`, for reading a multi-line statement. */
+  before?: string;
+  /** The line below `sourceLine`. */
+  after?: string;
+}
+
+export interface ScriptRunOptions {
+  /**
+   * Value exposed to the script as the global `params`.
+   *
+   * The point is that a script becomes a function of its inputs, so tuning a number
+   * never means editing - and re-sending - the program. A script run without it still
+   * sees `params`, as `{}`, so the same file works either way.
+   */
+  params?: unknown;
+  /**
+   * What to call the script in error messages.
+   *
+   * A file path here is worth more than any line offset: the caller recognises its own
+   * filename, and a stack that names it needs no arithmetic to interpret.
+   */
+  sourceName?: string;
 }
 
 export interface ScriptRunResult {
@@ -191,6 +231,11 @@ const BOOTSTRAP = `(function () {
   globalThis.tilemaps = function () { return call("tilemaps", null); };
   globalThis.mapObjects = function () { return exec("get_map_objects", {}).objects; };
   globalThis.tileProperties = function (tile) { return exec("get_tile_properties", { tile: tile }).properties; };
+
+  // Structured inputs for the current run. The host reassigns both names before every
+  // body runs, so a script always sees the params for *this* call and never the last one.
+  globalThis.__params = {};
+  globalThis.params = globalThis.__params;
 
   globalThis.commands = function () { return call("commands", null); };
   globalThis.command = function (name) { return call("command", { name: name }); };
@@ -331,8 +376,19 @@ export class ScriptRuntime {
   }
 
   /** Run a script against a document. Every command it issues collapses into one undo step. */
-  run(source: string, editor: Editor): ScriptRunResult {
+  run(source: string, editor: Editor, options: ScriptRunOptions = {}): ScriptRunResult {
+    const sourceName = options.sourceName ?? 'source';
     runInContext('globalThis.__logs = [];', this.context, { filename: 'pixel:log-reset' });
+    // Assigned as a JSON literal rather than bridged, so `params` is a plain value with
+    // no host reference anywhere in it. Assigned to both names: the bootstrap binds
+    // `params` to whatever `__params` held when it ran, so updating only `__params`
+    // would leave a script reading the first run's value forever.
+    runInContext(
+      `globalThis.__params = ${JSON.stringify(options.params ?? {})};\n` +
+        'globalThis.params = globalThis.__params;',
+      this.context,
+      { filename: 'pixel:params-reset' },
+    );
     this.issued = [];
     this.stack.push(editorExecutor(editor));
     try {
@@ -347,7 +403,8 @@ export class ScriptRuntime {
       const errorInfo = this.describeErrorInfo(error, {
         filename: 'pixel:script',
         lineOffset: SCRIPT_SOURCE_LINE_OFFSET,
-        sourceName: 'source',
+        sourceName,
+        source,
       });
       return {
         ok: false,
@@ -418,6 +475,7 @@ export class ScriptRuntime {
         filename: `${name}.js`,
         lineOffset: 0,
         sourceName: name,
+        source,
       });
       return {
         ok: false,
@@ -629,7 +687,7 @@ export class ScriptRuntime {
 
   private describeErrorInfo(
     error: unknown,
-    location: { filename: string; lineOffset: number; sourceName: string },
+    location: { filename: string; lineOffset: number; sourceName: string; source?: string },
   ): ScriptErrorInfo {
     const candidate =
       typeof error === 'object' && error !== null
@@ -644,7 +702,11 @@ export class ScriptRuntime {
     if (!candidate || typeof candidate.message !== 'string') {
       return {
         message: String(error),
+        // A non-Error throw still has to be branchable on, or a caller cannot tell
+        // "the script threw a string" from "the command failed".
+        code: 'script_threw',
         phase: 'runtime',
+        name: candidate?.name,
         sourceName: location.sourceName,
       };
     }
@@ -663,20 +725,63 @@ export class ScriptRuntime {
           ? 'parse'
           : 'runtime';
 
-    const stackLines = candidate.stack?.split('\n') ?? [];
     const marker = `${location.filename}:`;
+    const stackLines = candidate.stack?.split('\n') ?? [];
+
+    /**
+     * Remap one stack frame onto the caller's own line numbering and filename.
+     *
+     * The raw frame points inside the VM wrapper, which is arithmetic the caller cannot
+     * do and does not need to: a stack that says `gen.js:43` locates the bug outright.
+     */
+    const remap = (frame: string): string =>
+      frame.replace(
+        new RegExp(`${escapeRegExp(location.filename)}:(\\d+)(:(\\d+))?`, 'g'),
+        (_whole, line: string, __maybeColumn: string, column: string | undefined) =>
+          `${location.sourceName}:${Math.max(1, Number(line) - location.lineOffset)}${column ? `:${column}` : ''}`,
+      );
+    const remappedStack = stackLines.map(remap).join('\n');
+
+    /**
+     * The offending line and its neighbours, straight from the caller's source.
+     *
+     * A line number alone still leaves the caller comparing against their own text; the
+     * three lines together are usually enough to confirm the bug without a second run.
+     */
+    const excerpt = (line: number | undefined) => {
+      if (line === undefined || !location.source) return {};
+      const lines = location.source.split('\n');
+      const index = line - 1;
+      if (index < 0 || index >= lines.length) return {};
+      return {
+        sourceLine: lines[index],
+        ...(index > 0 ? { before: lines[index - 1] } : {}),
+        ...(index < lines.length - 1 ? { after: lines[index + 1] } : {}),
+      };
+    };
+
+    const common = {
+      message,
+      // Every failure carries a code. A plain TypeError used to arrive with none, which
+      // put it in a different class from every command failure for no good reason.
+      code: code ?? (phase === 'parse' ? 'script_parse_error' : 'script_threw'),
+      phase,
+      name: candidate.name,
+      ...(remappedStack ? { stack: remappedStack } : {}),
+      sourceName: location.sourceName,
+      ...(command ? { command } : {}),
+    };
+
     if (phase === 'parse' && stackLines[0]?.startsWith(marker)) {
       const match = stackLines[0].slice(marker.length).match(/^(\d+)(?::(\d+))?/);
       if (match) {
         const caret = stackLines.find((line, index) => index > 0 && /^\s*\^/.test(line));
+        const line = Math.max(1, Number(match[1]) - location.lineOffset);
         return {
-          message,
-          code,
-          phase,
-          line: Math.max(1, Number(match[1]) - location.lineOffset),
+          ...common,
+          line,
           column: caret ? caret.indexOf('^') + 1 : match[2] ? Math.max(1, Number(match[2])) : undefined,
-          sourceName: location.sourceName,
-          ...(command ? { command } : {}),
+          ...excerpt(line),
         };
       }
     }
@@ -687,25 +792,21 @@ export class ScriptRuntime {
       if (markerAt < 0) continue;
       const match = stackLine.slice(markerAt + marker.length).match(/^(\d+):(\d+)/);
       if (!match) continue;
+      const line = Math.max(1, Number(match[1]) - location.lineOffset);
       return {
-        message,
-        code,
-        phase,
-        line: Math.max(1, Number(match[1]) - location.lineOffset),
+        ...common,
+        line,
         column: Math.max(1, Number(match[2])),
-        sourceName: location.sourceName,
-        ...(command ? { command } : {}),
+        ...excerpt(line),
       };
     }
 
-    return {
-      message,
-      code,
-      phase,
-      sourceName: location.sourceName,
-      ...(command ? { command } : {}),
-    };
+    return common;
   }
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function describeLayers(sprite: Sprite): Record<string, unknown>[] {

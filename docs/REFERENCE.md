@@ -275,6 +275,23 @@ To connect to a running desktop app instead of the standalone server, append
   on them: `run_script` and `load_plugin` are the two marked `openWorldHint` because they execute
   code this server did not write, and a promoted plugin command is marked both open-world and
   destructive.
+- **Command manuals, read on demand.** A `guide` field on a command, served as
+  `pixel://guide/{command}` and returned by `describe_command`. `stroke_tilemap`, `autotile`,
+  `dither_fill`, `set_tile`, `mirror`, `add_palette_ramp` and `outline` keep their long-form
+  conventions without carrying them in every request. `add_palette_ramp`'s is the one to read
+  first: hue interpolates along the HSL wheel, so a dark-cool to light-warm pair swings through
+  magenta and red unless the two anchors are kept close together.
+- **`run_script` takes a program or a file, and inputs.** `path` names a `.js` file holding the
+  same function body as `source`; the two are mutually exclusive, the file is re-read on every
+  call and never cached (so editing it takes effect with no restart), and the response reports
+  `resolvedPath`. Relative paths resolve against the server working directory and `~` expands.
+  `params` is exposed to the script as the global of the same name, which with `path` makes one
+  file a function of its inputs: tuning a value costs one short call instead of re-sending the
+  program. A parameterised generator is the case this exists for.
+- **`quality_report { brief: true }`** returns only the numbers a model acts on, plus each warning
+  as `{code, severity}`. Same analysis, about a third of the bytes: the per-plane arrays, the
+  landscape block, the region breakdown and the warning prose are dropped. Drop the flag when a
+  specific diagnostic is needed.
 - **Static resources and document templates.** `pixel://documents`, `pixel://commands`,
   `pixel://skill` (a pixel-art craft guide), `pixel://script-guide` (the sandbox/plugin API),
   `pixel://guide/{command}` (a command's long-form manual — the detail behind a short tool
@@ -345,6 +362,14 @@ To connect to a running desktop app instead of the standalone server, append
    `intentionalDetailRects` exempts eyes, teeth, hair, fabric and weapon highlights from
    isolated/outlier/edge/highlight checks only; it deliberately does not suppress the
    light-source probe.
+   The landscape analysis lives at **`structure.landscape`** and nowhere else. It was also
+   serialised at `landscape`, with its `horizon`/`ridge`/`waterline`/`guideLines` repeated a
+   level up in `structure` — five copies of the same object, 2.4KB of a 4.9KB response for a
+   96x96 sprite. When the frame is not a scene the block collapses to
+   `{measurable: false, scene, conclusion}` instead of a page of nulls.
+   `softnessScore` (an alias of `defectScore`) and `presence.lightShare` (an alias of
+   `presence.brightestShare`, which was itself equal to `overexposedRatio`) are gone: three
+   names for one number was three chances to read the wrong one.
 9. **`add_palette_ramp` builds hue-shifted material ramps.** Give it a dark and a light
    anchor plus a step count, and it generates the intermediate colours in HSL, pulling the
    dark end toward blue/violet and the light end toward amber by `hueShift` degrees

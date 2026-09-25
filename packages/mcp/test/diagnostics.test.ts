@@ -489,7 +489,10 @@ describe('presence checks: catching a piece that has been sanded flat', () => {
     const body = payload((await client.callTool({ name: 'quality_report', arguments: {} })) as ToolResult);
     expect(typeof body.defectScore).toBe('number');
     // The old alias still resolves, so existing callers keep working.
-    expect(body.softnessScore).toBe(body.defectScore);
+    // `softnessScore` was a deprecated alias for `defectScore` and has been removed:
+    // one name for one number, and the craft guide only ever referenced `defectScore`.
+    expect(body.softnessScore).toBeUndefined();
+    expect(body.defectScore).toBeGreaterThanOrEqual(0);
   });
 });
 

@@ -916,7 +916,8 @@ describe('quality and softness tools', () => {
     const body = payload(result);
     expect(body.ok).toBe(true);
     expect((body.noise as { outliers: number }).outliers).toBeGreaterThan(0);
-    expect(typeof body.softnessScore).toBe('number');
+    expect(typeof body.defectScore).toBe('number');
+    expect(body.softnessScore).toBeUndefined();
     expect((body.regions as unknown[]).length).toBe(4);
     const warnings = body.warnings as Array<{ code: string }>;
     expect(warnings.map((warning) => warning.code)).toContain('high_frequency_noise');

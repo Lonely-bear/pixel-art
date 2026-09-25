@@ -4,6 +4,46 @@ All notable changes to dotloom-mcp are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`run_script { path }`** runs a program from a `.js` file, re-read on every call and never
+  cached, so editing the file changes the next run with no restart and no re-registration.
+  `path` and `source` are mutually exclusive and both absences are reported as errors rather
+  than as a validation failure. The response reports `resolvedPath`; relative paths resolve
+  against the server working directory and `~` expands.
+- **`run_script { params }`** exposes the object to the script as the global `params` (`{}`
+  when omitted). With `path` this makes one file a function of its inputs, so tuning a value
+  costs a short call instead of re-sending the program — the case a parameterised art
+  generator hits on every variation.
+- **Script failures carry more than a message.** `errorInfo` now has `name`, a `stack` whose
+  frames are remapped to the caller's own line numbers and filename, and `sourceLine` /
+  `before` / `after` quoting the offending line. `code` is present for every failure, with
+  `script_threw` for a plain runtime error, so a TypeError is branchable like any command
+  failure. `logs` were already preserved and still are.
+- **`quality_report { brief: true }`** returns only the numbers a model acts on, plus each
+  warning as `{code, severity}`. Same analysis, about a third of the bytes: the per-plane
+  arrays, the landscape block, the region breakdown and the warning prose are dropped.
+
+### Changed
+
+- The landscape analysis is reachable at `structure.landscape` only. It was serialised at
+  `landscape` as well, with `horizon`/`ridge`/`waterline`/`guideLines` repeated a level up in
+  `structure`: five copies of the same object, 2.4KB of a 4.9KB response for a 96x96 sprite.
+  A `quality_report` response is now 2.5KB, and 0.9KB with `brief`.
+- A frame that is not a scene reports `{measurable: false, scene, conclusion}` instead of a
+  landscape block full of nulls and a note repeated five times.
+- The script guide documents that the context has no `btoa`/`atob`, `TextEncoder`, `Buffer`,
+  `structuredClone`, `fetch` or timers, and that base64 arrives as a string argument.
+
+### Removed
+
+- `quality_report`'s `softnessScore`, an alias of `defectScore` on every input, and
+  `presence.lightShare`, an alias of `presence.brightestShare` which was itself equal to
+  `overexposedRatio`. Three names for one number was three chances to read the wrong one, and
+  nothing in the craft guide referenced either. **`quality_report`'s landscape block is no
+  longer at the top-level `landscape` key** — use `structure.landscape`, which is what the
+  craft guide and the `landscape-quality` workflow already pointed at.
+
 ## [0.3.0] - 2026-09-26
 
 A 33-tool declared surface with on-demand command registration, and the declaration

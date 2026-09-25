@@ -17,6 +17,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult, ContentBlock, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { SKILL_FINGERPRINT } from './server.js';
@@ -73,7 +74,7 @@ import { ScriptRuntime } from '@pixel/script';
 import { BUILTIN_PALETTES, type DocumentStore, type PixelDocument } from './session.js';
 import { PIXEL_ART_SKILL } from './skill.js';
 import { advertiseSchema, TOOL_RESULT_ENVELOPE } from './surface.js';
-import { analyzeLandscape } from './quality-landscape.js';
+import { analyzeLandscape, type LandscapeAnalysis } from './quality-landscape.js';
 import { analyzeTilemapQuality } from './quality-tilemap.js';
 import { renderTilemapPreview } from './tilemap-preview.js';
 
@@ -1928,18 +1929,20 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
       horizontalBands: bands.horizontalBands,
       strongBands: bands.strongBands,
       rhythm,
-      landscape,
-      horizon: landscape.horizon,
-      ridge: landscape.ridge,
-      waterline: landscape.waterline,
-      guideLines: landscape.guideLines,
+      // The single home for the landscape analysis. It used to be reachable at
+      // `landscape` and `structure.landscape` as well, and its horizon/ridge/
+      // waterline/guideLines were each repeated one level up: five copies of the same
+      // object, 2.4KB of a 4.9KB response for a 96x96 sprite. `horizon`, `ridge`,
+      // `waterline` and `guideLines` are read off `structure.landscape` directly.
+      landscape: reportLandscape(landscape),
       ...(tilemapAnalysis ? { tilemap: tilemapAnalysis } : {}),
     },
-    landscape,
     presence: {
       valueRange: presence.valueRange,
       darkShare: presence.darkShare,
-      lightShare: presence.lightShare,
+      // `lightShare` was an alias of `brightestShare` on every input, and both were
+      // also equal to the top-level `overexposedRatio`. Three names for one number;
+      // the one that says what it measures is kept.
       brightestShare,
       brightClusterShare,
       lightConcentration: concentration,
@@ -1976,10 +1979,80 @@ function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, o
       : resolvedAssetType === 'character'
         ? 'character-raster-diagnostic'
         : `${resolvedAssetType}-raster-diagnostic`,
-    // Kept as a deprecated alias so existing callers do not break on the rename.
-    softnessScore: defectScore,
     ...(regions.length > 0 ? { regions } : {}),
     warnings: reportedWarnings,
+  };
+}
+
+/**
+ * The landscape analysis, trimmed to what it actually found.
+ *
+ * On a character sprite there is no landscape: `measurable` is false, every candidate
+ * is null, and the block is ~1KB of scaffolding that says nothing. Returning the verdict
+ * and the two words that explain it costs 60 bytes instead. The full analysis is still
+ * returned whenever the frame is a scene, which is when it is worth reading.
+ */
+function reportLandscape(landscape: LandscapeAnalysis): Record<string, unknown> {
+  if (landscape.measurable) return landscape as unknown as Record<string, unknown>;
+  return {
+    measurable: false,
+    scene: landscape.scene,
+    conclusion: landscape.conclusion,
+  };
+}
+
+/**
+ * The numbers the craft guide actually tells a model to read, and nothing else.
+ *
+ * `brief` is not a summary of the report, it is the subset a model acts on. The full
+ * response keeps every diagnostic; this drops the arrays, the per-plane means, the
+ * region breakdown, the landscape block and the warning prose, which together are most
+ * of the bytes and none of the decisions. Warning *messages* go too: the code is what
+ * branches, and the text is one more call away.
+ */
+function briefQualityReport(report: Record<string, unknown>): Record<string, unknown> {
+  const at = (path: string): unknown => path.split('.').reduce<unknown>((node, key) => (node as Record<string, unknown>)?.[key], report);
+  const number = (path: string): number | undefined => {
+    const value = at(path);
+    return typeof value === 'number' ? value : undefined;
+  };
+  const pick = (source: Record<string, unknown>, keys: string[]): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
+    for (const key of keys) if (source[key] !== undefined) out[key] = source[key];
+    return out;
+  };
+  const noise = (report.noise ?? {}) as Record<string, unknown>;
+  const edges = (report.edges ?? {}) as Record<string, unknown>;
+  const palette = (report.palette ?? {}) as Record<string, unknown>;
+  const structure = (report.structure ?? {}) as Record<string, unknown>;
+  const presence = (report.presence ?? {}) as Record<string, unknown>;
+  const warnings = (report.warnings ?? []) as Array<Record<string, unknown>>;
+
+  return {
+    ok: true,
+    brief: true,
+    frame: report.frame,
+    width: report.width,
+    height: report.height,
+    opaqueRatio: report.opaqueRatio,
+    assetType: report.assetType,
+    defectScore: report.defectScore,
+    defectScoreContext: report.defectScoreContext,
+    noise: pick(noise, ['isolated', 'isolatedRatio', 'outliers', 'outlierRatio', 'texturedOutliers']),
+    edges: pick(edges, ['meanAdjacentDelta']),
+    overexposedRatio: report.overexposedRatio,
+    palette: pick(palette, ['size', 'outsideRatio', 'unusedIndices', 'crowded']),
+    structure: pick(structure, ['strongBands', 'horizontalBands']),
+    presence: pick(presence, [
+      'valueRange',
+      'darkShare',
+      'brightestShare',
+      'lightConcentration',
+      'hasLightSource',
+      'flatShare',
+      'planeSeparation',
+    ]),
+    warnings: warnings.map((warning) => pick(warning, ['code', 'severity'])),
   };
 }
 
@@ -2344,6 +2417,20 @@ function writeFile(path: string, bytes: Uint8Array): void {
  */
 function absPath(path: string): string {
   return resolve(path);
+}
+
+/**
+ * Expand a leading `~` to the home directory.
+ *
+ * An agent that has just been told a path is "relative to the working directory" will
+ * still write `~/sprites/hero.js`, because that is what a person would write. The other
+ * path-taking tools do not do this, but they also do not take a path an agent is
+ * expected to retype on every call.
+ */
+function expandHome(path: string): string {
+  if (path !== '~' && !path.startsWith('~/') && !path.startsWith('~\\')) return path;
+  const home = homedir();
+  return path === '~' ? home : resolve(home, path.slice(2));
 }
 
 type ExportOutputSpec = z.infer<typeof exportOutputSchema>;
@@ -3774,7 +3861,7 @@ export function registerTools(
     {
       title: 'Measure raster, character and landscape quality',
       description:
-        'Read-only quality report, and the step that decides whether the piece is finished. It has two halves and both matter: `defects` says what is wrong, `presence` says whether the piece still has light, depth and form - a clean defect score with a narrow `presence.valueRange` means the work was sanded flat, not completed. `assetType: "character"` is the only value that changes the analysis, adding cross-frame stability over every frame. Fix what the report names, then re-read it.',
+        'Read-only quality report, and the step that decides whether the piece is finished. It has two halves and both matter: `defects` says what is wrong, `presence` says whether the piece still has light, depth and form - a clean defect score with a narrow `presence.valueRange` means the work was sanded flat, not completed. `assetType: "character"` is the only value that changes the analysis, adding cross-frame stability over every frame. Fix what the report names, then re-read it. Pass `brief: true` for just the numbers you act on and the warning codes, which is a fraction of the bytes; the full report has every diagnostic.',
       inputSchema: z.object({
         document: documentRef,
         assetType: z
@@ -3865,6 +3952,12 @@ export function registerTools(
           .max(8)
           .optional()
           .describe('Optional grid size for per-region isolated/outlier counts. 1 (default) returns one aggregate report.'),
+        brief: z
+          .boolean()
+          .optional()
+          .describe(
+            'Return only the numbers you act on plus each warning as `{code, severity}`. Same analysis, a fraction of the bytes: no per-plane arrays, no landscape block, no warning prose, no per-region breakdown. Drop it when you need a specific diagnostic.',
+          ),
       }),
       annotations: { readOnlyHint: true },
     },
@@ -3974,15 +4067,22 @@ export function registerTools(
             roles: doc.editor.sprite.palette.roles ?? {},
           };
         }
-        return ok({
+        const full = {
           ok: true,
           document: store.summary(doc),
           ...quality,
           ...(animation ? { animation } : {}),
           ...(rigDiagnostics ? { rig: rigDiagnostics } : {}),
-        });
+        };
+        // `brief` is a subset, never a different analysis: the same numbers, minus the
+        // scaffolding. A caller that needs a diagnostic the brief form dropped re-runs
+        // without it and gets the identical value.
+        return ok(args.brief === true ? briefQualityReport(full) : full);
       } catch (error) {
-        return fail((error as Error).message);
+        return fail((error as Error).message, {
+          code: 'quality_failed',
+          remediation: 'Check that the target frame, tilemap or tag exists, and re-run without `brief` to see the full report.',
+        });
       }
     },
   );
@@ -4843,13 +4943,26 @@ export function registerTools(
     {
       title: 'Run a sandboxed script',
       description:
-        'Run trusted JavaScript against the current document in a constrained `node:vm` context. It is a convenience, not a security boundary: only run source you have read. `exec(command, params)` and `tryExec(...)` drive the same command bus as the tools, and `draw.*`, `strokeTilemap`, `paintTilemap`, `document()`, `layers()`, `frames()`, `tags()`, `palette()`, `getPixel(x,y)` and `sample(x,y)` cover most editing without spelling out params. The whole script is one undo step. `dryRun: true` executes against an isolated snapshot so you can validate and preview without committing, which is the cheap way to try a procedural field. Add `preview: true` with `previewOptions` (`{scale: 4}`, or `{frames: "all", onion}` to review a whole animation) to get a PNG back in the same response. Failures carry line/column. Every command the script issues is promoted to a direct tool. See pixel://script-guide.',
+        'Run trusted JavaScript against the current document in a constrained `node:vm` context. It is a convenience, not a security boundary: only run source you have read. Give the program as `source` inline, or as `path` to a .js file - a file is re-read on every call and never cached, so editing it changes the next run with no restart, and `params` (readable as the global of the same name) then makes one file a function of its inputs instead of something you re-send per variation. `exec`/`tryExec` drive the same command bus as the tools; `draw.*`, `document()`, `layers()`, `frames()`, `palette()`, `getPixel`, `sample` cover most editing without spelling out params. The whole script is one undo step, and `dryRun: true` runs it against an isolated snapshot. Add `preview: true` with `previewOptions` for a PNG in the same response. Failures report the error name, a stack in your own line numbers, and the offending source line. See pixel://script-guide.',
       inputSchema: z.object({
         document: documentRef,
         expectedVersion: versionRef,
         source: z
           .string()
-          .describe('JavaScript source. Return a JSON-serialisable value to get it back in `result`.'),
+          .optional()
+          .describe('JavaScript function body, mutually exclusive with `path`. Return a JSON-serialisable value to get it back in `result`.'),
+        path: z
+          .string()
+          .optional()
+          .describe(
+            'Path to a .js file holding the same function body, mutually exclusive with `source`. Re-read on every call and never cached, so editing the file changes the next run with no restart. Relative paths resolve against the server working directory; `~` expands. The response reports `resolvedPath`.',
+          ),
+        params: z
+          .unknown()
+          .optional()
+          .describe(
+            'Structured input, exposed to the script as the global `params` (an object, `{}` when omitted). With `path` this is what lets a generator be a function of its inputs, so tuning a number never means editing and re-sending the program.',
+          ),
         timeoutMs: z
           .number()
           .int()
@@ -4880,21 +4993,70 @@ export function registerTools(
       try {
         doc = store.require(args.document as string | undefined);
       } catch (error) {
-        return fail((error as Error).message);
+        return fail((error as Error).message, {
+          code: 'no_document',
+          remediation: 'Create one with create_document, or pass the id of an open document as `document`.',
+        });
+      }
+
+      // `source` and `path` are the same thing by two routes, so accepting both would
+      // mean silently picking one. Say which is which instead.
+      const inlineSource = args.source as string | undefined;
+      const scriptPath = args.path as string | undefined;
+      if (inlineSource !== undefined && scriptPath !== undefined) {
+        return fail('Pass either `source` or `path`, not both.', {
+          code: 'invalid_params',
+          remediation:
+            '`source` is the program inline; `path` names a .js file holding the same function body. Use one or the other.',
+        });
+      }
+      if (inlineSource === undefined && scriptPath === undefined) {
+        return fail('run_script needs either `source` or `path`.', {
+          code: 'invalid_params',
+          remediation: 'Pass the function body as `source`, or a .js file path as `path`.',
+        });
+      }
+
+      let resolvedPath: string | undefined;
+      let source: string;
+      if (scriptPath !== undefined) {
+        resolvedPath = absPath(expandHome(scriptPath));
+        try {
+          source = readFileSync(resolvedPath, 'utf8');
+        } catch (error) {
+          return fail(`Could not read script file: ${briefError(error)}`, {
+            code: 'script_not_readable',
+            resolvedPath,
+            remediation: `Check that ${resolvedPath} exists and is readable UTF-8 text, or pass the program inline as \`source\`.`,
+          });
+        }
+      } else {
+        source = inlineSource as string;
       }
 
       const previewOptions = args.previewOptions as PreviewRenderOptions | undefined;
       if (previewOptions && args.preview !== true) {
-        return fail('`previewOptions` requires `preview: true`.');
+        return fail('`previewOptions` requires `preview: true`.', {
+          code: 'preview_conflict',
+          remediation: 'Drop `previewOptions`, or set `preview: true` so the options have something to configure.',
+        });
       }
       if (previewOptions?.frames === 'all' && previewOptions.frame !== undefined) {
-        return fail('Pass either `frame` or `frames: "all"`, not both.');
+        return fail('Pass either `frame` or `frames: "all"`, not both.', {
+          code: 'preview_conflict',
+          remediation: 'To render the whole animation use `frames: "all"` on its own; `frame` is for a single frame.',
+        });
       }
       const expectedVersion = args.expectedVersion as number | undefined;
       if (expectedVersion !== undefined && expectedVersion !== doc.editor.version) {
         return fail(
           `Version conflict: expected version ${expectedVersion} but the document is at ${doc.editor.version}`,
-          { code: 'version_conflict', expected: expectedVersion, actual: doc.editor.version },
+          {
+            code: 'version_conflict',
+            expected: expectedVersion,
+            actual: doc.editor.version,
+            remediation: 'Re-read the document and retry with the version it reports now.',
+          },
         );
       }
 
@@ -4907,7 +5069,12 @@ export function registerTools(
       const liveVersion = doc.editor.version;
       const targetEditor = dryRun ? createEditor(doc.editor.snapshot(), doc.editor.registry) : doc.editor;
       const targetVersion = targetEditor.version;
-      const outcome = runtime.run(args.source as string, targetEditor);
+      const outcome = runtime.run(source, targetEditor, {
+        params: args.params,
+        // Naming the file in the stack beats handing back an offset to do arithmetic
+        // with, and it costs nothing when the program came inline.
+        sourceName: resolvedPath ?? 'source',
+      });
       const changed = targetEditor.version !== targetVersion;
       if (!dryRun && changed) store.touch(doc);
       // A dry run still counts: finding out what a script touches is exactly what a
@@ -4917,6 +5084,8 @@ export function registerTools(
       if (!outcome.ok) {
         return fail(outcome.error ?? 'The script failed.', {
           code: outcome.code,
+          // `errorInfo` now carries the remapped stack plus the offending source line,
+          // so the fix does not need a second run to locate the bug.
           errorInfo: outcome.errorInfo,
           logs: outcome.logs,
           promotedTools,
@@ -4953,6 +5122,7 @@ export function registerTools(
           version: dryRun ? liveVersion : doc.editor.version,
           document: store.summary(doc),
           promotedTools,
+          ...(resolvedPath ? { resolvedPath } : {}),
           ...(preview ? { preview } : {}),
           ...(previewError ? { previewError, editCommitted: !dryRun && changed } : {}),
         },
