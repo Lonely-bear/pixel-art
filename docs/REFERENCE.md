@@ -179,13 +179,13 @@ Client configuration (Claude Desktop, or any `mcpServers` JSON):
   "mcpServers": {
     "pixel-art": {
       "command": "npx",
-      "args": ["-y", "pixel-art-mcp"]
+      "args": ["-y", "@taiwucun_tk/pixel-art-mcp"]
     },
     "pixel-art-live": {
       "command": "npx",
       "args": [
         "-y",
-        "pixel-art-mcp",
+        "@taiwucun_tk/pixel-art-mcp",
         "--attach",
         "http://127.0.0.1:7331/mcp"
       ]
@@ -205,7 +205,7 @@ OpenCode V2 can load the published stdio server from a project or global configu
     "servers": {
       "pixel-art": {
         "type": "local",
-        "command": ["npx", "-y", "pixel-art-mcp"]
+        "command": ["npx", "-y", "@taiwucun_tk/pixel-art-mcp"]
       }
     }
   }
@@ -215,7 +215,7 @@ OpenCode V2 can load the published stdio server from a project or global configu
 The equivalent CLI command is:
 
 ```bash
-opencode mcp add pixel-art -- npx -y pixel-art-mcp
+opencode mcp add pixel-art -- npx -y @taiwucun_tk/pixel-art-mcp
 ```
 
 To connect to a running desktop app instead of the standalone server, append

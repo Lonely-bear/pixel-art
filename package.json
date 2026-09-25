@@ -1,5 +1,5 @@
 {
-  "name": "pixel-art-mcp",
+  "name": "@taiwucun_tk/pixel-art-mcp",
   "version": "0.1.0",
   "description": "A pixel-art engine for humans and AI agents, with a scriptable CLI and Model Context Protocol server.",
   "license": "Apache-2.0",
@@ -68,5 +68,9 @@
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
+  },
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
   }
 }

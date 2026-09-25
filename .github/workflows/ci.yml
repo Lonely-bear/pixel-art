@@ -65,7 +65,7 @@ jobs:
           npm init -y >/dev/null
           npm install "$GITHUB_WORKSPACE/$TARBALL"
           ./node_modules/.bin/pixel --version | tee version.json
-          node -e "const v=require('./version.json'); if (v.name !== 'pixel-art-mcp' || v.version !== '0.1.0') process.exit(1)"
+          node -e "const v=require('./version.json'); if (v.name !== '@taiwucun_tk/pixel-art-mcp' || v.version !== '0.1.0') process.exit(1)"
           ./node_modules/.bin/pixel-mcp --version
           ./node_modules/.bin/pixel-art-mcp --version
           ./node_modules/.bin/pixel new smoke.pixel --width 8 --height 8 --layers Ink --frames 1
@@ -76,7 +76,7 @@ jobs:
           import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
           const transport = new StdioClientTransport({
             command: process.execPath,
-            args: ['node_modules/pixel-art-mcp/dist/pixel-mcp.js'],
+            args: ['node_modules/@taiwucun_tk/pixel-art-mcp/dist/pixel-mcp.js'],
           });
           const client = new Client({ name: 'tarball-smoke', version: '1.0.0' });
           await client.connect(transport);

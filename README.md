@@ -4,7 +4,7 @@
   <p><strong>One pixel-art engine. Two ways to create.</strong></p>
   <p>为人类与 AI 打造的同一套像素画引擎 · Electron for humans, MCP for agents</p>
   <p>
-    <a href="https://www.npmjs.com/package/pixel-art-mcp"><img src="https://img.shields.io/npm/v/pixel-art-mcp?label=npm&logo=npm&style=flat-square" alt="npm version" /></a>
+    <a href="https://www.npmjs.com/package/@taiwucun_tk/pixel-art-mcp"><img src="https://img.shields.io/npm/v/%40taiwucun_tk%2Fpixel-art-mcp?label=npm&logo=npm&style=flat-square" alt="npm version" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="Apache-2.0 License" /></a>
     <img src="https://img.shields.io/badge/node-%3E%3D22.13-5fa04e?style=flat-square" alt="Node.js 22.13 or newer" />
     <img src="https://img.shields.io/badge/MCP-ready-8a5cf5?style=flat-square" alt="Model Context Protocol ready" />
@@ -60,7 +60,7 @@
 ### Install the CLI and MCP server
 
 ```bash
-npm install -g pixel-art-mcp
+npm install -g @taiwucun_tk/pixel-art-mcp
 ```
 
 Verify the installation:
@@ -73,8 +73,8 @@ pixel-mcp --version
 No global install is required for one-off use:
 
 ```bash
-npx -y -p pixel-art-mcp pixel --version
-npx -y pixel-art-mcp --version
+npx -y -p @taiwucun_tk/pixel-art-mcp pixel --version
+npx -y @taiwucun_tk/pixel-art-mcp --version
 ```
 
 ### Connect an MCP client
@@ -86,7 +86,7 @@ Most desktop MCP clients use an `mcpServers` object:
   "mcpServers": {
     "pixel-art": {
       "command": "npx",
-      "args": ["-y", "pixel-art-mcp"]
+      "args": ["-y", "@taiwucun_tk/pixel-art-mcp"]
     }
   }
 }
@@ -100,7 +100,7 @@ On Windows, some clients require `"command": "npx.cmd"`.
 Add the server from the project you want it available in:
 
 ```bash
-opencode mcp add pixel-art -- npx -y pixel-art-mcp
+opencode mcp add pixel-art -- npx -y @taiwucun_tk/pixel-art-mcp
 ```
 
 Or configure it manually in `opencode.json` / `.opencode/opencode.json`:
@@ -112,7 +112,7 @@ Or configure it manually in `opencode.json` / `.opencode/opencode.json`:
     "servers": {
       "pixel-art": {
         "type": "local",
-        "command": ["npx", "-y", "pixel-art-mcp"]
+        "command": ["npx", "-y", "@taiwucun_tk/pixel-art-mcp"]
       }
     }
   }
@@ -315,7 +315,7 @@ npm pack --dry-run
 
 The repository uses pnpm workspaces, strict TypeScript, Vitest, and a clean-build CI gate. The public package bundles the internal workspace code while keeping normal npm dependencies external.
 
-> **Distribution scope:** `pixel-art-mcp@0.1.0` publishes the CLI and standalone MCP server. The Electron application remains a source-based application in this release; desktop installers are not part of the npm tarball.
+> **Distribution scope:** `@taiwucun_tk/pixel-art-mcp@0.1.0` publishes the CLI and standalone MCP server. The Electron application remains a source-based application in this release; desktop installers are not part of the npm tarball.
 
 ## Security and local trust
 

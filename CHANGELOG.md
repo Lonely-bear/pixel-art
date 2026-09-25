@@ -6,7 +6,7 @@ All notable changes to Pixel Art MCP are documented in this file.
 
 ### Added
 
-- Installable `pixel-art-mcp` npm package with `pixel`, `pixel-mcp`, and `pixel-art-mcp` commands.
+- Installable `@taiwucun_tk/pixel-art-mcp` npm package with `pixel`, `pixel-mcp`, and `pixel-art-mcp` commands.
 - Standalone Model Context Protocol server over stdio, plus a bridge to the Electron app's loopback HTTP host.
 - JSON-first CLI for document creation, drawing, animation, tilemaps, scripting, quality inspection, and export.
 - Electron + React editor sharing one document store, command bus, and undo history with connected agents.
