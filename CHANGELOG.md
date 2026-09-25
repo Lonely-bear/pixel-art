@@ -4,27 +4,41 @@ All notable changes to dotloom-mcp are documented in this file.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-26
+
+Character rigging, asset-aware quality reporting, and task-level tool discovery.
+
 ### Added
 
+- Persistent character rigs: layer-bound parts with stable pivots and parent hierarchy, named poses, stored tweens, anchors and hitboxes, plus `preview_pose` for non-destructive checks and `bake_pose` / `tween_pose` for explicit-frame output.
+- `transform_part` and `transform_cel` for fixed-canvas arbitrary-angle rotation, translation and scale with nearest-neighbour sampling and no new colours.
+- `.pixel` format v2 round-trips rig metadata. Version-1 files remain readable, and rig-free documents continue to serialize as v1.
+- `quality_report` gained `assetType`, `intentionalDetailRects` and a cross-frame stability pass. `assetType: "character"` is the only value that changes the analysis; others are labels reported as such, and `auto` infers from a rig or multiple frames.
+- `set_frame_durations` and `upsert_tags` for batched frame timing and tag management, and `prune_palette` with dry-run by default.
+- `preview_animation` contact sheets in raw timeline or tag-expanded playback order with sequence-aware onion skin.
+- `finalize_document` now accepts typed PNG/frame/sheet/GIF/pose/contact output plans and can write a hashed bundle manifest that drives incremental writes. The legacy PNG `exports` field is still accepted.
+- Semantic palette roles via `ensure_palette_role` and `add_palette_ramp role`, `replace_colors` for document/frame/range/list recolouring, and role-safe pruning with index remapping.
+- `describe_command` and `find_workflow` for task-level discovery, and `create_sprite_spec` for one-call declarative scaffolds.
 - `run_script.dryRun` executes against an isolated document snapshot and returns structured source-relative error diagnostics.
-- Inline `apply_ops`/`run_script` previews now accept `frames: "all"` and onion-skin options.
+- Inline `apply_ops` / `run_script` previews accept `frames: "all"` and onion-skin options.
 - `list_commands` supports exact `name`, parameter-name `param`, result `limit`, and command `readOnly` metadata.
-- Added `set_frame_durations`, `upsert_tags`, and dry-run-by-default `prune_palette` core commands.
-- Added `preview_animation` contact sheets in raw timeline or tag-expanded playback order with sequence-aware onion skin.
-- `finalize_document` now accepts typed PNG/frame/sheet/GIF/pose/contact output plans and can write a hashed bundle manifest while preserving the legacy PNG `exports` field.
-- Added persistent character rigs with stable layer-bound parts, pivots, poses, stored tweens, anchors, hitboxes, fixed-canvas arbitrary-angle transforms, pose preview, and explicit-frame pose baking.
-- `.pixel` format v2 round-trips rig metadata; v1 files remain readable and rig-free documents continue to serialize as v1.
-- Added character-aware quality reports with intentional detail regions and cross-frame silhouette overlap, centroid, palette, canvas-clipping and loop-closure diagnostics. Only `assetType: "character"` changes the analysis; other values are labels and are reported as such, and `auto` infers from a rig or multiple frames.
-- Added `describe_command`, `find_workflow`, and `create_sprite_spec` for task-level discovery and declarative character scaffolds.
-- Added semantic palette roles, role-safe pruning/index remapping, and `replace_colors` for document/range/list recolouring. Ramp anchors are parsed literally rather than snapped by `paletteLocked`, so a locked palette can no longer tag unrelated swatches with a new role.
-- Rig metadata stays consistent with structural edits: deleting or merging a bound layer detaches it from its part, removing the rest frame re-points the rig, and `crop_canvas`/`resize_canvas`/`scale_sprite`/unscoped `flip`/`rotate` remap pivots, anchors and hitboxes along with the pixels. Pose baking and `transform_part` refuse to write the rig rest frame, and baking separates destination layers the rig does not own (`preservedLayers`) from part layers the pose empties (`clearedPartLayers`).
-- Export manifests can now drive hash-based incremental writes.
 
 ### Fixed
 
-- `apply_ops.atomic` now restores the exact pre-batch sprite, version, undo/redo state instead of undoing a count that included read-only commands.
+- Rig metadata stays consistent with structural edits. Deleting or merging a bound layer detaches it from its part, removing the rest frame re-points the rig, and `crop_canvas` / `resize_canvas` / `scale_sprite` / unscoped `flip` and `rotate` remap pivots, anchors and hitboxes along with the pixels. Previously a crop left pivots outside the canvas and every pose rendered from the wrong joint, silently.
+- Pose baking and `transform_part` refuse to write the rig rest frame, and baking separates destination layers the rig does not own (`preservedLayers`) from part layers the pose empties (`clearedPartLayers`). Baking onto the rest frame used to corrupt the rig's own render source.
+- Part bounds are the union of a part's layers rather than its last layer, and `clippedParts` only reports artwork that actually left the canvas. A multi-layer part no longer reports fake clipping on an identity pose.
+- Ramp anchors are parsed literally rather than snapped by `paletteLocked`, so a locked palette can no longer rebuild a ramp out of unrelated swatches and tag those swatches with a new role.
+- `apply_ops.atomic` restores the exact pre-batch sprite, version and undo/redo state instead of undoing a count that included read-only commands.
 - Explicitly requesting a missing animation tag now fails instead of silently exporting the full timeline.
 - Scoped odd quarter-turn rotations are rejected before they can leave cels and sprite dimensions inconsistent.
+- Affine rasterisation range-checks the unrounded inverse coordinate, so a sample beyond the nearest-neighbour reach can no longer be rounded into the first column.
+
+### Changed
+
+- `quality_report` character mode judges a silhouette jump by overlap rather than by how much of the whole canvas changed, which is scale-invariant for small figures.
+- `intentionalDetailRects` no longer suppresses the light-source probe; it applies only to isolated, outlier, edge and clipped-highlight checks.
+- Transform commands report `rigRemapped: true` only when rig geometry actually moved.
 
 ## [0.1.3] - 2026-09-25
 
