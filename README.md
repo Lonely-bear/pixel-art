@@ -193,9 +193,9 @@ Client configuration (Claude Desktop, or any `mcpServers` JSON):
 
 ### What it exposes
 
-- **74 tools.** Every core command (50) is generated straight from its zod schema, plus
+- **75 tools.** Every core command (50) is generated straight from its zod schema, plus
   hand-written session and perception tools: `create_document`, `open_document`,
-  `save_document`, `import_image` (PNG or Aseprite), `select_document`, `close_document`,
+  `save_document`, `finalize_document`, `import_image` (PNG or Aseprite), `select_document`, `close_document`,
   `list_documents`, `get_document`, `get_preview`, `get_pixels`, `get_palette`, `get_history`,
   `undo`, `redo`, `apply_ops`, `export_png`, `export_sheet`, `export_tiled`, `export_gif`,
   `list_commands`, `read_skill`, and the scripting tools `run_script`, `load_plugin`,
@@ -214,7 +214,7 @@ Client configuration (Claude Desktop, or any `mcpServers` JSON):
   (plus `?onionBefore`, `?onionAfter`, `?onionOpacity`, `?loop`, `?beforeTint`, `?afterTint`).
 - **4 prompts.** `draw_sprite`, `animate_sprite`, `improve_sprite`, `pixel_art_basics`.
 
-### Five details that matter for agents
+### Six details that matter for agents
 
 1. **`get_preview` returns an actual PNG image**, not a pixel array. A 32x32 sprite is ~10k
    tokens as JSON and ~200 tokens as an image, and the model can actually look at it. It also
@@ -225,9 +225,10 @@ Client configuration (Claude Desktop, or any `mcpServers` JSON):
 2. **`apply_ops` batches.** An agent sends a list of commands in one round trip; with
    `atomic: true` a failure rolls the whole batch back. It also takes `defaultLayer` /
    `defaultFrame` so a long batch does not repeat itself, and `quiet: true` to drop the
-   per-op summaries. Pass `preview: true` (optionally with `previewFrame`) and the same call
-   returns the resulting PNG alongside the JSON, closing the draw→look→adjust loop in one
-   round trip instead of two.
+   per-op summaries. Pass `preview: true` and the same call returns the resulting PNG;
+   `previewOptions: {frame, rect, layers, scale, background}` chooses the exact iteration
+   view. `run_script` supports the same inline preview, so the usual draw→look→adjust loop
+   needs one call per visual gate rather than two.
 3. **`expectedVersion` gives optimistic concurrency.** Read a version, pass it back on the
    next write, and a stale edit fails with `version_conflict` instead of clobbering someone
    else's work. Read-only commands never bump the version or eat your redo stack.
@@ -245,6 +246,10 @@ Client configuration (Claude Desktop, or any `mcpServers` JSON):
    being a box, and every paint command (`draw_rect`, `draw_ellipse`, `draw_polygon`,
    `draw_line`, `fill`, `draw_pixels`) also accepts `pattern` and `level`. A dithered shape
    lands on exactly the pixels a solid one would, and it composes with `clip`.
+6. **`finalize_document` closes the loop in one call.** It saves the editable `.pixel` source
+   and writes up to eight PNG exports in one request. A static asset normally needs one
+   scale-1 original plus one 6–8x preview, replacing separate save/export round trips while
+   returning every absolute path, output size, version and final document summary.
 
 ### Commands built for animation
 
@@ -338,7 +343,7 @@ json`, each accepting `required`, `default`, `description`, `min`, `max` and (fo
 
 Ways to run them:
 
-- **MCP** — `run_script` (`{ document, source, timeoutMs?, preview? }`), `load_plugin`
+- **MCP** — `run_script` (`{ document, source, timeoutMs?, expectedVersion?, preview?, previewOptions? }`), `load_plugin`
   (`{ source? | path?, name? }`, which hot-registers the new tools and emits
   `notifications/tools/list_changed`) and `list_plugins`. `pixel://script-guide` is the API
   reference an agent reads first.

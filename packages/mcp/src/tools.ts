@@ -62,6 +62,52 @@ const versionRef = z
     'Optimistic concurrency guard. The edit is rejected with a `version_conflict` error unless the document is exactly at this version. Pass the `version` returned by your last read or write.',
   );
 
+const previewRectSchema = z
+  .object({
+    x: z.number().int(),
+    y: z.number().int(),
+    w: z.number().int().min(1).max(4096),
+    h: z.number().int().min(1).max(4096),
+  })
+  .strict()
+  .describe('Crop to this region before upscaling, in canvas pixels. Single-frame previews only.');
+const previewLayersSchema = z
+  .array(layerRefSchema)
+  .optional()
+  .describe('Only composite these layers (ids, names or indices).');
+const previewScaleSchema = z
+  .number()
+  .int()
+  .min(1)
+  .max(32)
+  .optional()
+  .describe('Integer upscale factor. Defaults to whatever makes the longest side about 256px.');
+const previewBackgroundSchema = z
+  .string()
+  .nullable()
+  .optional()
+  .describe('Composite over this colour instead of transparency.');
+
+/** Shared options for a single-frame preview returned in a mutation response. */
+const previewOptionsObjectSchema = z
+  .object({
+    frame: frameRefSchema.optional().describe('Frame id or 0-based index. Defaults to frame 0.'),
+    rect: previewRectSchema.optional(),
+    layers: previewLayersSchema,
+    scale: previewScaleSchema,
+    background: previewBackgroundSchema,
+  })
+  .strict();
+
+const pngExportSchema = z
+  .object({
+    path: z.string().describe('Destination PNG path.'),
+    frame: frameRefSchema.optional().describe('Frame id or 0-based index. Defaults to frame 0.'),
+    scale: z.number().int().min(1).max(32).optional().describe('Integer upscale factor. Defaults to 1.'),
+    background: previewBackgroundSchema,
+  })
+  .strict();
+
 /**
  * Commands that only read. Core commands declare this themselves via `readOnly`, so
  * the editor keeps them out of the undo history; this set is for the hand-registered
@@ -98,6 +144,7 @@ const SESSION_TOOLS: Array<{ name: string; description: string }> = [
   { name: 'create_document', description: 'Create a blank sprite document.' },
   { name: 'open_document', description: 'Load a `.pixel` document.' },
   { name: 'save_document', description: 'Save to a `.pixel` file.' },
+  { name: 'finalize_document', description: 'Save the editable source and export one or more PNGs in one call.' },
   { name: 'import_image', description: 'Import a PNG or Aseprite file.' },
   { name: 'select_document', description: 'Make a document active.' },
   { name: 'close_document', description: 'Drop a document from the session.' },
@@ -195,21 +242,116 @@ function resolveBackground(value: string | null | undefined) {
   return value == null ? null : parseColor(value);
 }
 
-/** Render a frame to an image block plus its metadata, for any tool that returns a preview. */
+interface PreviewOnionOptions {
+  before?: number;
+  after?: number;
+  opacity?: number;
+  loop?: boolean;
+  beforeTint?: string;
+  afterTint?: string;
+}
+
+interface PreviewRenderOptions {
+  frame?: number | string;
+  rect?: { x: number; y: number; w: number; h: number };
+  layers?: Array<string | number>;
+  scale?: number;
+  background?: string | null;
+  frames?: 'one' | 'all';
+  onion?: PreviewOnionOptions;
+}
+
+/** Even a valid 32x request can ask a 4096px canvas for a four-gigapixel image. */
+const MAX_PREVIEW_OUTPUT_PIXELS = 16_777_216;
+
+/** Join the compact boolean switch, its options object and the legacy frame alias. */
+function inlinePreviewOptions(
+  enabled: unknown,
+  value: unknown,
+  legacyFrame?: number | string,
+): PreviewRenderOptions | undefined {
+  if (enabled !== true) return undefined;
+  if (!value || typeof value !== 'object') return { frame: legacyFrame };
+  const options = value as PreviewRenderOptions;
+  return { ...options, frame: options.frame ?? legacyFrame };
+}
+
+/** Shared renderer for get_preview and mutation tools that return an inline preview. */
 function previewPayload(
   sprite: Sprite,
-  frameRef: number | string | undefined,
-  target = 256,
+  options: PreviewRenderOptions = {},
 ): { blocks: ContentBlock[]; meta: Record<string, unknown> } {
-  const frame = resolveFrame(sprite, frameRef ?? 0);
-  const buffer = compositeFrame(sprite, frame.id);
-  const factor = previewFactor(buffer.width, buffer.height, target, 16);
+  const background = resolveBackground(options.background);
+  const layerIds = options.layers?.map((ref) => resolveLayer(sprite, ref).id);
+  const onion = options.onion;
+  const renderFrame = (frameId: string): PixelBuffer => {
+    const renderOptions = {
+      background,
+      layers: layerIds,
+      before: onion?.before,
+      after: onion?.after,
+      opacity: onion?.opacity,
+      loop: onion?.loop,
+      beforeTint: onion?.beforeTint,
+      afterTint: onion?.afterTint,
+    };
+    return onion
+      ? compositeWithOnion(sprite, frameId, renderOptions)
+      : compositeFrame(sprite, frameId, { background, layers: layerIds });
+  };
+
+  let buffer: PixelBuffer;
+  let meta: Record<string, unknown>;
+  const allFrames = options.frames === 'all' && sprite.frames.length > 1;
+  if (allFrames) {
+    const gap = 1;
+    const strip = new PixelBuffer(
+      sprite.frames.length * sprite.width + (sprite.frames.length - 1) * gap,
+      sprite.height,
+    );
+    sprite.frames.forEach((frame, index) => strip.blit(renderFrame(frame.id), index * (sprite.width + gap), 0));
+    buffer = strip;
+    meta = {
+      mode: 'all-frames',
+      frameCount: sprite.frames.length,
+      sheetWidth: strip.width,
+      sheetHeight: strip.height,
+      layout: 'horizontal strip, 1px gap, frames left to right',
+    };
+  } else {
+    const frame = resolveFrame(sprite, options.frame ?? 0);
+    buffer = renderFrame(frame.id);
+    meta = {
+      mode: 'single-frame',
+      frame: sprite.frames.findIndex((f) => f.id === frame.id),
+      frameId: frame.id,
+      durationMs: frame.durationMs,
+    };
+  }
+
+  if (options.rect && allFrames) {
+    throw new Error('`rect` crops a single frame; drop `frames: "all"` or read one frame at a time.');
+  }
+  if (options.rect) buffer = extractRegion(buffer, options.rect);
+
+  const factor = options.scale ?? previewFactor(buffer.width, buffer.height, 256, 16);
+  const outputWidth = buffer.width * factor;
+  const outputHeight = buffer.height * factor;
+  if (outputWidth * outputHeight > MAX_PREVIEW_OUTPUT_PIXELS) {
+    throw new Error(
+      `Preview would be ${outputWidth}x${outputHeight} (${outputWidth * outputHeight} pixels), above the ${MAX_PREVIEW_OUTPUT_PIXELS}-pixel safety limit. Reduce scale or crop with rect.`,
+    );
+  }
   const shown = factor > 1 ? scaleNearest(buffer, factor) : buffer;
   return {
     blocks: [imageContent(shown)],
     meta: {
-      frame: sprite.frames.findIndex((f) => f.id === frame.id),
-      frameId: frame.id,
+      ...meta,
+      width: sprite.width,
+      height: sprite.height,
+      ...(options.rect ? { rect: options.rect } : {}),
+      ...(layerIds ? { layers: layerIds } : {}),
+      ...(onion ? { onion } : {}),
       upscale: factor,
       scale: factor,
       imageWidth: shown.width,
@@ -506,6 +648,88 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
 
   addTool(
     server,
+    'finalize_document',
+    {
+      title: 'Save and export in one call',
+      description:
+        'Fast finalisation path: save the editable `.pixel` source and write one or more composited PNGs in a single MCP round trip. Typical agent output is a scale-1 original plus a larger nearest-neighbour preview. Returns every written path, output size, version and a clean document summary.',
+      inputSchema: z.object({
+        document: documentRef,
+        path: z.string().optional().describe('Destination `.pixel` path. Defaults to the document\'s current path.'),
+        exports: z
+          .array(pngExportSchema)
+          .max(8)
+          .optional()
+          .describe('PNG files to write in order. Each may select a frame, integer scale and background.'),
+      }),
+      annotations: { destructiveHint: false },
+    },
+    (args) => {
+      const doc = store.require(args.document as string | undefined);
+      const path = (args.path as string | undefined) ?? doc.path;
+      if (!path) {
+        return fail('No path given and this document has never been saved. Pass `path`.');
+      }
+      const exports = (args.exports as Array<{
+        path: string;
+        frame?: number | string;
+        scale?: number;
+        background?: string | null;
+      }>) ?? [];
+
+      try {
+        // Resolve every export before writing anything, so a bad frame reference
+        // cannot leave behind a source file that looks like a complete finalisation.
+        const rendered = exports.map((spec) => {
+          const frame = resolveFrame(doc.editor.sprite, spec.frame ?? 0);
+          const scale = spec.scale ?? 1;
+          const background = resolveBackground(spec.background);
+          const composited = compositeFrame(doc.editor.sprite, frame.id, { background });
+          const image = scale > 1 ? scaleNearest(composited, scale) : composited;
+          return {
+            path: spec.path,
+            bytes: encodePNG(image),
+            width: image.width,
+            height: image.height,
+            frame: doc.editor.sprite.frames.findIndex((item) => item.id === frame.id),
+            frameId: frame.id,
+            scale,
+          };
+        });
+
+        const sourceBytes = store.save(doc);
+        writeFile(path, sourceBytes);
+        doc.path = path;
+        for (const output of rendered) writeFile(output.path, output.bytes);
+
+        const files = [path, ...rendered.map((output) => output.path)];
+        return ok({
+          ok: true,
+          path,
+          absolute: absPath(path),
+          bytes: sourceBytes.byteLength,
+          exports: rendered.map((output) => ({
+            path: output.path,
+            width: output.width,
+            height: output.height,
+            frame: output.frame,
+            frameId: output.frameId,
+            scale: output.scale,
+            bytes: output.bytes.byteLength,
+          })),
+          files,
+          absoluteFiles: files.map(absPath),
+          version: doc.editor.version,
+          document: store.summary(doc),
+        });
+      } catch (error) {
+        return fail(`Could not finalize ${path}: ${(error as Error).message}`);
+      }
+    },
+  );
+
+  addTool(
+    server,
     'import_image',
     {
       title: 'Import an image',
@@ -618,29 +842,16 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Look at the sprite',
       description:
-        'Render the composited sprite as a PNG image you can actually see, plus a text summary. This is your eyes: call it after blocking in the silhouette, after shading and after outlining. Returns all frames as a horizontal sheet when `frames` is "all". Pass `layers` to isolate a single layer, `rect` to crop-zoom a detail, and `onion` to see the neighbouring frames as ghosts.',
+        'Render the composited sprite as a PNG image you can actually see, plus a text summary. This is your eyes when no edit was made. After `run_script` or `apply_ops`, prefer their `preview: true` + `previewOptions` so drawing and looking share one round trip. Returns all frames as a horizontal sheet when `frames` is "all". Pass `layers` to isolate one layer, `rect` to crop-zoom a detail, and `onion` to see neighbouring frames as ghosts.',
       inputSchema: z.object({
         document: documentRef,
         frame: frameRefSchema.optional().describe('Frame id or 0-based index. Defaults to frame 0.'),
-        rect: z
-          .object({
-            x: z.number().int(),
-            y: z.number().int(),
-            w: z.number().int().min(1),
-            h: z.number().int().min(1),
-          })
-          .optional()
-          .describe(
-            'Crop to this region before upscaling, so a small detail (a face, a hand) fills the image. `{x, y, w, h}` in canvas pixels. Single-frame only.',
-          ),
+        rect: previewRectSchema.optional(),
         frames: z
           .enum(['one', 'all'])
           .optional()
           .describe('"one" (default) renders a single frame; "all" renders every frame as a horizontal strip.'),
-        layers: z
-          .array(layerRefSchema)
-          .optional()
-          .describe('Only composite these layers (ids, names or indices). Use it to inspect one layer in isolation, e.g. just the shading pass.'),
+        layers: previewLayersSchema,
         onion: z
           .object({
             before: z.number().int().min(0).max(8).optional().describe('How many earlier frames to ghost in.'),
@@ -653,95 +864,26 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           .strict()
           .optional()
           .describe('Onion skin: draw the neighbouring frames behind this one as faded ghosts.'),
-        scale: z
-          .number()
-          .int()
-          .min(1)
-          .max(32)
-          .optional()
-          .describe('Integer upscale factor. Defaults to whatever makes the longest side about 256px.'),
-        background: z
-          .string()
-          .nullable()
-          .optional()
-          .describe('Composite over this colour (e.g. "#202020") to judge light colours against something other than transparency.'),
+        scale: previewScaleSchema,
+        background: previewBackgroundSchema,
       }),
       annotations: { readOnlyHint: true },
     },
     (args) => {
       try {
         const doc = store.require(args.document as string | undefined);
-        const sprite = doc.editor.sprite;
-        const background = resolveBackground(args.background as string | null | undefined);
-        const frames = sprite.frames;
-        const layerRefs = args.layers as Array<string | number> | undefined;
-        const layerIds = layerRefs?.map((ref) => resolveLayer(sprite, ref).id);
-        const onion = args.onion as
-          | { before?: number; after?: number; opacity?: number; loop?: boolean; beforeTint?: string; afterTint?: string }
-          | undefined;
-
-        const renderFrame = (frameId: string): PixelBuffer => {
-          const opts = { background, layers: layerIds, before: onion?.before, after: onion?.after, opacity: onion?.opacity, loop: onion?.loop, beforeTint: onion?.beforeTint, afterTint: onion?.afterTint };
-          return onion ? compositeWithOnion(sprite, frameId, opts) : compositeFrame(sprite, frameId, { background, layers: layerIds });
-        };
-
-        let buffer: PixelBuffer;
-        let meta: Record<string, unknown>;
-
-        if (args.frames === 'all' && frames.length > 1) {
-          const rendered = frames.map((frame) => renderFrame(frame.id));
-          const gap = 1;
-          const strip = new PixelBuffer(
-            frames.length * sprite.width + (frames.length - 1) * gap,
-            sprite.height,
-          );
-          rendered.forEach((img, i) => strip.blit(img, i * (sprite.width + gap), 0));
-          buffer = strip;
-          meta = {
-            mode: 'all-frames',
-            frameCount: frames.length,
-            sheetWidth: strip.width,
-            sheetHeight: strip.height,
-            layout: 'horizontal strip, 1px gap, frames left to right',
-          };
-        } else {
-          const frame = resolveFrame(sprite, (args.frame as number | string | undefined) ?? 0);
-          buffer = renderFrame(frame.id);
-          meta = {
-            mode: 'single-frame',
-            frame: sprite.frames.findIndex((f) => f.id === frame.id),
-            frameId: frame.id,
-            durationMs: frame.durationMs,
-          };
-        }
-
-        const crop = args.rect as { x: number; y: number; w: number; h: number } | undefined;
-        if (crop && args.frames === 'all' && frames.length > 1) {
-          return fail('`rect` crops a single frame; drop `frames: "all"` or read one frame at a time.');
-        }
-        if (crop) buffer = extractRegion(buffer, crop);
-
-        const factor =
-          (args.scale as number | undefined) ??
-          previewFactor(buffer.width, buffer.height, 256, 16);
-        const shown = factor > 1 ? scaleNearest(buffer, factor) : buffer;
-
+        const rendered = previewPayload(doc.editor.sprite, {
+          frame: args.frame as number | string | undefined,
+          rect: args.rect as { x: number; y: number; w: number; h: number } | undefined,
+          layers: args.layers as Array<string | number> | undefined,
+          frames: args.frames as 'one' | 'all' | undefined,
+          onion: args.onion as PreviewOnionOptions | undefined,
+          scale: args.scale as number | undefined,
+          background: args.background as string | null | undefined,
+        });
         return ok(
-          {
-            ok: true,
-            document: store.summary(doc),
-            width: sprite.width,
-            height: sprite.height,
-            ...meta,
-            ...(crop ? { rect: crop } : {}),
-            ...(layerIds ? { layers: layerIds } : {}),
-            ...(onion ? { onion } : {}),
-            upscale: factor,
-            scale: factor,
-            imageWidth: shown.width,
-            imageHeight: shown.height,
-          },
-          [imageContent(shown)],
+          { ok: true, document: store.summary(doc), ...rendered.meta },
+          rendered.blocks,
         );
       } catch (error) {
         return fail((error as Error).message);
@@ -945,7 +1087,7 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Apply a batch of commands',
       description:
-        'Run several commands in one round trip. Far cheaper than one call per edit when you are generating a sprite or all the frames of an animation. Each op is `{command, params}` - or put the params inline: `{command: "draw_rect", layer: "base", rect: {...}, color: "#f00", fill: true}`. Set `defaultLayer`/`defaultFrame` once instead of repeating them in every op. Use `list_commands` to see every available command and its parameters. Returns a per-op result, so a failure tells you exactly which op and why. Pass `preview: true` to get the rendered result back as an image in the same response.',
+        'Run several commands in one round trip. Far cheaper than one call per edit when you are generating a sprite or all the frames of an animation. Each op is `{command, params}` - or put the params inline: `{command: "draw_rect", layer: "base", rect: {...}, color: "#f00", fill: true}`. Set `defaultLayer`/`defaultFrame` once instead of repeating them in every op. Use `list_commands` to see every available command and its parameters. Returns a per-op result, so a failure tells you exactly which op and why. Pass `preview: true` to get the rendered result in the same response; add `previewOptions: {scale: 4, rect, layers, frame}` to choose the exact view without a second `get_preview` call.',
       inputSchema: z.object({
         document: documentRef,
         expectedVersion: versionRef,
@@ -972,10 +1114,13 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         preview: z
           .boolean()
           .optional()
-          .describe('Include a rendered PNG of the result in this response, so you can see the edit without spending a second call. Defaults to false.'),
+          .describe('Include a rendered PNG of the result in this response. Defaults to false.'),
+        previewOptions: previewOptionsObjectSchema
+          .optional()
+          .describe('Configure the inline preview. Requires `preview: true`; use `{scale: 4}` for a normal iteration preview or add frame/rect/layers/background when inspecting a detail.'),
         previewFrame: frameRefSchema
           .optional()
-          .describe('Frame to render when `preview` is true. Defaults to frame 0.'),
+          .describe('Legacy alias for `previewOptions.frame`. Do not pass both.'),
         ops: z
           .array(z.record(z.string(), z.unknown()))
           .min(1)
@@ -989,6 +1134,15 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         doc = store.require(args.document as string | undefined);
       } catch (error) {
         return fail((error as Error).message);
+      }
+
+      const previewOptions = args.previewOptions as PreviewRenderOptions | undefined;
+      const previewFrame = args.previewFrame as number | string | undefined;
+      if (previewOptions && args.preview !== true) {
+        return fail('`previewOptions` requires `preview: true`.');
+      }
+      if (previewOptions?.frame !== undefined && previewFrame !== undefined) {
+        return fail('Pass either `previewOptions.frame` or the legacy `previewFrame`, not both.');
       }
 
       const expectedVersion = args.expectedVersion as number | undefined;
@@ -1078,18 +1232,21 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
 
       const blocks: ContentBlock[] = [];
       let previewMeta: Record<string, unknown> | undefined;
-      if (args.preview === true) {
-        const payload = previewPayload(
-          doc.editor.sprite,
-          args.previewFrame as number | string | undefined,
-        );
-        blocks.push(...payload.blocks);
-        previewMeta = payload.meta;
+      let previewError: string | undefined;
+      const inlinePreview = inlinePreviewOptions(args.preview, previewOptions, previewFrame);
+      if (inlinePreview) {
+        try {
+          const rendered = previewPayload(doc.editor.sprite, inlinePreview);
+          blocks.push(...rendered.blocks);
+          previewMeta = rendered.meta;
+        } catch (error) {
+          previewError = briefError(error);
+        }
       }
 
       return ok(
         {
-          ok: failed === 0,
+          ok: failed === 0 && previewError === undefined,
           applied,
           failed,
           skipped,
@@ -1100,6 +1257,9 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           ...(failed > 0 ? { failures } : {}),
           ...(quiet ? {} : { results }),
           ...(previewMeta ? { preview: previewMeta } : {}),
+          ...(previewError
+            ? { previewError, editCommitted: applied > 0 }
+            : {}),
         },
         blocks,
       );
@@ -1412,9 +1572,10 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
     {
       title: 'Run a sandboxed script',
       description:
-        'Run JavaScript against the current document in a hardened sandbox. `exec(command, params)` / `tryExec(...)` drive the same command bus as the tools; `document()`, `layers()`, `frames()`, `tags()`, `palette()`, `getPixel(x, y)` and `sample(x, y)` read state; `log(...)` collects output; returning a value yields JSON. The whole script collapses into one undo step. There is no filesystem, network, `require` or `process` access, and it is killed after the timeout.',
+        'Run JavaScript against the current document in a hardened sandbox. `exec(command, params)` / `tryExec(...)` drive the same command bus as the tools; `document()`, `layers()`, `frames()`, `tags()`, `palette()`, `getPixel(x, y)` and `sample(x, y)` read state; `log(...)` collects output; returning a value yields JSON. The whole script collapses into one undo step. For the fast draw→look loop, pass `preview: true` and optionally `previewOptions: {scale: 4, frame, rect, layers, background}` so the PNG arrives in this same response. There is no filesystem, network, `require` or `process` access, and it is killed after the timeout.',
       inputSchema: z.object({
         document: documentRef,
+        expectedVersion: versionRef,
         source: z
           .string()
           .describe('JavaScript source. Return a JSON-serialisable value to get it back in `result`.'),
@@ -1425,7 +1586,13 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
           .max(60000)
           .optional()
           .describe('Execution budget in milliseconds. Defaults to 2000.'),
-        preview: z.boolean().optional().describe('Also return a PNG of the document after the script runs.'),
+        preview: z
+          .boolean()
+          .optional()
+          .describe('Return a PNG of the document after the script runs in this same response.'),
+        previewOptions: previewOptionsObjectSchema
+          .optional()
+          .describe('Configure the inline preview. Requires `preview: true`; `{scale: 4}` is the normal fast iteration view.'),
       }),
     },
     (args) => {
@@ -1434,6 +1601,18 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
         doc = store.require(args.document as string | undefined);
       } catch (error) {
         return fail((error as Error).message);
+      }
+
+      const previewOptions = args.previewOptions as PreviewRenderOptions | undefined;
+      if (previewOptions && args.preview !== true) {
+        return fail('`previewOptions` requires `preview: true`.');
+      }
+      const expectedVersion = args.expectedVersion as number | undefined;
+      if (expectedVersion !== undefined && expectedVersion !== doc.editor.version) {
+        return fail(
+          `Version conflict: expected version ${expectedVersion} but the document is at ${doc.editor.version}`,
+          { code: 'version_conflict', expected: expectedVersion, actual: doc.editor.version },
+        );
       }
 
       const timeoutMs = args.timeoutMs as number | undefined;
@@ -1452,20 +1631,27 @@ export function registerTools(server: McpServer, store: DocumentStore): void {
 
       const blocks: ContentBlock[] = [];
       let preview: Record<string, unknown> | undefined;
-      if (args.preview === true) {
-        const rendered = previewPayload(doc.editor.sprite, undefined);
-        blocks.push(...rendered.blocks);
-        preview = rendered.meta;
+      let previewError: string | undefined;
+      const inlinePreview = inlinePreviewOptions(args.preview, previewOptions);
+      if (inlinePreview) {
+        try {
+          const rendered = previewPayload(doc.editor.sprite, inlinePreview);
+          blocks.push(...rendered.blocks);
+          preview = rendered.meta;
+        } catch (error) {
+          previewError = briefError(error);
+        }
       }
 
       return ok(
         {
-          ok: true,
+          ok: previewError === undefined,
           result: outcome.result,
           logs: outcome.logs,
           version: doc.editor.version,
           document: store.summary(doc),
           ...(preview ? { preview } : {}),
+          ...(previewError ? { previewError, editCommitted: doc.editor.version !== before } : {}),
         },
         blocks,
       );

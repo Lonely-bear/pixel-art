@@ -26,15 +26,20 @@ Documents live in this session and are addressed by id; one is active, and every
 tool defaults to it, so most calls need only the arguments they actually change.
 
 Workflow that works:
-1. \`create_document\` (or \`import_image\` / \`open_document\`), then \`get_document\` to
-   learn the layer names and frame indices.
-2. Block the silhouette in one flat colour, then call \`get_preview\` and actually
-   look at it. Perception between edits is the difference between a sprite and mud.
-3. Shade with a hue-shifted ramp, then outline selectively.
-4. Batch related edits with \`apply_ops\` instead of one call per pixel. It accepts
-   any command from \`list_commands\`, inline params included.
-5. \`export_sheet\` for engines, \`export_png\` for a single image, \`save_document\`
-   for the editable source.
+1. \`create_document\` returns the complete layer/frame/palette structure, so you can
+   draw immediately. Call \`get_document\` only after \`import_image\`/\`open_document\`
+   or when a structural change means you need a fresh view.
+2. Block the silhouette in one flat colour. For the fast draw→look loop, call
+   \`run_script\` or \`apply_ops\` with \`preview: true\` and
+   \`previewOptions: {scale: 4}\`; inspect that returned PNG before the next pass.
+   Use \`get_preview\` when you need a view without making an edit.
+3. Shade with a hue-shifted ramp, then outline selectively. Two or three visual
+   gates are usually enough; batch coherent changes instead of narrating every pixel.
+4. Use \`apply_ops\` instead of one call per edit. It accepts any command from
+   \`list_commands\`, inline params included, and can return its preview inline too.
+5. Finish with one \`finalize_document\` call that saves the editable \`.pixel\` source
+   and writes the exact PNG exports you need. Use \`export_sheet\` for engines or
+   \`export_gif\` for animation instead when those formats are required.
 
 Conventions: origin is top-left, x right, y **down**, pixels are zero-based.
 Layers are indexed from the **bottom** (index 0 is the bottom layer); refer to

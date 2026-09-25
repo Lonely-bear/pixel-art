@@ -37,13 +37,13 @@ export function registerPrompts(server: McpServer): void {
       const pal = palette ?? 'dawnbringer16';
       return user(`Draw ${subject} as pixel art on a ${w}x${h} canvas.
 
-Follow this order, and call \`get_preview\` between each step - do not chain edits blind:
+Follow this order. Use 2-3 visual gates, and get each PNG from the same mutation call via \`preview: true\` + \`previewOptions: {scale: 4}\` - do not spend a second call on \`get_preview\`:
 
-1. \`create_document\` with width ${w}, height ${h}, layers ["base", "shade", "outline"], palette "${pal}".
-2. Block the whole silhouette in ONE flat mid-tone colour on the "base" layer, using \`draw_rect\`, \`draw_ellipse\`, \`draw_polygon\` and \`draw_pixels\`. Call \`get_preview\`. If the shape is not recognisable as a solid silhouette, fix it before going further. This is the step that decides whether the sprite works.
+1. \`create_document\` with width ${w}, height ${h}, layers ["base", "shade", "outline"], palette "${pal}". Its response already includes the layer/frame structure.
+2. Block the whole silhouette in ONE flat mid-tone colour on the "base" layer with a batched \`run_script\` or \`apply_ops\`, and inspect its inline preview. If the shape is not recognisable as a solid silhouette, fix it before going further.
 3. Add shadow on the "shade" layer, light coming from the top-left. Use 2-3 colours from the palette that step in hue as well as value. Break shade boundaries with single-pixel steps instead of long straight lines.
 4. Outline on the "outline" layer with \`outline\` using \`mode: "outside"\`, in a dark, desaturated colour - not black. Then selectively erase the outline where the light hits, using \`clear_region\` or a draw with \`color: null\`.
-5. \`get_preview\` again and fix anything that reads badly at 100%.
+5. Inspect the final inline preview, fix only what still reads badly, then use one \`finalize_document\` call for the source and PNG exports.
 
 Keep the sprite centred: use \`measure_region\` to find the opaque bounds and \`copy_region\` or \`resize_canvas\` to recentre.
 
@@ -103,7 +103,7 @@ Read ${SKILL_URI} (or call \`read_skill\`) for the craft guide - section 7 cover
    - Is pure black or pure white used anywhere?
    - If it is animated: does the loop close, and does more than one thing change per frame?
 3. State the single worst problem.
-4. Fix ONLY that problem, on the correct layer, and \`get_preview\` again.
+4. Fix ONLY that problem on the correct layer with one batched \`run_script\` or \`apply_ops\` call, and inspect the same response's \`preview: true\` + \`previewOptions: {scale: 4}\` image.
 5. Repeat once if the fix helped. If it made things worse, \`undo\` it rather than piling on more edits.${focusLine}
 
 Read ${SKILL_URI} (or call \`read_skill\`) for the full craft guide, and section 11 in particular for the list of things that look bad.`);

@@ -145,14 +145,23 @@ passes, and look at the result between passes.
 
 ## 8. Iterating
 
+- The fastest draw→look loop is one call: pass \`preview: true\` to \`run_script\` or
+  \`apply_ops\`, plus \`previewOptions: {scale: 4}\` (and optionally \`frame\`, \`rect\`,
+  \`layers\`, or \`background\`). The command result and a real PNG come back together,
+  so do not spend a second call on \`get_preview\` immediately afterwards.
+- Look after the silhouette, after major lighting/material work, and once at the
+  end. Two or three visual gates catch nearly all composition problems; a long chain
+  of tiny speculative edits is slower and usually less coherent.
+
 - \`get_preview\` renders the composited frame (or all frames) as a PNG you can
-  actually see. Use it constantly - after the silhouette, after shading, after
-  outlining. Never chain twenty edits blind.
+  actually see. Use it when no edit was made, or when a mutation did not request
+  an inline preview. Never chain twenty edits blind.
 - By default \`get_preview\` shows the sprite at up to ~256px on its longest side, so a
   large canvas (256x256 or more) comes back at 1:1 and fine detail is hard to judge.
   Pass \`scale: 4\` (up to 32) to zoom in, and \`frame\`/\`layers\` to isolate what you are
   working on. Pass \`rect: {x, y, w, h}\` to crop-zoom a detail - a face, a hand, a staff
-  head - at full scale instead of exporting a file.
+  head - at full scale instead of exporting a file. The same crop can ride along
+  in a mutation's \`previewOptions\`, so fixing and inspecting a detail is one call.
 - \`get_pixels\` returns a small region as text when you need exact coordinates.
 - \`measure_region\` tells you where the opaque pixels actually are, which is how
   you centre a sprite without guessing.
@@ -171,6 +180,10 @@ passes, and look at the result between passes.
 - \`export_png\` returns \`absolute\` as an **array** (one entry per written file), while
   \`save_document\` returns it as a **string**. \`get_preview\` echoes the zoom factor as
   both \`scale\` and \`upscale\`.
+- At the end, \`finalize_document\` saves the \`.pixel\` source and writes one or more
+  PNG exports in a single call. A usual static asset is a scale-1 original plus a
+  scale-6/8 preview. Keep \`save_document\` plus repeated \`export_png\` calls only when
+  independent incremental writes are actually needed.
 
 ## 9. Coordinates and conventions
 
@@ -269,8 +282,9 @@ into a game engine.
 /** Short, always-included preamble for prompts that do not need the full guide. */
 export const SKILL_SUMMARY =
   'Pixel art workflow: block the silhouette in one flat colour on a base layer, ' +
-  'look at get_preview, then shade with a hue-shifted ramp, then outline selectively. ' +
-  'Read pixel://skill for the full guide before drawing anything non-trivial.';
+  'return a 4x inline preview from the same run_script/apply_ops call, then shade with a ' +
+  'hue-shifted ramp and outline selectively. Use two or three visual gates, and finish ' +
+  'with one finalize_document call. Read pixel://skill before drawing anything non-trivial.';
 
 /** URI of the scripting/plugin guide resource. */
 export const SCRIPT_GUIDE_URI = 'pixel://script-guide';
@@ -288,6 +302,11 @@ export const SCRIPT_GUIDE = `# Scripting and plugins
 \`node:vm\` sandbox. It is the escape hatch for anything the fixed command set does
 not cover: procedural patterns, maths-heavy placement, reading many pixels at once,
 or looping an edit over every frame.
+
+For a visual iteration, pass \`preview: true\` and \`previewOptions: {scale: 4}\`; the
+PNG is returned with the script result, so no follow-up \`get_preview\` call is needed.
+Use \`expectedVersion\` when another editor may have changed the document since your
+last read. \`finalize_document\` saves the source and writes PNG exports in one call.
 
 ## What the sandbox gives you
 
