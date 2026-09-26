@@ -4,6 +4,8 @@ All notable changes to dotloom-mcp are documented in this file.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-26
+
 ### Added
 
 - **A session no longer stays in memory just because the app was late.** Discovery used
