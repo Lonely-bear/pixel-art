@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, ipcMain, Menu, shell } from 'electron';
 import { removeHostFile, writeHostFile } from '@pixel/mcp';
-import { CHANNELS, type AppLocale } from '../shared/types.js';
+import { CHANNELS } from '../shared/types.js';
 import { DEFAULT_MCP_PORT, startMcpHost, type McpHost } from './mcp-host.js';
 import { registerIpc } from './ipc.js';
 import { store } from './host.js';
@@ -26,9 +26,14 @@ function createWindow(): BrowserWindow {
     height: 920,
     minWidth: 900,
     minHeight: 600,
-    backgroundColor: '#f4f4f1',
+    backgroundColor: '#0a0b0c',
     title: 'dotloom-mcp',
     show: false,
+    // The renderer draws its own 40px title bar, so the OS frame and the
+    // application menu are both gone. Everything the frame used to provide —
+    // drag, snap layouts, resize borders, minimise/maximise/close — is either
+    // free with `frame: false` or handled by `TitleBar` in the renderer.
+    frame: false,
     webPreferences: {
       preload: path.join(here, 'preload.cjs'),
       contextIsolation: true,
@@ -55,6 +60,21 @@ function createWindow(): BrowserWindow {
     return { action: 'deny' };
   });
 
+  // Keep the drawer's window-button glyph in sync with the real state, so a
+  // double-click on the drag region cannot leave the icon lying.
+  const pushState = () => {
+    if (created.isDestroyed()) return;
+    created.webContents.send(CHANNELS.windowState, { maximized: created.isMaximized() });
+  };
+  created.on('maximize', pushState);
+  created.on('unmaximize', pushState);
+  created.on('enter-full-screen', pushState);
+  created.on('leave-full-screen', pushState);
+
+  // With no application menu there is nothing for Electron to route a chord to,
+  // so each window claims its own accelerators and forwards the intent.
+  created.webContents.on('before-input-event', (_event, input) => forwardAccelerator(input));
+
   if (devServer) {
     void created.loadURL(devServer);
   } else {
@@ -64,83 +84,43 @@ function createWindow(): BrowserWindow {
   return created;
 }
 
-const MENU_TEXT = {
-  en: {
-    file: 'File', newSprite: 'New sprite', open: 'Open…', save: 'Save',
-    exportPng: 'Export PNG…', exportSheet: 'Export spritesheet…', edit: 'Edit',
-    undo: 'Undo', redo: 'Redo', view: 'View',
-  },
-  'zh-CN': {
-    file: '文件', newSprite: '新建角色', open: '打开…', save: '保存',
-    exportPng: '导出 PNG…', exportSheet: '导出精灵图…', edit: '编辑',
-    undo: '撤销', redo: '重做', view: '视图',
-  },
-} as const;
+/**
+ * Accelerators that used to live on the application menu.
+ *
+ * With no menu there is nothing for Electron to route a key chord to, so the
+ * main process claims them itself and forwards the intent to the renderer. The
+ * renderer still owns the behaviour; this only replaces the menu plumbing.
+ */
+const ACCELERATORS: Record<string, string> = {
+  n: 'new',
+  o: 'open',
+  s: 'save',
+  e: 'export',
+  z: 'undo',
+  ',': 'settings',
+  '\\': 'toggle-sidebar',
+};
 
-function buildMenu(locale: AppLocale = 'en'): void {
-  const text = MENU_TEXT[locale];
-  Menu.setApplicationMenu(
-    Menu.buildFromTemplate([
-      {
-        label: text.file,
-        submenu: [
-          {
-            label: text.newSprite,
-            accelerator: 'CmdOrCtrl+N',
-            click: () => window?.webContents.send('pixel:menu', 'new'),
-          },
-          {
-            label: text.open,
-            accelerator: 'CmdOrCtrl+O',
-            click: () => window?.webContents.send('pixel:menu', 'open'),
-          },
-          { type: 'separator' },
-          {
-            label: text.save,
-            accelerator: 'CmdOrCtrl+S',
-            click: () => window?.webContents.send('pixel:menu', 'save'),
-          },
-          {
-            label: text.exportPng,
-            accelerator: 'CmdOrCtrl+E',
-            click: () => window?.webContents.send('pixel:menu', 'export'),
-          },
-          {
-            label: text.exportSheet,
-            accelerator: 'CmdOrCtrl+Shift+E',
-            click: () => window?.webContents.send('pixel:menu', 'sheet'),
-          },
-          { type: 'separator' },
-          { role: 'quit' },
-        ],
-      },
-      {
-        label: text.edit,
-        submenu: [
-          {
-            label: text.undo,
-            accelerator: 'CmdOrCtrl+Z',
-            click: () => window?.webContents.send('pixel:menu', 'undo'),
-          },
-          {
-            label: text.redo,
-            accelerator: 'CmdOrCtrl+Shift+Z',
-            click: () => window?.webContents.send('pixel:menu', 'redo'),
-          },
-        ],
-      },
-      {
-        label: text.view,
-        submenu: [
-          { role: 'reload' },
-          { role: 'toggleDevTools' },
-          { type: 'separator' },
-          { role: 'resetZoom' },
-          { role: 'togglefullscreen' },
-        ],
-      },
-    ]),
-  );
+/**
+ * Chords where Shift changes the meaning. Consulted instead of `ACCELERATORS`
+ * whenever Shift is down, so `Ctrl+Shift+Z` forwards `redo` rather than
+ * `undo` — and a chord with no shifted meaning simply does nothing.
+ */
+const SHIFTED_ACCELERATORS: Record<string, string> = {
+  z: 'redo',
+};
+
+function forwardAccelerator(input: Electron.Input): void {
+  if (input.type !== 'keyDown' || input.isAutoRepeat) return;
+  if (input.alt) return;
+  if (!input.control && !input.meta) return;
+  // An event with no `key` (injected input carries neither `key` nor `code`)
+  // resolves to `undefined` here, which correctly does nothing.
+  const action = (input.shift ? SHIFTED_ACCELERATORS : ACCELERATORS)[input.key.toLowerCase()];
+  if (!action) return;
+  const target = BrowserWindow.getFocusedWindow() ?? window;
+  if (!target) return;
+  target.webContents.send(CHANNELS.command, action);
 }
 
 /**
@@ -151,6 +131,9 @@ function buildMenu(locale: AppLocale = 'en'): void {
  * passing build does not.
  */
 async function smokeTest(created: BrowserWindow, target: string): Promise<void> {
+  // `PIXEL_SMOKE_SIZE=1280x800` shoots a second frame at another size, which is
+  // how the responsive breakpoints get checked without a human resizing.
+  const size = process.env.PIXEL_SMOKE_SIZE;
   if (created.webContents.isLoading()) {
     await new Promise<void>((resolve) => created.webContents.once('did-finish-load', () => resolve()));
   }
@@ -159,6 +142,15 @@ async function smokeTest(created: BrowserWindow, target: string): Promise<void> 
   const image = await created.webContents.capturePage();
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, image.toPNG());
+  if (size) {
+    const [w, h] = size.split('x').map(Number);
+    if (w && h) {
+      created.setSize(w, h);
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      const resized = await created.webContents.capturePage();
+      await writeFile(target.replace(/\.png$/, `-${w}x${h}.png`), resized.toPNG());
+    }
+  }
   await writeFile(
     `${target}.mcp.txt`,
     JSON.stringify({ url: mcpStatus.url, running: mcpStatus.running }, null, 2),
@@ -181,10 +173,6 @@ async function start(): Promise<void> {
   }
 
   registerIpc(() => mcpStatus);
-  ipcMain.on(CHANNELS.setLocale, (_event, locale: AppLocale) => {
-    if (locale === 'en' || locale === 'zh-CN') buildMenu(locale);
-  });
-  buildMenu();
   window = createWindow();
 
   try {
@@ -231,6 +219,19 @@ if (!app.requestSingleInstanceLock()) {
       if (window.isMinimized()) window.restore();
       window.focus();
     }
+  });
+
+  // No application menu anywhere: the renderer draws its own bar, so the
+  // accelerators the menu used to host are claimed per window instead.
+  Menu.setApplicationMenu(null);
+
+  ipcMain.handle(CHANNELS.windowCommand, (_event, action: string) => {
+    const target = BrowserWindow.fromWebContents(_event.sender) ?? window;
+    if (!target) return;
+    if (action === 'minimize') target.minimize();
+    else if (action === 'maximize') target.maximize();
+    else if (action === 'unmaximize') target.unmaximize();
+    else if (action === 'close') target.close();
   });
 
   app.whenReady().then(start).catch((error) => {

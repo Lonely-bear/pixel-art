@@ -9,61 +9,105 @@
  * silently.
  */
 import { contextBridge, ipcRenderer } from 'electron';
+// Type-only, so it is erased at compile time and the preload still only requires
+// electron at runtime. `api` is checked against `PixelApi` at the bottom, which is
+// what forces this file and `shared/types.ts` to agree.
+import type {
+  AnimationSequenceInfo,
+  AppLocale,
+  AppStatus,
+  ChangedPayload,
+  DocumentDetail,
+  DocumentSummary,
+  ExecResult,
+  ExportResult,
+  HistoryEntry,
+  McpStatus,
+  PixelApi,
+  PixelRect,
+  PreviewRequest,
+  PreviewResult,
+  SelectionState,
+  TilesetInfo,
+  TilemapInfo,
+  UndoResult,
+} from '../shared/types.js';
 
 const invoke = <T,>(channel: string, ...args: unknown[]): Promise<T> =>
   ipcRenderer.invoke(channel, ...args) as Promise<T>;
 
 const api = {
-  listDocuments: () => invoke('pixel:list-documents'),
-  status: () => invoke('pixel:status'),
-  selectDocument: (id: string) => invoke('pixel:select-document', id),
-  createDocument: (options: Record<string, unknown>) => invoke('pixel:create-document', options),
-  closeDocument: (id: string) => invoke('pixel:close-document', id),
-  documentDetail: (id?: string) => invoke('pixel:document-detail', id),
-  preview: (id: string | undefined, request: Record<string, unknown>) =>
-    invoke('pixel:preview', id, request),
+  listDocuments: () => invoke<DocumentSummary[]>('pixel:list-documents'),
+  status: () => invoke<AppStatus>('pixel:status'),
+  selectDocument: (id: string) => invoke<DocumentSummary>('pixel:select-document', id),
+  createDocument: (options: Record<string, unknown>) =>
+    invoke<DocumentDetail>('pixel:create-document', options),
+  closeDocument: (id: string) => invoke<DocumentSummary[]>('pixel:close-document', id),
+  documentDetail: (id?: string) => invoke<DocumentDetail>('pixel:document-detail', id),
+  setSelection: (
+    id: string | undefined,
+    rect: PixelRect | null,
+    mode?: SelectionState['mode'],
+    scope?: { layerId?: string; frameId?: string },
+  ) => invoke<SelectionState | null>('pixel:selection', id, rect, mode, scope),
+  preview: (id: string | undefined, request: PreviewRequest) =>
+    invoke<PreviewResult>('pixel:preview', id, request),
   execute: (id: string | undefined, name: string, params: unknown, opts?: Record<string, unknown>) =>
-    invoke('pixel:execute', id, name, params, opts),
-  undo: (id: string | undefined, steps?: number) => invoke('pixel:undo', id, steps),
-  redo: (id: string | undefined, steps?: number) => invoke('pixel:redo', id, steps),
-  history: (id: string | undefined, limit?: number) => invoke('pixel:history', id, limit),
-  openFile: () => invoke('pixel:open-file'),
-  saveFile: (id?: string) => invoke('pixel:save-file', id),
-  saveFileAs: (id?: string) => invoke('pixel:save-file-as', id),
+    invoke<ExecResult>('pixel:execute', id, name, params, opts),
+  undo: (id: string | undefined, steps?: number) => invoke<UndoResult>('pixel:undo', id, steps),
+  redo: (id: string | undefined, steps?: number) => invoke<UndoResult>('pixel:redo', id, steps),
+  history: (id: string | undefined, limit?: number) =>
+    invoke<HistoryEntry[]>('pixel:history', id, limit),
+  openFile: () => invoke<DocumentDetail | null>('pixel:open-file'),
+  saveFile: (id?: string) => invoke<{ path: string } | null>('pixel:save-file', id),
+  saveFileAs: (id?: string) => invoke<{ path: string } | null>('pixel:save-file-as', id),
   exportPng: (id: string | undefined, options: Record<string, unknown>) =>
-    invoke('pixel:export-png', id, options),
+    invoke<ExportResult | null>('pixel:export-png', id, options),
   exportSheet: (id: string | undefined, options: Record<string, unknown>) =>
-    invoke('pixel:export-sheet', id, options),
+    invoke<ExportResult | null>('pixel:export-sheet', id, options),
   exportGif: (id: string | undefined, options: Record<string, unknown>) =>
-    invoke('pixel:export-gif', id, options),
+    invoke<ExportResult | null>('pixel:export-gif', id, options),
   exportTiled: (id: string | undefined, options: Record<string, unknown>) =>
-    invoke('pixel:export-tiled', id, options),
-  tilesetInfo: (id: string | undefined) => invoke('pixel:tileset-info', id),
+    invoke<ExportResult | null>('pixel:export-tiled', id, options),
+  tilesetInfo: (id: string | undefined) => invoke<TilesetInfo | null>('pixel:tileset-info', id),
   tilemapData: (id: string | undefined, tilemap: string | number) =>
-    invoke('pixel:tilemap-data', id, tilemap),
+    invoke<TilemapInfo | null>('pixel:tilemap-data', id, tilemap),
   animationSequence: (id: string | undefined, tag?: string | number) =>
-    invoke('pixel:animation-sequence', id, tag),
-  importImage: () => invoke('pixel:import-image'),
-  mcpStatus: () => invoke('pixel:mcp-status'),
-  setLocale: (locale: 'en' | 'zh-CN') => {
-    // Both the native application menu and the file-dialog locale subscribe to
-    // this broadcast. It is intentionally a fire-and-forget renderer call.
+    invoke<AnimationSequenceInfo>('pixel:animation-sequence', id, tag),
+  importImage: () => invoke<DocumentDetail | null>('pixel:import-image'),
+  mcpStatus: () => invoke<McpStatus>('pixel:mcp-status'),
+  setLocale: (locale: AppLocale) => {
+    // The native file dialogs subscribe to this broadcast so their titles and
+    // button labels follow the UI. Intentionally fire-and-forget.
     ipcRenderer.send('pixel:set-locale', locale);
     return Promise.resolve();
   },
+  /** Drive the frameless window's own title-bar buttons. */
+  windowCommand: (action: 'minimize' | 'maximize' | 'unmaximize' | 'close') =>
+    invoke<void>('pixel:window-command', action),
 
   /** Subscribe to document changes, including edits made by an agent. */
-  onChanged: (handler: (payload: unknown) => void) => {
-    const listener = (_event: unknown, payload: unknown) => handler(payload);
+  onChanged: (handler: (payload: ChangedPayload) => void) => {
+    const listener = (_event: unknown, payload: ChangedPayload) => handler(payload);
     ipcRenderer.on('pixel:changed', listener);
     return () => ipcRenderer.removeListener('pixel:changed', listener);
   },
-  /** Subscribe to menu accelerators forwarded from the main process. */
-  onMenu: (handler: (action: string) => void) => {
+  /**
+   * Subscribe to the accelerators the main process owns. There is no
+   * application menu left to route them, so they arrive here directly.
+   */
+  onCommand: (handler: (action: string) => void) => {
     const listener = (_event: unknown, action: string) => handler(action);
-    ipcRenderer.on('pixel:menu', listener);
-    return () => ipcRenderer.removeListener('pixel:menu', listener);
+    ipcRenderer.on('pixel:command', listener);
+    return () => ipcRenderer.removeListener('pixel:command', listener);
+  },
+  /** Subscribe to maximize/restore so the window-button glyph stays honest. */
+  onWindowState: (handler: (state: { maximized: boolean }) => void) => {
+    const listener = (_event: unknown, state: { maximized: boolean }) => handler(state);
+    ipcRenderer.on('pixel:window-state', listener);
+    return () => ipcRenderer.removeListener('pixel:window-state', listener);
   },
 };
 
-contextBridge.exposeInMainWorld('pixel', api);
+const typed: PixelApi = api;
+contextBridge.exposeInMainWorld('pixel', typed);

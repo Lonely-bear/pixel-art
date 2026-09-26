@@ -22,7 +22,7 @@ import {
   toAsepriteJson,
   toTiledJson,
 } from '@pixel/core';
-import { CHANNELS, type AppLocale, type DocumentSummary, type PreviewRequest } from '../shared/types.js';
+import { CHANNELS, isAppLocale, type AppLocale, type DocumentSummary, type PreviewRequest } from '../shared/types.js';
 import {
   describeDocument,
   execute,
@@ -30,6 +30,7 @@ import {
   redo,
   renderBuffer,
   renderPreview,
+  setSelection,
   store,
   undo,
 } from './host.js';
@@ -44,18 +45,33 @@ function summaries(): DocumentSummary[] {
 }
 
 let appLocale: AppLocale = 'en';
-const dialogText = {
+const dialogText: Record<AppLocale, Record<string, string>> = {
   en: {
     open: 'Open sprite', save: 'Save sprite', saveAs: 'Save sprite as',
     png: 'Export PNG', sheet: 'Export spritesheet', gif: 'Export GIF',
     tiled: 'Export Tiled map', importImage: 'Import image',
+  },
+  ja: {
+    open: 'スプライトを開く', save: 'スプライトを保存', saveAs: 'スプライトを名前を付けて保存',
+    png: 'PNG を書き出し', sheet: 'スプライトシートを書き出し', gif: 'GIF を書き出し',
+    tiled: 'Tiled マップを書き出し', importImage: '画像をインポート',
+  },
+  ko: {
+    open: '스프라이트 열기', save: '스프라이트 저장', saveAs: '스프라이트 다른 이름으로 저장',
+    png: 'PNG 내보내기', sheet: '스프라이트 시트 내보내기', gif: 'GIF 내보내기',
+    tiled: 'Tiled 맵 내보내기', importImage: '이미지 가져오기',
   },
   'zh-CN': {
     open: '打开角色文件', save: '保存角色', saveAs: '角色另存为',
     png: '导出 PNG', sheet: '导出精灵图', gif: '导出 GIF',
     tiled: '导出 Tiled 地图', importImage: '导入图片',
   },
-} as const;
+  'zh-TW': {
+    open: '開啟角色檔案', save: '儲存角色', saveAs: '角色另存新檔',
+    png: '匯出 PNG', sheet: '匯出精靈圖', gif: '匯出 GIF',
+    tiled: '匯出 Tiled 地圖', importImage: '匯入圖片',
+  },
+};
 const text = () => dialogText[appLocale];
 
 /**
@@ -92,7 +108,7 @@ export function registerIpc(getMcpStatus: () => unknown): void {
   store.onChange(broadcast);
 
   ipcMain.on(CHANNELS.setLocale, (_event, locale: AppLocale) => {
-    if (locale === 'en' || locale === 'zh-CN') appLocale = locale;
+    if (isAppLocale(locale)) appLocale = locale;
   });
   ipcMain.handle(CHANNELS.listDocuments, () => summaries());
 
@@ -120,6 +136,25 @@ export function registerIpc(getMcpStatus: () => unknown): void {
 
   ipcMain.handle(CHANNELS.documentDetail, (_event, id?: string) =>
     describeDocument(store.require(id)),
+  );
+
+  /**
+   * The canvas box, shared with the agent.
+   *
+   * Not a command, so it costs no undo step and does not dirty the document: it is
+   * where the user said the subject is, not an edit to the artwork. `announce()`
+   * inside the store is what repaints the canvas mask and what an agent's own
+   * `set_selection` relies on to reach the window.
+   */
+  ipcMain.handle(
+    CHANNELS.selection,
+    (
+      _event,
+      id: string | undefined,
+      rect: { x: number; y: number; w: number; h: number } | null,
+      mode?: 'hint' | 'enforce',
+      scope?: { layerId?: string; frameId?: string },
+    ) => setSelection(store.require(id), rect ?? null, mode, scope),
   );
 
   ipcMain.handle(CHANNELS.preview, (_event, id: string | undefined, request: PreviewRequest) =>

@@ -4,6 +4,13 @@ import { colorsEqual, rgbaToCss, rgbaToHex, toColor } from '../color-utils.js';
 import { useI18n } from '../i18n.js';
 import { Icon } from './Icon.js';
 
+/**
+ * The palette grid plus a hex field.
+ *
+ * The grid is `repeat(8, 1fr)`, so it is the one part of the sidebar that
+ * genuinely flexes: eight columns fit 300px, 272px and 240px alike, and the
+ * swatches simply get smaller.
+ */
 export function PalettePanel(): React.ReactNode {
   const editor = useEditor();
   const detail = editor.detail;
@@ -14,35 +21,7 @@ export function PalettePanel(): React.ReactNode {
   const colors = detail.palette.colors;
 
   return (
-    <section className="panel palette-panel">
-      <header className="panel-header">
-        <div className="panel-title">
-          <span className="panel-title-icon"><Icon name="fill" size={15} /></span>
-          <h2>{t('palette.title')}</h2>
-          <span className="count-badge">{colors.length}</span>
-        </div>
-        <div className="panel-actions">
-          <button
-            type="button"
-            className="panel-icon-button"
-            title={t('palette.add')}
-            aria-label={t('palette.add')}
-            onClick={() => void editor.execute('add_palette_color', { color: rgbaToHex(editor.primary) })}
-          >
-            <Icon name="plus" size={16} />
-          </button>
-          <button
-            type="button"
-            className="quantize-button"
-            title={t('palette.quantizeHint')}
-            onClick={() => void editor.execute('quantize_to_palette', { dither: 'none' })}
-          >
-            <Icon name="magic" size={14} />
-            <span>{t('palette.quantize')}</span>
-          </button>
-        </div>
-      </header>
-
+    <>
       <div className="swatch-grid" title={t('palette.help')}>
         {colors.map((color, index) => {
           const isPrimary = colorsEqual(color, editor.primary);
@@ -51,10 +30,13 @@ export function PalettePanel(): React.ReactNode {
             <button
               key={`${index}-${rgbaToHex(color)}`}
               type="button"
-              className={`palette-swatch${isPrimary ? ' primary' : ''}${isSecondary ? ' secondary' : ''}`}
+              className={`palette-swatch${isPrimary ? ' is-primary' : ''}${
+                isSecondary ? ' is-secondary' : ''
+              }`}
               style={{ background: rgbaToCss(color) }}
-              title={`${rgbaToHex(color)} — ${t('palette.help')}`}
+              title={rgbaToHex(color)}
               aria-label={rgbaToHex(color)}
+              aria-pressed={isPrimary}
               onClick={() => editor.setPrimary(color)}
               onContextMenu={(event) => {
                 event.preventDefault();
@@ -67,14 +49,15 @@ export function PalettePanel(): React.ReactNode {
       </div>
 
       <form
-        className="palette-form"
+        className="hex-row"
         onSubmit={(event) => {
           event.preventDefault();
           void editor.execute('add_palette_color', { color: toColor(hex) });
         }}
       >
-        <label className="hex-input">
-          <span>#</span>
+        <span className="hex-chip" style={{ background: rgbaToCss(editor.primary) }} />
+        <label className="hex-field">
+          <span className="muted">#</span>
           <input
             value={hex}
             onChange={(event) => setHex(event.target.value)}
@@ -82,62 +65,39 @@ export function PalettePanel(): React.ReactNode {
             aria-label={t('palette.addColor')}
           />
         </label>
-        <button type="submit" title={t('palette.addColor')}>
+        <button
+          type="submit"
+          className="icon-button"
+          title={t('palette.addColor')}
+          aria-label={t('palette.addColor')}
+        >
           <Icon name="plus" size={14} />
-          {t('palette.addColor')}
         </button>
       </form>
-      <p className="panel-help">{t('palette.help')}</p>
-    </section>
+
+      <p className="hint">{t('palette.help')}</p>
+    </>
   );
 }
 
+/** The undo stack, newest first. Read-only: the buttons live in the header. */
 export function HistoryPanel(): React.ReactNode {
   const editor = useEditor();
   const { t, commandLabel } = useI18n();
   const entries = editor.historyEntries;
 
+  if (entries.length === 0) {
+    return <p className="hint">{t('history.empty')}</p>;
+  }
+
   return (
-    <section className="panel history-panel">
-      <header className="panel-header">
-        <div className="panel-title">
-          <span className="panel-title-icon"><Icon name="undo" size={15} /></span>
-          <h2>{t('history.title')}</h2>
-          <span className="count-badge">{entries.length}</span>
-        </div>
-        <div className="panel-actions">
-          <button
-            type="button"
-            className="panel-icon-button"
-            title={t('history.undo')}
-            aria-label={t('history.undo')}
-            onClick={() => void editor.undo()}
-          >
-            <Icon name="undo" size={15} />
-          </button>
-          <button
-            type="button"
-            className="panel-icon-button"
-            title={t('history.redo')}
-            aria-label={t('history.redo')}
-            onClick={() => void editor.redo()}
-          >
-            <Icon name="redo" size={15} />
-          </button>
-        </div>
-      </header>
-      <ul className="history-list">
-        {entries.map((entry, index) => (
-          <li key={`${entry.command}-${index}`}>
-            <span className="history-dot" />
-            <div>
-              <strong>{commandLabel(entry.command)}</strong>
-              <span className="muted">{entry.label}</span>
-            </div>
-          </li>
-        ))}
-        {entries.length === 0 && <li className="empty-history"><span>{t('history.empty')}</span></li>}
-      </ul>
-    </section>
+    <ul className="history-list">
+      {entries.map((entry, index) => (
+        <li key={`${entry.command}-${index}`} className="history-row">
+          <span className="history-dot" aria-hidden="true" />
+          <span title={entry.label}>{commandLabel(entry.command)}</span>
+        </li>
+      ))}
+    </ul>
   );
 }

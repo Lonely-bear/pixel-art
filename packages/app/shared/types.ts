@@ -7,7 +7,17 @@
  * The main process is the only writer; the renderer only ever reads.
  */
 
-export type AppLocale = 'en' | 'zh-CN';
+/**
+ * The five locales the UI ships with. The order matches the language menu, and
+ * `LocaleMeta` in the renderer keeps the display names next to these codes.
+ */
+export const APP_LOCALES = ['en', 'ja', 'ko', 'zh-CN', 'zh-TW'] as const;
+
+export type AppLocale = (typeof APP_LOCALES)[number];
+
+export function isAppLocale(value: unknown): value is AppLocale {
+  return typeof value === 'string' && (APP_LOCALES as readonly string[]).includes(value);
+}
 
 export type ToolId =
   | 'pencil'
@@ -18,7 +28,36 @@ export type ToolId =
   | 'fill'
   | 'replace'
   | 'eyedropper'
+  | 'select'
   | 'pan';
+
+/** A canvas-pixel rectangle, 0-based, y growing downward. */
+export interface PixelRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * The region the user has boxed on the canvas.
+ *
+ * Mirrors `SelectionState` in `@pixel/mcp`, which is where it actually lives: the
+ * window draws it and the agent reads it, and both go through the one shared
+ * `DocumentStore`. It is session state, so it never reaches the `.pixel` file.
+ */
+export interface SelectionState {
+  rect: PixelRect;
+  layerId?: string;
+  frameId?: string;
+  /**
+   * `hint` tells the agent where the subject is; `enforce` also confines its writes.
+   * The UI defaults to `hint` because a hard clip would cut off an edit like
+   * "make the head in this box bigger".
+   */
+  mode: 'hint' | 'enforce';
+  updatedAt: number;
+}
 
 export interface Rgba {
   r: number;
@@ -80,6 +119,8 @@ export interface DocumentDetail extends DocumentSummary {
   durationMs: number;
   hasTileset: boolean;
   tilemaps: string[];
+  /** The user's current box, if any. Session state; never persisted. */
+  selection?: SelectionState;
 }
 
 export interface PreviewRequest {
@@ -135,6 +176,8 @@ export const CHANNELS = {
   createDocument: 'pixel:create-document',
   closeDocument: 'pixel:close-document',
   documentDetail: 'pixel:document-detail',
+  /** Box a region on the canvas, or clear the box. */
+  selection: 'pixel:selection',
   preview: 'pixel:preview',
   execute: 'pixel:execute',
   applyOps: 'pixel:apply-ops',
@@ -156,6 +199,15 @@ export const CHANNELS = {
   setLocale: 'pixel:set-locale',
   status: 'pixel:status',
   changed: 'pixel:changed',
+  /** Frameless-window buttons: minimize / maximize / unmaximize / close. */
+  windowCommand: 'pixel:window-command',
+  /** Pushed whenever the window is maximized or restored. */
+  windowState: 'pixel:window-state',
+  /**
+   * Accelerators the main process owns now that there is no application menu to
+   * host them. Same idea as the old `pixel:menu`, without the menu.
+   */
+  command: 'pixel:command',
 } as const;
 
 export interface ChangedPayload {
@@ -233,6 +285,16 @@ export interface PixelApi {
   createDocument(options: Record<string, unknown>): Promise<DocumentDetail>;
   closeDocument(id: string): Promise<DocumentSummary[]>;
   documentDetail(id?: string): Promise<DocumentDetail>;
+  /**
+   * Box a region for the agent, or clear it. Pass `null` for `rect` to clear.
+   * Returns the stored selection, or `null` when there is none.
+   */
+  setSelection(
+    id: string | undefined,
+    rect: PixelRect | null,
+    mode?: SelectionState['mode'],
+    scope?: { layerId?: string; frameId?: string },
+  ): Promise<SelectionState | null>;
   preview(id: string | undefined, request: PreviewRequest): Promise<PreviewResult>;
   execute(
     id: string | undefined,
@@ -256,7 +318,11 @@ export interface PixelApi {
   importImage(): Promise<DocumentDetail | null>;
   mcpStatus(): Promise<McpStatus>;
   setLocale(locale: AppLocale): Promise<void>;
+  /** Drive the frameless window's own buttons. */
+  windowCommand(action: 'minimize' | 'maximize' | 'unmaximize' | 'close'): Promise<void>;
   onChanged(handler: (payload: ChangedPayload) => void): () => void;
-  onMenu(handler: (action: string) => void): () => void;
+  /** Accelerators forwarded from the main process, since no menu owns them. */
+  onCommand(handler: (action: string) => void): () => void;
+  onWindowState(handler: (state: { maximized: boolean }) => void): () => void;
 }
 

@@ -22,6 +22,7 @@ import type {
   HistoryEntry,
   PreviewRequest,
   PreviewResult,
+  SelectionState,
 } from '../shared/types.js';
 
 export const store = new DocumentStore();
@@ -56,7 +57,29 @@ export function describeDocument(doc: PixelDocument): DocumentDetail {
     durationMs: spriteDurationMs(sprite),
     hasTileset: Boolean(sprite.tileset),
     tilemaps: (sprite.tilemaps ?? []).map((tilemap) => tilemap.id),
+    selection: store.selection(doc) as SelectionState | undefined,
   };
+}
+
+/**
+ * Record or clear the user's box.
+ *
+ * The window is the usual writer, but the agent can set one too through
+ * `set_selection`, so this is the single funnel both go through. Returns what the
+ * store actually kept, which may differ from what was asked for: a rect that misses
+ * the canvas entirely clears the selection instead of storing an empty region.
+ */
+export function setSelection(
+  doc: PixelDocument,
+  rect: { x: number; y: number; w: number; h: number } | null,
+  mode?: SelectionState['mode'],
+  scope?: { layerId?: string; frameId?: string },
+): SelectionState | null {
+  const selection = store.setSelection(
+    doc,
+    rect === null ? null : { rect, mode, layerId: scope?.layerId, frameId: scope?.frameId },
+  );
+  return (selection as SelectionState | undefined) ?? null;
 }
 
 /**

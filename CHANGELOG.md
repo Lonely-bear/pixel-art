@@ -23,6 +23,27 @@ All notable changes to dotloom-mcp are documented in this file.
   never reaches the `.pixel` file. A click with the select tool clears it, and a box whose
   layer or frame has since been deleted is dropped on read rather than handed to an agent
   that would edit the wrong pixels. Together these take the advertised tool list to 35.
+- **Settings, in a dialog that behaves like one.** The gear in the title bar, or `Ctrl+,`,
+  opens a sheet with a menu down the left and the selected section on the right: Appearance,
+  Language, Shortcuts, About. Changes are staged and written on Save, so Cancel genuinely
+  cancels and the Save button stays disabled until something has actually changed; the sheet
+  fades and rises into place rather than appearing, and honours `prefers-reduced-motion`.
+  The language picker that used to sit in the title bar is gone, so there is one place that
+  owns the locale instead of two that could disagree.
+- **The interface speaks five languages.** English, 日本語, 한국어, 简体中文 and 繁體中文 ship
+  in the binary — nothing is fetched at runtime, and there is no webfont to download. The
+  first launch matches the OS, and `matchLocale` resolves a tag like `zh-Hant-HK` to
+  Traditional Chinese rather than falling through to English. `en` is the source of truth and
+  every other dictionary is typed against it, so a missing or misspelled key is a build
+  error rather than a blank label at runtime.
+- **Appearance is the user's to set.** The theme is **System** (the default), Dark or Light;
+  System follows the OS as it changes, and only stops doing so once a choice is recorded, so a
+  machine that switches to light at dusk does not have to be told. The interface font is one
+  of five stacks the operating system already has — or any family typed in by hand. Text size
+  is five fixed steps, **12 / 14 / 16 / 18 / 22 px**, defaulting to **14**: a free slider let
+  people land on 13.7px, which is neither readable nor predictable, and the sizes the layout is
+  actually checked at are the ones worth offering. The canvas stays light in both themes,
+  because artwork colours must not shift with the chrome around them.
 
 ### Changed
 
@@ -63,6 +84,45 @@ All notable changes to dotloom-mcp are documented in this file.
   adjacency and runs, connected terrain, singleton cells, open edges), and `export_tiled` still
   refuses to write a map whose indices or cell size are malformed. Only the reporting wrapper
   around them went away.
+- **The native menu bar and the OS title bar.** `frame: false` with
+  `Menu.setApplicationMenu(null)`, and the renderer draws its own 40px title bar instead: drag
+  region, double-click to maximise, and minimise / maximise / close. The menu's accelerators
+  were not dropped with it — with no application menu there is nothing for Electron to route a
+  chord to, so each window claims its own through `before-input-event` and forwards the intent
+  over IPC. `TopBar`, `Toolbar` and `FramesPanel` are deleted.
+- **The layout was rebuilt around the canvas.** A tool rail down the left and a title bar
+  across the top replace the old top bar and toolbar, and the sidebar became six collapsible
+  sections — Layers, Palette, Brush, Animation tags, Tilemap, History. Clip, dither and alpha
+  moved out of the tool rail into Brush, and playback settings out of the timeline into
+  Animation tags, because a rail nine buttons deep was carrying settings that needed a label
+  and an explanation. Blend mode and opacity now describe only the *selected* layer rather than
+  repeating three times per row. The timeline dock is a frame strip and a transport instead of
+  three stacked rows. Each view keeps a single accent-filled control, so the Export button is
+  the only thing that shouts.
+- **It is hand-drawn, and it holds together from 900px to 1440px and beyond.** All 63 icons
+  are SVG paths written for this app on a 24x24 grid — no icon library. The rail narrows from
+  52px to 48px, the sidebar steps 300 / 272 / 240 / 232 and then auto-collapses on crossing
+  1080px, and chrome that would overflow is dropped rather than allowed to wrap. The colour
+  scheme is the opencode client's: `#fab283` on warm neutral greys, with blue, purple, green
+  and red reserved for meaning rather than decoration.
+
+### Fixed
+
+- **The canvas stopped fitting when the window changed size.** It only ever fitted once per
+  document, so shrinking the window left the artboard cropped and the user had to reload the
+  file to get it back. It now re-fits on resize — until you zoom or pan yourself, at which
+  point your framing is left alone.
+- **`Ctrl+Shift+Z` undid instead of redoing, and `Ctrl+Z` undid twice.** The main process
+  looked up the chord in a table that had no entry for Shift, so `Ctrl+Shift+Z` forwarded
+  `undo`; and because the renderer *also* handled the chord in its own keydown listener, a
+  single `Ctrl+Z` popped two steps off the history. Shift now selects a separate table, and
+  the chords have one owner: the main process.
+- **The settings dialog's font and text-size controls could not be operated at all.** The
+  backdrop called `preventDefault()` on every press inside the sheet — `mousedown` bubbles, and
+  only `click` was stopped — which suppressed exactly the default action each control needs:
+  the select never opened, the slider could not be dragged, and text fields never took focus.
+  Buttons were unaffected, which is why it read as working. The press origin is tracked
+  instead, so a drag that ends on the backdrop still does not dismiss the dialog.
 
 ## [0.3.2] - 2026-09-26
 

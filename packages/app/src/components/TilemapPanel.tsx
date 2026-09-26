@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useEditor } from '../editor-context.js';
+import { useResolvedTheme } from '../prefs.js';
 import { useI18n } from '../i18n.js';
 import { Icon } from './Icon.js';
 
@@ -7,10 +8,15 @@ import { Icon } from './Icon.js';
 const PREVIEW_SCALE = 3;
 const GRID_SCALE = 8;
 
+/**
+ * Tileset authoring: cut a tile sheet out of a layer, then paint a grid with it.
+ * Both canvases draw from the same sheet, so what you see is what gets baked.
+ */
 export function TilemapPanel(): React.ReactNode {
   const editor = useEditor();
   const detail = editor.detail;
   const { t } = useI18n();
+  const theme = useResolvedTheme();
   const { tilesetInfo, tilemapData, tilemapRef, activeTile } = editor;
 
   const previewRef = useRef<HTMLCanvasElement | null>(null);
@@ -20,6 +26,16 @@ export function TilemapPanel(): React.ReactNode {
   const [imageReady, setImageReady] = useState(0);
   const [autoSet, setAutoSet] = useState<16 | 47>(47);
   const [autoOffset, setAutoOffset] = useState(0);
+
+  // Selection ring colour comes from the theme; the bump on `imageReady` below
+  // is what makes the preview redraw once it has been read.
+  const accentRef = useRef('#fab283');
+  const [accentVersion, setAccentVersion] = useState(0);
+  useEffect(() => {
+    accentRef.current =
+      getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#fab283';
+    setAccentVersion((n) => n + 1);
+  }, [theme]);
 
   // The tileset arrives as a PNG so the renderer can draw it without knowing
   // anything about the core's buffer layout.
@@ -42,7 +58,7 @@ export function TilemapPanel(): React.ReactNode {
     return () => URL.revokeObjectURL(url);
   }, [tilesetInfo]);
 
-  // Tileset preview: the sheet, a grid over it, and the tile you are painting with.
+  // Tileset preview: the sheet, a grid over it, and the tile being painted with.
   useEffect(() => {
     const canvas = previewRef.current;
     if (!canvas || !tilesetInfo) return;
@@ -57,7 +73,7 @@ export function TilemapPanel(): React.ReactNode {
     const image = imageRef.current;
     if (image) context.drawImage(image, 0, 0, canvas.width, canvas.height);
 
-    context.strokeStyle = 'rgba(47, 52, 77, 0.18)';
+    context.strokeStyle = 'rgba(10, 11, 12, 0.18)';
     context.lineWidth = 1;
     for (let x = 0; x <= tilesetInfo.columns; x += 1) {
       context.beginPath();
@@ -75,13 +91,15 @@ export function TilemapPanel(): React.ReactNode {
     const column = activeTile % tilesetInfo.columns;
     const row = Math.floor(activeTile / tilesetInfo.columns);
     if (row < tilesetInfo.rows) {
-      context.strokeStyle = '#6366f1';
+      // The tileset itself is always light, so its grid stays dark in both
+      // themes; only the selection ring follows the accent.
+      context.strokeStyle = accentRef.current;
       context.lineWidth = 2;
       context.strokeRect(column * tileWidth + 1, row * tileHeight + 1, tileWidth - 2, tileHeight - 2);
     }
-  }, [tilesetInfo, activeTile, imageReady]);
+  }, [tilesetInfo, activeTile, imageReady, accentVersion]);
 
-  // The tilemap itself, drawn from the sheet so what you see is what gets baked.
+  // The tilemap itself, drawn from the sheet.
   useEffect(() => {
     const canvas = gridRef.current;
     if (!canvas || !tilemapData || !tilesetInfo) return;
@@ -113,7 +131,7 @@ export function TilemapPanel(): React.ReactNode {
         }
       }
     }
-    context.strokeStyle = 'rgba(47, 52, 77, 0.16)';
+    context.strokeStyle = 'rgba(10, 11, 12, 0.16)';
     context.lineWidth = 1;
     for (let x = 0; x <= tilemapData.width; x += 1) {
       context.beginPath();
@@ -133,35 +151,29 @@ export function TilemapPanel(): React.ReactNode {
 
   if (!detail.hasTileset || !tilesetInfo) {
     return (
-      <section className="panel tilemap-panel empty-panel">
-        <header className="panel-header">
-          <div className="panel-title">
-            <span className="panel-title-icon"><Icon name="map" size={15} /></span>
-            <h2>{t('tilemap.title')}</h2>
-          </div>
-        </header>
-        <div className="empty-state">
-          <span className="empty-state-icon"><Icon name="grid" size={23} /></span>
-          <strong>{t('tilemap.noTileset')}</strong>
-          <p>{t('tilemap.noTilesetHelp')}</p>
-          <button
-            type="button"
-            className="secondary-button full-width"
-            disabled={!editor.layerId}
-            onClick={() =>
-              void editor.execute('create_tileset', {
-                layer: editor.layerId,
-                frame: editor.frameId,
-                tileWidth: 16,
-                tileHeight: 16,
-              })
-            }
-          >
-            <Icon name="grid" size={15} />
-            {t('tilemap.create')}
-          </button>
-        </div>
-      </section>
+      <div className="empty-state">
+        <span className="empty-state-icon">
+          <Icon name="grid" size={20} />
+        </span>
+        <b>{t('tilemap.noTileset')}</b>
+        <p>{t('tilemap.noTilesetHelp')}</p>
+        <button
+          type="button"
+          className="text-button is-block"
+          disabled={!editor.layerId}
+          onClick={() =>
+            void editor.execute('create_tileset', {
+              layer: editor.layerId,
+              frame: editor.frameId,
+              tileWidth: 16,
+              tileHeight: 16,
+            })
+          }
+        >
+          <Icon name="grid" size={14} />
+          {t('tilemap.create')}
+        </button>
+      </div>
     );
   }
 
@@ -188,73 +200,15 @@ export function TilemapPanel(): React.ReactNode {
   };
 
   return (
-    <section className="panel tilemap-panel">
-      <header className="panel-header">
-        <div className="panel-title">
-          <span className="panel-title-icon"><Icon name="map" size={15} /></span>
-          <h2>{t('tilemap.title')}</h2>
-        </div>
-        <div className="panel-actions">
-          <button
-            type="button"
-            className="panel-icon-button"
-            title={t('tilemap.add')}
-            aria-label={t('tilemap.add')}
-            onClick={() =>
-              void editor.execute('add_tilemap', {
-                width: 16,
-                height: 12,
-                tileWidth: tilesetInfo.tileWidth,
-                tileHeight: tilesetInfo.tileHeight,
-              })
-            }
-          >
-            <Icon name="plus" size={16} />
-          </button>
-          <button
-            type="button"
-            className="panel-icon-button danger"
-            title={t('tilemap.remove')}
-            aria-label={t('tilemap.remove')}
-            disabled={!tilemapRef}
-            onClick={() => void editor.execute('remove_tilemap', { tilemap: tilemapRef ?? 0 })}
-          >
-            <Icon name="trash" size={15} />
-          </button>
-          <button
-            type="button"
-            className="bake-button"
-            title={t('tilemap.bakeHint')}
-            disabled={!tilemapRef || !editor.layerId}
-            onClick={() =>
-              void editor.execute('paint_tilemap', {
-                tilemap: tilemapRef ?? 0,
-                layer: editor.layerId,
-                frame: editor.frameId,
-              })
-            }
-          >
-            <Icon name="image" size={14} />
-            {t('tilemap.bake')}
-          </button>
-          <button
-            type="button"
-            className="bake-button"
-            title={t('top.exportTiled')}
-            onClick={() => void editor.exportTiled()}
-          >
-            <Icon name="export" size={14} />
-            Tiled
-          </button>
-        </div>
-      </header>
-
-      <label className="field full-width-field">
+    <>
+      <div className="field-row">
         <span>{t('tilemap.map')}</span>
+        <span className="spacer" />
         <select
-          className="doc-select"
+          className="select"
           value={tilemapRef ?? ''}
           title={t('tilemap.map')}
+          aria-label={t('tilemap.map')}
           onChange={(event) => editor.setTilemapRef(event.target.value || null)}
         >
           <option value="">{t('tilemap.none')}</option>
@@ -264,12 +218,14 @@ export function TilemapPanel(): React.ReactNode {
             </option>
           ))}
         </select>
-      </label>
+      </div>
 
-      <div className="tileset-card">
-        <div className="canvas-card-heading">
+      <div className="tile-card">
+        <div className="tile-head">
           <span>{t('tilemap.title')}</span>
-          <span className="muted">{tilesetInfo.columns}×{tilesetInfo.rows}</span>
+          <span className="muted mono">
+            {tilesetInfo.columns}×{tilesetInfo.rows}
+          </span>
         </div>
         <canvas
           ref={previewRef}
@@ -278,7 +234,7 @@ export function TilemapPanel(): React.ReactNode {
           title={t('tilemap.pickTile')}
           aria-label={t('tilemap.pickTile')}
         />
-        <p className="panel-help">
+        <p className="hint">
           {t('tilemap.activeTile', {
             index: activeTile,
             columns: tilesetInfo.columns,
@@ -288,10 +244,12 @@ export function TilemapPanel(): React.ReactNode {
       </div>
 
       {tilemapData ? (
-        <div className="tileset-card map-card">
-          <div className="canvas-card-heading">
+        <div className="tile-card">
+          <div className="tile-head">
             <span>{t('tilemap.map')}</span>
-            <span className="muted">{tilemapData.width}×{tilemapData.height}</span>
+            <span className="muted mono">
+              {tilemapData.width}×{tilemapData.height}
+            </span>
           </div>
           <canvas
             ref={gridRef}
@@ -315,43 +273,84 @@ export function TilemapPanel(): React.ReactNode {
           />
         </div>
       ) : (
-        <p className="empty-note map-empty">{t('tilemap.chooseMap')}</p>
+        <p className="hint">{t('tilemap.chooseMap')}</p>
       )}
 
-      <div className="tilemap-options">
-        <label className="field">
-          <span>{t('tilemap.set')}</span>
-          <select
-            className="doc-select"
-            value={autoSet}
-            onChange={(event) => setAutoSet(Number(event.target.value) === 16 ? 16 : 47)}
-          >
-            <option value={47}>47</option>
-            <option value={16}>16</option>
-          </select>
-        </label>
-        <label className="field">
-          <span>{t('tilemap.offset')}</span>
-          <input
-            type="number"
-            min={0}
-            value={autoOffset}
-            onChange={(event) => setAutoOffset(Math.max(0, Number(event.target.value) || 0))}
-          />
-        </label>
+      <div className="field-row">
+        <span>{t('tilemap.set')}</span>
+        <span className="spacer" />
+        <select
+          className="select"
+          style={{ width: 64, flex: '0 0 auto' }}
+          value={autoSet}
+          aria-label={t('tilemap.set')}
+          onChange={(event) => setAutoSet(Number(event.target.value) === 16 ? 16 : 47)}
+        >
+          <option value={47}>47</option>
+          <option value={16}>16</option>
+        </select>
+        <input
+          className="input mono"
+          type="number"
+          min={0}
+          style={{ width: 60, flex: '0 0 auto' }}
+          value={autoOffset}
+          aria-label={t('tilemap.offset')}
+          onChange={(event) => setAutoOffset(Math.max(0, Number(event.target.value) || 0))}
+        />
         <button
           type="button"
-          className="secondary-button autotile-button"
+          className="text-button"
           title={t('tilemap.autotileHint')}
           disabled={!tilemapRef}
           onClick={() =>
             void editor.execute('autotile', { tilemap: tilemapRef ?? 0, set: autoSet, offset: autoOffset })
           }
         >
-          <Icon name="magic" size={14} />
+          <Icon name="sparkle" size={13} />
           {t('tilemap.autotile')}
         </button>
       </div>
-    </section>
+
+      <div className="field-row">
+        <button
+          type="button"
+          className="text-button"
+          style={{ flex: 1 }}
+          title={t('tilemap.bakeHint')}
+          disabled={!tilemapRef || !editor.layerId}
+          onClick={() =>
+            void editor.execute('paint_tilemap', {
+              tilemap: tilemapRef ?? 0,
+              layer: editor.layerId,
+              frame: editor.frameId,
+            })
+          }
+        >
+          <Icon name="image" size={13} />
+          {t('tilemap.bake')}
+        </button>
+        <button
+          type="button"
+          className="text-button"
+          style={{ flex: 1 }}
+          title={t('top.exportTiled')}
+          onClick={() => void editor.exportTiled()}
+        >
+          <Icon name="export" size={13} />
+          Tiled
+        </button>
+        <button
+          type="button"
+          className="icon-button is-danger"
+          title={t('tilemap.remove')}
+          aria-label={t('tilemap.remove')}
+          disabled={!tilemapRef}
+          onClick={() => void editor.execute('remove_tilemap', { tilemap: tilemapRef ?? 0 })}
+        >
+          <Icon name="trash" size={14} />
+        </button>
+      </div>
+    </>
   );
 }

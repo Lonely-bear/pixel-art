@@ -22,7 +22,9 @@ import type {
   ExecResult,
   AnimationSequenceInfo,
   HistoryEntry,
+  PixelRect,
   Rgba as Color,
+  SelectionState,
   TilemapInfo,
   TilesetInfo,
   ToolId,
@@ -64,6 +66,22 @@ export interface EditorValue {
   cursor: { x: number; y: number } | null;
   setCursor(position: { x: number; y: number } | null): void;
   hoverColor: Color | null;
+
+  /**
+   * The region the user has boxed, shared with the agent.
+   *
+   * Not local state: it lives in the main process so `get_selection` reads the same
+   * object, and it comes back on every `documentDetail`, so an agent that sets a box
+   * with `set_selection` repaints the canvas mask here with no extra plumbing.
+   */
+  selection: SelectionState | null;
+  /** Box a region, or pass `null` to clear. Costs no undo step. */
+  selectRegion(
+    rect: PixelRect | null,
+    options?: { mode?: SelectionState['mode']; layerId?: string; frameId?: string },
+  ): Promise<void>;
+  setSelectionMode(mode: SelectionState['mode']): Promise<void>;
+  clearSelection(): Promise<void>;
 
   notice: Notice | null;
   setNotice(notice: Notice | null): void;
@@ -416,6 +434,49 @@ export function EditorProvider({ children }: { children: ReactNode }): ReactNode
     [refresh, refreshHistory, t, commandLabel],
   );
 
+  /**
+   * Box a region, or clear it with `null`.
+   *
+   * Goes to the main process rather than to local state, because that is where the
+   * agent reads it from. The mask on the canvas is not drawn from a local copy: the
+   * store echoes the change back through `refresh`, so a box the agent set with
+   * `set_selection` lights up here on its own, with no second code path.
+   */
+  const selectRegion = useCallback(
+    async (
+      rect: PixelRect | null,
+      options?: { mode?: SelectionState['mode']; layerId?: string; frameId?: string },
+    ) => {
+      try {
+        await api.setSelection(
+          activeIdRef.current,
+          rect,
+          options?.mode,
+          options?.layerId !== undefined || options?.frameId !== undefined
+            ? { layerId: options.layerId, frameId: options.frameId }
+            : undefined,
+        );
+        await refresh();
+      } catch (error) {
+        setNotice({ kind: 'error', text: describeError(error) });
+      }
+    },
+    [refresh],
+  );
+
+  const setSelectionMode = useCallback(
+    async (mode: SelectionState['mode']) => {
+      const current = detail?.selection;
+      if (!current) return;
+      await selectRegion(current.rect, { mode });
+    },
+    [detail?.selection, selectRegion],
+  );
+
+  const clearSelection = useCallback(async () => {
+    await selectRegion(null);
+  }, [selectRegion]);
+
   const undo = useCallback(async () => {
     await api.undo(activeIdRef.current, 1);
     await refresh({ thumbnails: true });
@@ -566,6 +627,10 @@ export function EditorProvider({ children }: { children: ReactNode }): ReactNode
     cursor,
     setCursor,
     hoverColor,
+    selection: detail?.selection ?? null,
+    selectRegion,
+    setSelectionMode,
+    clearSelection,
     notice,
     setNotice,
     execute,

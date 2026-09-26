@@ -8,3 +8,4 @@ coverage/
 Thumbs.db
 .vite/
 .vitest/
+smoke*

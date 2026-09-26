@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { PixelBuffer, type Point } from '@pixel/core';
 import { useEditor, sampleColor } from '../editor-context.js';
+import { useResolvedTheme } from '../prefs.js';
 import { ERASE_PREVIEW, drawShapePreview, opaquePoints, stampLine, stampPoint } from '../paint.js';
 import { rgbaToHex, rgbaToCss } from '../color-utils.js';
 import { useI18n } from '../i18n.js';
+import type { PixelRect } from '../../shared/types.js';
 import { Icon } from './Icon.js';
 
 interface Stroke {
@@ -14,12 +16,54 @@ interface Stroke {
   last: Point;
 }
 
+/** Everything the canvas draws that is not artwork, read from the theme. */
+interface CanvasInk {
+  checkerA: string;
+  checkerB: string;
+  grid: string;
+  gridStrong: string;
+  edge: string;
+  eraser: string;
+  /** Tint over the pixels the user has boxed. */
+  selectionFill: string;
+  /** Scrim over everything outside the box, so the box reads as the subject. */
+  selectionScrim: string;
+  selectionEdge: string;
+}
+
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 40;
+
+const FALLBACK_INK: CanvasInk = {
+  checkerA: '#f7f7f4',
+  checkerB: '#e8e9e5',
+  grid: 'rgba(10, 11, 12, 0.14)',
+  gridStrong: 'rgba(10, 11, 12, 0.24)',
+  edge: 'rgba(10, 11, 12, 0.36)',
+  eraser: 'rgba(250, 178, 131, 0.4)',
+  selectionFill: 'rgba(96, 150, 255, 0.22)',
+  selectionScrim: 'rgba(10, 11, 12, 0.42)',
+  selectionEdge: 'rgba(120, 170, 255, 0.95)',
+};
+
+/**
+ * The rect to draw, which is the live drag while a drag is running and the committed
+ * box otherwise. Returns null when there is nothing to show, so the canvas skips the
+ * whole scrim pass rather than tinting a zero-area rect.
+ */
+function boxOf(a: Point, b: Point): PixelRect {
+  return {
+    x: Math.min(a.x, b.x),
+    y: Math.min(a.y, b.y),
+    w: Math.abs(a.x - b.x),
+    h: Math.abs(a.y - b.y),
+  };
+}
 
 export function PixelCanvas(): React.ReactNode {
   const editor = useEditor();
   const { t } = useI18n();
+  const theme = useResolvedTheme();
   const {
     detail,
     bitmap,
@@ -36,6 +80,7 @@ export function PixelCanvas(): React.ReactNode {
     sequence,
     frameId,
     thumbnails,
+    selection,
   } = editor;
 
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -44,6 +89,9 @@ export function PixelCanvas(): React.ReactNode {
   const overlayRef = useRef<PixelBuffer | null>(null);
   const overlayDirty = useRef(true);
   const strokeRef = useRef<Stroke | null>(null);
+  // The box being dragged, kept local like `strokeRef` until the gesture ends. The
+  // committed box lives in the editor context, because the agent has to read it.
+  const marqueeRef = useRef<{ origin: Point; current: Point } | null>(null);
   const panRef = useRef({ x: 0, y: 0 });
   const [panning, setPanning] = useState(false);
   const [viewport, setViewport] = useState({ w: 0, h: 0 });
@@ -52,11 +100,41 @@ export function PixelCanvas(): React.ReactNode {
   // does not rebuild an image every repaint.
   const onionImages = useRef<Map<string, HTMLImageElement>>(new Map());
   const fittedFor = useRef<string | null>(null);
+  const fittedWidth = useRef(0);
+  // Set as soon as the user zooms or pans by hand. Until then the canvas keeps
+  // re-fitting on resize, so shrinking the window reflows the artboard instead
+  // of leaving it cropped; after that their zoom is theirs to keep.
+  const userAdjusted = useRef(false);
 
   const width = detail?.width ?? 0;
   const height = detail?.height ?? 0;
 
   const redraw = useCallback(() => forceRedraw((n) => n + 1), []);
+
+  // The checkerboard, grid and border are theme colours, not artwork, so they
+  // come from the same custom properties as the rest of the UI. Re-read on every
+  // theme change and repaint.
+  const inkRef = useRef<CanvasInk>(FALLBACK_INK);
+  useEffect(() => {
+    const style = getComputedStyle(document.documentElement);
+    const read = (name: string, fallback: string) => {
+      const value = style.getPropertyValue(name).trim();
+      return value || fallback;
+    };
+    inkRef.current = {
+      checkerA: read('--checker-a', FALLBACK_INK.checkerA),
+      checkerB: read('--checker-b', FALLBACK_INK.checkerB),
+      grid: read('--grid-line', FALLBACK_INK.grid),
+      gridStrong: read('--grid-line-strong', FALLBACK_INK.gridStrong),
+      edge: read('--canvas-edge', FALLBACK_INK.edge),
+      eraser: read('--eraser-preview', FALLBACK_INK.eraser),
+      selectionFill: read('--selection-fill', FALLBACK_INK.selectionFill),
+      selectionScrim: read('--selection-scrim', FALLBACK_INK.selectionScrim),
+      selectionEdge: read('--selection-edge', FALLBACK_INK.selectionEdge),
+    };
+    checkerCache = null;
+    redraw();
+  }, [theme, redraw]);
 
   // Track the wrapper size.
   useLayoutEffect(() => {
@@ -87,13 +165,14 @@ export function PixelCanvas(): React.ReactNode {
     [viewport.w, viewport.h, setZoom, redraw],
   );
 
-  // Fit once per document size, and whenever the window is resized while the
-  // document has never been panned.
+  // Fit once per document, and again on every resize until the user takes over.
   useEffect(() => {
     if (!detail || !viewport.w) return;
+    if (userAdjusted.current) return;
     const key = `${detail.id}:${detail.width}x${detail.height}`;
-    if (fittedFor.current === key) return;
+    if (fittedFor.current === key && fittedWidth.current === viewport.w) return;
     fittedFor.current = key;
+    fittedWidth.current = viewport.w;
     fit(detail.width, detail.height);
   }, [detail, viewport.w, fit]);
 
@@ -123,7 +202,7 @@ export function PixelCanvas(): React.ReactNode {
     context.beginPath();
     context.rect(panX, panY, imageWidth, imageHeight);
     context.clip();
-    context.fillStyle = checkerPattern(context);
+    context.fillStyle = checkerPattern(context, inkRef.current.checkerA, inkRef.current.checkerB);
     context.fillRect(panX, panY, imageWidth, imageHeight);
 
     // Onion skin: the neighbouring frames ghosted behind the current one, so a
@@ -180,7 +259,7 @@ export function PixelCanvas(): React.ReactNode {
 
     // Pixel grid, once pixels are big enough to aim at.
     if (zoom >= 8) {
-      context.strokeStyle = 'rgba(47, 52, 77, 0.13)';
+      context.strokeStyle = inkRef.current.grid;
       context.lineWidth = 1;
       context.beginPath();
       for (let x = 0; x <= width; x += 1) {
@@ -196,7 +275,7 @@ export function PixelCanvas(): React.ReactNode {
       context.stroke();
 
       // A stronger line every 8 pixels, which is the usual sprite grid.
-      context.strokeStyle = 'rgba(47, 52, 77, 0.22)';
+      context.strokeStyle = inkRef.current.gridStrong;
       context.beginPath();
       for (let x = 0; x <= width; x += 8) {
         const sx = Math.round(panX + x * zoom) + 0.5;
@@ -212,23 +291,61 @@ export function PixelCanvas(): React.ReactNode {
     }
 
     // Canvas border.
-    context.strokeStyle = 'rgba(47, 52, 77, 0.34)';
+    context.strokeStyle = inkRef.current.edge;
     context.lineWidth = 1;
     context.strokeRect(panX - 0.5, panY - 0.5, imageWidth + 1, imageHeight + 1);
 
+    // The user's box: scrim everything outside it and tint what is inside, so the
+    // region they are about to ask about is unmistakable at a glance. Drawn in
+    // screen space rather than as pixels so it survives any zoom and never becomes
+    // part of the artwork.
+    const live = marqueeRef.current;
+    const box = live
+      ? boxOf(live.origin, live.current)
+      : selection && selection.rect.w > 0 && selection.rect.h > 0
+        ? selection.rect
+        : null;
+    if (box) {
+      const bx = panX + box.x * zoom;
+      const by = panY + box.y * zoom;
+      const bw = box.w * zoom;
+      const bh = box.h * zoom;
+
+      context.fillStyle = inkRef.current.selectionScrim;
+      // Four bands rather than one path with an even-odd fill: a half-transparent
+      // fill drawn as a ring would double up on the seams and leave visible edges.
+      context.fillRect(panX, panY, imageWidth, Math.max(0, by - panY));
+      context.fillRect(panX, by + bh, imageWidth, Math.max(0, panY + imageHeight - (by + bh)));
+      context.fillRect(panX, by, Math.max(0, bx - panX), bh);
+      context.fillRect(bx + bw, by, Math.max(0, panX + imageWidth - (bx + bw)), bh);
+
+      context.fillStyle = inkRef.current.selectionFill;
+      context.fillRect(bx, by, bw, bh);
+
+      context.strokeStyle = inkRef.current.selectionEdge;
+      context.lineWidth = Math.max(1, Math.min(2, zoom / 8));
+      context.setLineDash(selection?.mode === 'enforce' ? [] : [6, 4]);
+      context.strokeRect(
+        Math.round(bx) + 0.5,
+        Math.round(by) + 0.5,
+        Math.max(1, Math.round(bw) - 1),
+        Math.max(1, Math.round(bh) - 1),
+      );
+      context.setLineDash([]);
+    }
+
     // Brush footprint under the cursor.
     const cursor = editor.cursor;
-    if (cursor && zoom >= 2 && tool !== 'pan') {
+    if (cursor && zoom >= 2 && tool !== 'pan' && tool !== 'select') {
       const offset = Math.floor((brushSize - 1) / 2);
-      context.fillStyle =
-        tool === 'eraser' ? 'rgba(255,0,255,0.35)' : rgbaToCss(primary, 0.35);
+      context.fillStyle = tool === 'eraser' ? inkRef.current.eraser : rgbaToCss(primary, 0.35);
       context.fillRect(
         panX + (cursor.x - offset) * zoom,
         panY + (cursor.y - offset) * zoom,
         brushSize * zoom,
         brushSize * zoom,
       );
-      context.strokeStyle = 'rgba(47, 52, 77, 0.92)';
+      context.strokeStyle = inkRef.current.edge;
       context.strokeRect(
         panX + (cursor.x - offset) * zoom + 0.5,
         panY + (cursor.y - offset) * zoom + 0.5,
@@ -236,7 +353,7 @@ export function PixelCanvas(): React.ReactNode {
         brushSize * zoom - 1,
       );
     }
-  }, [bitmap, zoom, viewport, width, height, editor.cursor, tool, primary, brushSize, panning, redrawCount, onionSkin, onionBefore, onionAfter, sequence, frameId, thumbnails]);
+  }, [bitmap, zoom, viewport, width, height, editor.cursor, tool, primary, brushSize, panning, redrawCount, onionSkin, onionBefore, onionAfter, sequence, frameId, thumbnails, selection]);
 
   // ---- coordinate helpers --------------------------------------------------
 
@@ -266,6 +383,7 @@ export function PixelCanvas(): React.ReactNode {
   // ---- pointer interaction -------------------------------------------------
 
   const beginPan = useCallback((event: React.PointerEvent) => {
+    userAdjusted.current = true;
     setPanning(true);
     const start = { x: event.clientX, y: event.clientY };
     const origin = { ...panRef.current };
@@ -299,6 +417,17 @@ export function PixelCanvas(): React.ReactNode {
       if (tool === 'eyedropper') {
         const sampled = bitmap ? sampleColor(bitmap, point.x, point.y) : null;
         if (sampled) editor.setPrimary(sampled);
+        return;
+      }
+
+      // The selection tool draws a box and never touches pixels, so it commits
+      // through the editor's selection path rather than as a command - which is
+      // also why it costs no undo step and leaves the document clean.
+      if (tool === 'select') {
+        event.currentTarget.setPointerCapture(event.pointerId);
+        event.preventDefault();
+        marqueeRef.current = { origin: point, current: point };
+        redraw();
         return;
       }
 
@@ -388,6 +517,12 @@ export function PixelCanvas(): React.ReactNode {
     (event: React.PointerEvent<HTMLCanvasElement>) => {
       const point = toPixel(event);
       editor.setCursor(point);
+      const marquee = marqueeRef.current;
+      if (marquee) {
+        marquee.current = point;
+        redraw();
+        return;
+      }
       const stroke = strokeRef.current;
       if (!stroke) return;
       const overlay = overlayRef.current;
@@ -414,6 +549,25 @@ export function PixelCanvas(): React.ReactNode {
 
   const onPointerUp = useCallback(
     async (event: React.PointerEvent<HTMLCanvasElement>) => {
+      const marquee = marqueeRef.current;
+      if (marquee) {
+        marqueeRef.current = null;
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+        const box = boxOf(marquee.origin, marquee.current);
+        redraw();
+        // A click with no drag clears the box, which is the gesture people try first
+        // when they want to get back to editing the whole canvas.
+        if (box.w === 0 && box.h === 0) {
+          if (selection) await editor.clearSelection();
+          return;
+        }
+        // Stamped with the layer and frame that were active, so the agent knows what
+        // the box is pointing at rather than guessing from the current selection.
+        await editor.selectRegion(box, { layerId: editor.layerId ?? undefined, frameId: editor.frameId ?? undefined });
+        return;
+      }
       const stroke = strokeRef.current;
       const overlay = overlayRef.current;
       strokeRef.current = null;
@@ -465,6 +619,7 @@ export function PixelCanvas(): React.ReactNode {
       const direction = event.deltaY < 0 ? 1 : -1;
       const next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom + direction));
       if (next === zoom) return;
+      userAdjusted.current = true;
       panRef.current = {
         x: Math.round(pointerX - before.x * next),
         y: Math.round(pointerY - before.y * next),
@@ -472,6 +627,15 @@ export function PixelCanvas(): React.ReactNode {
       setZoom(next);
     },
     [zoom, setZoom],
+  );
+
+  /** Explicit zoom from the pill or the keyboard takes over from the auto-fit. */
+  const zoomTo = useCallback(
+    (next: number) => {
+      userAdjusted.current = true;
+      setZoom(Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, next)));
+    },
+    [setZoom],
   );
 
   return (
@@ -489,44 +653,117 @@ export function PixelCanvas(): React.ReactNode {
       <div className="canvas-actions">
         <button
           type="button"
-          className="canvas-action-button"
-          onClick={() => fit(width, height)}
+          className="icon-button"
+          onClick={() => zoomTo(zoom - 1)}
+          disabled={zoom <= MIN_ZOOM}
+          title={t('canvas.zoomOut')}
+          aria-label={t('canvas.zoomOut')}
+        >
+          <Icon name="minus" size={14} />
+        </button>
+        <span className="zoom-level">{zoom}×</span>
+        <button
+          type="button"
+          className="icon-button"
+          onClick={() => zoomTo(zoom + 1)}
+          disabled={zoom >= MAX_ZOOM}
+          title={t('canvas.zoomIn')}
+          aria-label={t('canvas.zoomIn')}
+        >
+          <Icon name="plus" size={14} />
+        </button>
+        <span className="status-divider" />
+        <button
+          type="button"
+          className="icon-button"
+          onClick={() => {
+            userAdjusted.current = false;
+            fit(width, height);
+          }}
           title={t('canvas.fitHint')}
           aria-label={t('canvas.fitHint')}
         >
-          <Icon name="fit" size={15} />
-          <span>{t('canvas.fit')}</span>
+          <Icon name="fit" size={14} />
         </button>
         <button
           type="button"
-          className="canvas-action-button actual-size"
-          onClick={() => setZoom(1)}
+          className="text-button"
+          onClick={() => zoomTo(1)}
           title={t('canvas.actualHint')}
           aria-label={t('canvas.actualHint')}
         >
           {t('canvas.actual')}
         </button>
-        <span className="zoom-label">{zoom}x</span>
       </div>
+
+      {/*
+        The selection readout. Sits above the zoom pill in the bottom-right corner,
+        and only appears once there is a box - the canvas should look untouched until
+        the user has actually selected something.
+      */}
+      {selection && (
+        <div className="selection-actions">
+          <span className="selection-size mono">
+            {selection.rect.w}×{selection.rect.h}
+          </span>
+          <span className="selection-origin mono">
+            {selection.rect.x}, {selection.rect.y}
+          </span>
+          <span className="status-divider" />
+          <button
+            type="button"
+            className={`pill${selection.mode === 'enforce' ? ' is-accent' : ''}`}
+            onClick={() =>
+              void editor.setSelectionMode(selection.mode === 'enforce' ? 'hint' : 'enforce')
+            }
+            title={
+              selection.mode === 'enforce'
+                ? t('selection.enforceHint')
+                : t('selection.hintHint')
+            }
+            aria-pressed={selection.mode === 'enforce'}
+          >
+            {selection.mode === 'enforce' ? t('selection.enforce') : t('selection.hint')}
+          </button>
+          <button
+            type="button"
+            className="icon-button is-danger"
+            onClick={() => void editor.clearSelection()}
+            title={t('selection.clearHint')}
+            aria-label={t('selection.clear')}
+          >
+            <Icon name="close" size={13} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
-function checkerPattern(context: CanvasRenderingContext2D): CanvasPattern | string {
+/**
+ * The transparency checkerboard is a 16px tile built once and cached. The
+ * colours are theme values, so the cache is dropped when the theme changes
+ * rather than keeping a pattern the light theme can never use.
+ */
+function checkerPattern(
+  context: CanvasRenderingContext2D,
+  light: string,
+  dark: string,
+): CanvasPattern | string {
   if (!checkerCache) {
     const tile = document.createElement('canvas');
     tile.width = 16;
     tile.height = 16;
     const tileContext = tile.getContext('2d');
-    if (!tileContext) return '#f7f7f4';
-    tileContext.fillStyle = '#f7f7f4';
+    if (!tileContext) return light;
+    tileContext.fillStyle = light;
     tileContext.fillRect(0, 0, 16, 16);
-    tileContext.fillStyle = '#e8e9e5';
+    tileContext.fillStyle = dark;
     tileContext.fillRect(0, 0, 8, 8);
     tileContext.fillRect(8, 8, 8, 8);
     checkerCache = tile;
   }
-  return context.createPattern(checkerCache, 'repeat') ?? '#f7f7f4';
+  return context.createPattern(checkerCache, 'repeat') ?? light;
 }
 
 let checkerCache: HTMLCanvasElement | null = null;
