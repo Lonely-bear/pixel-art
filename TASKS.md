@@ -148,12 +148,12 @@ export interface QualityReport {
 | --- | --- | --- | --- |
 | T-010 | 🤖 | 评分规则规格书 `docs/EVALUATION.md` | IN_PROGRESS |
 | T-011 | 🤖 | `quality/types.ts` — 全部接口与权重(AD-2) | ACCEPTED |
-| T-012 | 🤖 | 轮廓可读性分析器 `quality/silhouette.ts` | TODO |
-| T-013 | 🤖 | 明度结构分析器 `quality/value.ts` | TODO |
-| T-014 | 🤖 | 色彩纪律分析器 `quality/palette.ts` | TODO |
-| T-015 | 🤖 | 噪点 / 杂散像素检测器 `quality/noise.ts` | TODO |
-| T-016 | 🤖 | 描边一致性分析器 `quality/outline.ts` | TODO |
-| T-017 | 🤖 | 动画循环接缝 / 帧间抖动分析器 `quality/motion.ts` | TODO |
+| T-012 | 🤖 | 轮廓可读性分析器 `quality/silhouette.ts` | BLOCKED:T-010 |
+| T-013 | 🤖 | 明度结构分析器 `quality/value.ts` | BLOCKED:T-010 |
+| T-014 | 🤖 | 色彩纪律分析器 `quality/palette.ts` | BLOCKED:T-010 |
+| T-015 | 🤖 | 噪点 / 杂散像素检测器 `quality/noise.ts` | BLOCKED:T-010 |
+| T-016 | 🤖 | 描边一致性分析器 `quality/outline.ts` | BLOCKED:T-010 |
+| T-017 | 🤖 | 动画循环接缝 / 帧间抖动分析器 `quality/motion.ts` | BLOCKED:T-010 |
 | T-018 | 🤖 | `quality/index.ts` 聚合器 + 加权总分 | TODO |
 | T-019 | 🤖 | `evaluate` 命令接入命令总线 | TODO |
 | T-020 | 🤖 | `evaluate` MCP 工具 + `pixel://quality/{doc}` 资源 | TODO |
@@ -208,7 +208,7 @@ export interface QualityReport {
 | ID | 标记 | 任务 | 状态 |
 | --- | --- | --- | --- |
 | T-070 | 🤖 | 稳定程序化 API 面(游戏项目 `devDependency` 友好) | TODO |
-| T-071 | 🤖 | 确定性种子 → 可复现资产管线 | TODO |
+| T-071 | 🤖 | 确定性种子 → 可复现资产管线 | IN_PROGRESS |
 | T-072 | 🤖 | GitHub Action:构建期生成资产 + 徽章 | TODO |
 | T-073 | 🤖 | 插件市场规格 + 分发格式 | TODO |
 | T-074 | 🤖 | 团队共享调色板 / 风格 / 配方 | TODO |
@@ -226,7 +226,7 @@ export interface QualityReport {
 | T-081 | 🤖 | 静态 Gallery 站点(构建期生成) | TODO |
 | T-082 | 🤖 | 分享模板(社交图 / 复现链接) | TODO |
 | T-083 | 🤖 | 1.0 稳定化:版本策略 + 迁移指南 + RFC 流程 | TODO |
-| T-084 | 🤖 | 治理文件:CONTRIBUTING / good-first-issue / CoC | TODO |
+| T-084 | 🤖 | 治理文件:CONTRIBUTING / good-first-issue / CoC | IN_PROGRESS |
 | T-085 | 🤖 | 技术长文:lazy tool surface 与单总线设计 | TODO |
 | T-086 | 🤖 | 月度挑战基础设施 | TODO |
 | T-087 | 👤 | Gallery 站点托管与域名 | HUMAN-READY |
@@ -332,7 +332,16 @@ T-003 → T-004 → T-005 → T-006 → T-007 → T-008
 | D0 | — | MCP 工具面冒烟验证通过(`create_document`→`apply_ops`→`read_grid`) | T-003 管线风险解除 |
 | D1 | T-011 | **首次验收 REWORK**:文件末尾 `declare const` 编译守卫失效,且代理声称"已证明会触发"而实际未做 | 退回返工 |
 | D1 | T-011 | 返工:改为 `AssertTrue<T extends true>` 约束别名,并扩展为覆盖三个来源的检查 | 复核通过 |
-| D1 | T-011 | **验收通过**。PO 独立复核:违反态报 TS2344 `missingFrom: "QUALITY_DIMENSIONS"`,干净态 EXIT=0 | 待提交 |
+| D1 | T-011 | **验收通过**。PO 独立复核:违反态报 TS2344 `missingFrom: "QUALITY_DIMENSIONS"`,干净态 EXIT=0 | `367134b` |
+| D1 | T-071 | 派发,确定性保证(基准基线的前置条件) | IN_PROGRESS |
+| D1 | T-084 | 派发,治理文件 | IN_PROGRESS |
+| D1 | T-012~017 | 六个分析器标记 `BLOCKED:T-010` | 规格优先,不得绕过 |
+
+### 并发策略(PO 裁定)
+
+单工作树下**并发上限 4 个子代理**。超出会引入不可控的构建与类型检查竞争,收益递减。
+Wave 2 的六个分析器虽文件互不重叠,但**必须等 T-010 规格书落地** —— 否则各自发明的 issue code 会与规格冲突,而 issue code 是 Agent 分支依赖的 API,冲突成本极高。
+规格优先顺序在此**不可绕过**。
 
 ### 验收记录:D1 · T-011
 
