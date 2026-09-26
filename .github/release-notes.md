@@ -6,7 +6,7 @@
 | Windows, no install | `dotloom-mcp-*-x64-portable.exe` — run it from anywhere, including a USB stick |
 | macOS, Apple Silicon | `dotloom-mcp-*-arm64.dmg` |
 | macOS, Intel | `dotloom-mcp-*-x64.dmg` |
-| Linux | `dotloom-mcp-*-x64.AppImage` — run it, nothing to install; or `dotloom-mcp_*.deb` on Debian/Ubuntu |
+| Linux | `dotloom-mcp-*-x86_64.AppImage` — run it, nothing to install; or `dotloom-mcp-*-amd64.deb` on Debian/Ubuntu |
 
 Nothing else is required. The CLI and the MCP server are built into the same
 binary as the editor, so installing the app is the whole installation.

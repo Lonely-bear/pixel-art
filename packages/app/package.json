@@ -3,8 +3,12 @@
   "version": "0.4.0",
   "private": true,
   "type": "module",
-  "description": "Electron editor for the dotloom-mcp pixel-art engine.",
-  "author": "Lonely-bear",
+  "description": "Pixel-art editor with a built-in MCP server, for humans and AI agents.",
+  "homepage": "https://github.com/Lonely-bear/pixel-art#readme",
+  "author": {
+    "name": "Lonely-bear",
+    "email": "488376359@qq.com"
+  },
   "license": "Apache-2.0",
   "main": "dist/electron/main.js",
   "desktopName": "dotloom-mcp.desktop",

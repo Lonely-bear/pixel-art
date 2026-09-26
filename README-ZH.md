@@ -70,7 +70,7 @@
 | Windows 免安装 | `dotloom-mcp-<version>-x64-portable.exe` — 放到哪里都能直接运行，包括 U 盘 |
 | macOS（Apple 芯片） | `dotloom-mcp-<version>-arm64.dmg` |
 | macOS（Intel） | `dotloom-mcp-<version>-x64.dmg` |
-| Linux | `dotloom-mcp-<version>-x64.AppImage` — 直接运行，无需安装；Debian/Ubuntu 也可用 `.deb` |
+| Linux | `dotloom-mcp-<version>-x86_64.AppImage` — 直接运行，无需安装；Debian/Ubuntu 也可用 `.deb` |
 
 应用是自包含的：CLI 和 MCP 服务器都构建在同一个二进制里，装好编辑器就算
 安装完成。内嵌的 MCP 服务器会在 `127.0.0.1` 上发布自己，这正是单独安装的

@@ -69,7 +69,7 @@ from **[GitHub Releases](https://github.com/Lonely-bear/pixel-art/releases/lates
 | Windows, no install | `dotloom-mcp-<version>-x64-portable.exe` — run it from anywhere, including a USB stick |
 | macOS, Apple Silicon | `dotloom-mcp-<version>-arm64.dmg` |
 | macOS, Intel | `dotloom-mcp-<version>-x64.dmg` |
-| Linux | `dotloom-mcp-<version>-x64.AppImage` — run it, nothing to install; or the `.deb` on Debian/Ubuntu |
+| Linux | `dotloom-mcp-<version>-x86_64.AppImage` — run it, nothing to install; or the `.deb` on Debian/Ubuntu |
 
 The app is self-contained: the CLI and the MCP server are built into the same
 binary, so installing the editor is the whole installation. The embedded MCP

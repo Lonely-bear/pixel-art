@@ -115,6 +115,10 @@ linux:
   artifactName: dotloom-mcp-${version}-${arch}.${ext}
 
 deb:
+  # Required. fpm has no fallback for this, and a Debian package without a
+  # maintainer is not installable on a normal desktop, so it is set here rather
+  # than left to be inferred from package.json.
+  maintainer: 'Lonely-bear <488376359@qq.com>'
   depends:
     - libgtk-3-0
     - libnotify4
