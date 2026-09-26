@@ -4,6 +4,66 @@ All notable changes to dotloom-mcp are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **The user can box a region on the canvas and tell the agent about it.** A new select
+  tool (the marquee icon, `M`) drags a rectangle; the canvas then dims everything outside
+  it and tints what is inside, with a readout in the bottom-right showing the size, the
+  origin, and a **Hint / Confine** toggle. The agent finds the box with `get_selection`,
+  which returns the rect plus the layer and frame it was drawn on, and `set_selection`
+  lets the agent point at a region itself — to confirm a guess, or to narrow a box the
+  user drew too loosely.
+  It works because the app and the MCP server already share one `DocumentStore`, so the
+  box is one object both sides read rather than two copies kept in sync. The default mode
+  is `hint`, where the box says *where the subject is* and the agent may write just
+  outside when the change needs room: "the head in my selection is too small, make it
+  bigger" is the case this is for, and a hard clip would cut that edit off at the box
+  edge. `enforce` confines every write to the box, for cleaning up a known area.
+  The box is session state — it costs no undo step, does not dirty the document, and
+  never reaches the `.pixel` file. A click with the select tool clears it, and a box whose
+  layer or frame has since been deleted is dropped on read rather than handed to an agent
+  that would edit the wrong pixels. Together these take the advertised tool list to 35.
+
+### Changed
+
+- **The agent now settles two things with the user before its first edit.** Both are cheap to
+  ask and expensive to guess, and each changes what it does next. For a new file with no
+  stated size, it offers a few options and waits rather than quietly taking the 32x32
+  scratch document's dimensions. And it asks **who reviews the pictures** — itself judging
+  two or three preview gates as it goes, or the user reviewing and handing back notes, in
+  which case it verifies with `read_grid` and spends no calls on previews nobody asked for.
+  The second question matters more than it looks: the review mode decides whether the agent
+  should be opening images at all.
+- **Canvas size is no longer capped at "keep it small".** `create_document` used to say
+  *prefer small canvases (16x16 to 64x64)* and the craft guide said not to invent a huge
+  canvas "for detail", which together steered the agent away from anything the user actually
+  asked for. Any size from 1x1 to 4096x4096 has always worked — 512x512 and 1024x1024 were
+  verified end to end, previews at 8x zoom and PNG export included — so the guidance now says
+  what each size buys and that **if the user asks for 512x512, build 512x512**. What survives
+  is the part that was actually true: on a large canvas, work in `rect` regions, batch the
+  edits, and crop-zoom the preview instead of inspecting everything each pass.
+
+### Removed
+
+- **`quality_report` and the whole automated quality-review surface is gone.** The tool, the
+  raster analysis behind it (`defects` / `presence` / `noise` / `palette` / `structure` /
+  `warnings`), the cross-frame character stability pass, the `landscape-quality` workflow and
+  `quality-landscape.ts` are all deleted, along with every reference in the craft guide, the
+  server instructions, the `draw_sprite` and `animate_sprite` prompts, and the docs. The
+  advertised tool list goes from 34 to 33.
+  A number is not a judgement. `defectScore` could be driven to 100 on a scene that had lost
+  its light and its depth, because sparkle and grain scored identically to noise — and the
+  model, told the number was "clean", sanded a lake into a dark flat rectangle. There was no
+  threshold that separated the two, so the honest instruction is the one that was always true:
+  look at the piece, and fix what you can see. `read_grid` still verifies cheaply and exactly,
+  `get_preview` / `preview_animation` / `preview_tilemap` still approve, and the craft guide
+  keeps the "do not sand it flat" warning as judgement rather than as a score.
+- **`quality_report`'s `tilemap` mode is not lost with it.** `preview_tilemap` still returns the
+  same tile-grid structure block (invalid indices, variant dominance and entropy, same-tile
+  adjacency and runs, connected terrain, singleton cells, open edges), and `export_tiled` still
+  refuses to write a map whose indices or cell size are malformed. Only the reporting wrapper
+  around them went away.
+
 ## [0.3.2] - 2026-09-26
 
 ### Added

@@ -13,6 +13,7 @@
  */
 import {
   allCommands,
+  clipRect,
   createEditor,
   createMutableRegistry,
   createPalette,
@@ -23,8 +24,37 @@ import {
   type Editor,
   type MutableCommandRegistry,
   type Palette,
+  type Rect,
   type Sprite,
 } from '@pixel/core';
+
+/**
+ * A region of the canvas the user has boxed in the app.
+ *
+ * Session state, never artwork: it is not part of `Sprite`, so it cannot reach the
+ * `.pixel` file, an export, or a spritesheet. It lives on the document in this one
+ * shared store precisely so that the window that drew it and the agent that has to
+ * respect it are looking at the same object.
+ */
+export interface SelectionState {
+  /** Canvas-pixel rect, always normalised so `w`/`h` are positive. */
+  rect: { x: number; y: number; w: number; h: number };
+  /** The layer the user was on when they drew the box. */
+  layerId?: string;
+  /** The frame the user was on. */
+  frameId?: string;
+  /**
+   * `hint` tells the agent where the subject is and leaves it free to write just
+   * outside when the edit needs room. `enforce` also confines its writes.
+   *
+   * The default is `hint` on purpose: "the head in my selection is too small, make it
+   * bigger" is the case this feature exists for, and a hard clip would cut the edit off
+   * at the box edge. `enforce` is there for the other case, cleaning up a known area
+   * without touching anything else.
+   */
+  mode: 'hint' | 'enforce';
+  updatedAt: number;
+}
 
 export interface PixelDocument {
   id: string;
@@ -36,6 +66,8 @@ export interface PixelDocument {
   updatedAt: number;
   /** True once a command has run since the last save. */
   dirty: boolean;
+  /** The user's current box, if any. Session state; see {@link SelectionState}. */
+  selection?: SelectionState;
 }
 
 export interface CreateDocumentOptions {
@@ -292,6 +324,65 @@ export class DocumentStore {
     doc.updatedAt = Date.now();
     if (dirty) doc.dirty = true;
     this.announce();
+  }
+
+  /**
+   * Record the box the user drew, clipped to the canvas. Pass `null` to clear it.
+   *
+   * The rect is normalised and clipped here rather than at each read, because it
+   * arrives from a mouse drag that can run backwards and off the edge. A drag that
+   * covered no pixel at all - a click, or a swipe that started outside the canvas -
+   * clears the selection instead of storing a zero-area rect, so an agent never gets
+   * handed a region it cannot draw into. A one-pixel drag is a real selection and is
+   * kept.
+   */
+  setSelection(
+    doc: PixelDocument,
+    input: { rect: Rect; layerId?: string; frameId?: string; mode?: SelectionState['mode'] } | null,
+  ): SelectionState | undefined {
+    if (!input) {
+      const had = doc.selection !== undefined;
+      delete doc.selection;
+      if (had) this.announce();
+      return undefined;
+    }
+    const rect = clipRect(input.rect, doc.editor.sprite.width, doc.editor.sprite.height);
+    if (rect.w <= 0 || rect.h <= 0) return this.setSelection(doc, null);
+    const next: SelectionState = {
+      rect,
+      layerId: input.layerId,
+      frameId: input.frameId,
+      // An existing box keeps the mode the user chose for it; a new one starts as a
+      // hint, which is the safe default because it cannot truncate an edit.
+      mode: input.mode ?? doc.selection?.mode ?? 'hint',
+      updatedAt: Date.now(),
+    };
+    doc.selection = next;
+    this.announce();
+    return next;
+  }
+
+  /**
+   * The current box, or `undefined` when the user has not made one.
+   *
+   * Validated on the way out rather than on the way in, because a layer or frame can
+   * be deleted by a command that never touches the store, and the reader is the only
+   * place that is guaranteed to run. A box naming a layer that no longer exists is
+   * worse than no box at all: an agent would act on the wrong pixels.
+   */
+  selection(doc: PixelDocument): SelectionState | undefined {
+    const selection = doc.selection;
+    if (!selection) return undefined;
+    const { sprite } = doc.editor;
+    const layerGone =
+      selection.layerId !== undefined && !sprite.layers.some((l) => l.id === selection.layerId);
+    const frameGone =
+      selection.frameId !== undefined && !sprite.frames.some((f) => f.id === selection.frameId);
+    if (layerGone || frameGone) {
+      this.setSelection(doc, null);
+      return undefined;
+    }
+    return selection;
   }
 
   summary(doc: PixelDocument): DocumentSummary {

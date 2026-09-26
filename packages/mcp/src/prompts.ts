@@ -26,8 +26,8 @@ export function registerPrompts(server: McpServer): void {
         'A guided workflow for drawing a new sprite: plan, block the silhouette, look at it, shade with a ramp, outline selectively.',
       argsSchema: {
         subject: z.string().describe('What to draw, e.g. "a small green slime" or "a wooden treasure chest".'),
-        width: z.string().optional().describe('Canvas width in pixels. Defaults to 32.'),
-        height: z.string().optional().describe('Canvas height in pixels. Defaults to 32.'),
+        width: z.string().optional().describe('Canvas width in pixels. Defaults to 32 if the user does not choose.'),
+        height: z.string().optional().describe('Canvas height in pixels. Defaults to 32 if the user does not choose.'),
         palette: z.string().optional().describe(`Palette name (${PALETTE_NAMES}) or a comma-separated list of hex colours.`),
       },
     },
@@ -35,15 +35,27 @@ export function registerPrompts(server: McpServer): void {
       const w = width ?? '32';
       const h = height ?? '32';
       const pal = palette ?? 'dawnbringer16';
+      // A prompt cannot ask a question itself, so it names what it filled in and asks
+      // for the decision in the text. A default that arrives unannounced is the thing
+      // this exists to prevent.
+      const sizeChosen = width !== undefined && height !== undefined;
+      const confirmSize = sizeChosen
+        ? ''
+        : `\nBEFORE DRAWING: no canvas size was chosen, so this recipe would use ${w}x${h}. Offer the user two or three sizes that suit what they asked for, with one line each on what that size buys - a small canvas keeps every shape readable, a large one (128x128, 256x256, 512x512 or more) buys room for detail, and a non-square canvas suits a sprite that is not square. Any size up to 4096x4096 is supported, so do not argue them down from a big one. Wait for their answer, then build the size they picked.\n`;
+      const confirmReview =
+        `\nBEFORE DRAWING: also ask who reviews the pictures - you judging the previews as you go,\n` +
+        `or the user reviewing and handing back notes. If it is you, open the two or three preview\n` +
+        `gates below and actually judge them. If it is them, skip the previews, verify with read_grid,\n` +
+        `and wait for their feedback instead of guessing what they want.\n`;
       return user(`Draw ${subject} as pixel art on a ${w}x${h} canvas.
-
+${confirmSize}${confirmReview}
 Follow this order. Use 2-3 visual gates, and get each PNG from the same mutation call via \`preview: true\` + \`previewOptions: {scale: 4}\` - do not spend a second call on \`get_preview\`:
 
 1. \`create_document\` with width ${w}, height ${h}, layers ["base", "shade", "outline"], palette "${pal}". Its response already includes the layer/frame structure.
 2. Block the whole silhouette in ONE flat mid-tone colour on the "base" layer with a batched \`run_script\` or \`apply_ops\`, and inspect its inline preview. If the shape is not recognisable as a solid silhouette, fix it before going further.
 3. Add shadow on the "shade" layer, light coming from the top-left. Build 3-5 step material ramps with \`add_palette_ramp\` and use colours that step in hue as well as value. Break shade boundaries with single-pixel steps instead of long straight lines.
 4. Outline on the "outline" layer with \`outline\` using \`mode: "outside"\`, in a dark, desaturated colour - not black. Then selectively erase the outline where the light hits, using \`clear_region\` or a draw with \`color: null\`.
-5. Inspect the final inline preview, run \`quality_report\` to check for isolated speckles, clipped highlights and harsh edge contrast, fix flagged areas with \`despeckle\`/\`antialias\` or simpler shapes, then use one \`finalize_document\` call for the source and PNG exports.
+5. Inspect the final inline preview for isolated speckles, clipped highlights and harsh edge contrast, and fix what you can actually see with \`despeckle\`/\`antialias\` or simpler shapes. Then use one \`finalize_document\` call for the source and PNG exports.
 
 Keep the sprite centred: use \`measure_region\` to find the opaque bounds and \`copy_region\` or \`resize_canvas\` to recentre.
 
@@ -74,7 +86,7 @@ Workflow:
 4. Batch frame durations with \`set_frame_durations\` (100-150 ms baseline).
 5. Create/update the animation tag with \`upsert_tags\`, direction "${dir}".
 6. Batch final timing with \`set_frame_durations\` and tags with \`upsert_tags\`, then call \`preview_animation {tag, onion: {before: 1, after: 1}}\`. Inspect that playback-ordered contact sheet and check the loop: the last frame must lead back into the first without a jump.
-7. Run \`quality_report {assetType: "character", tag}\`, then finish with one \`finalize_document\` plan containing source, grid sheet, GIF, contact sheet and a hashed manifest.
+7. Fix anything the playback review turned up, then finish with one \`finalize_document\` plan containing source, grid sheet, GIF, contact sheet and a hashed manifest.
 
 Read ${SKILL_URI} (or call \`read_skill\`) for the craft guide - section 7 covers animation.`);
     },

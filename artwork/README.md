@@ -19,7 +19,7 @@ lazy surface were broken, the agent would have had no route to a silhouette at a
 | File | What it is |
 | --- | --- |
 | `sunset-lighthouse-512.png` | 512×512 environment, the largest piece here |
-| `dusk-lake-valley-agent2.png` | environment, revised after a `quality_report` pass |
+| `dusk-lake-valley-agent2.png` | environment, revised over two critique passes |
 | `autumn-dusk-lake-256.png` | environment at 256×256 |
 | `moonlit-alpine-lake.png` | a deliberately small/fast pass |
 

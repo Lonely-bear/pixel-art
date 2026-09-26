@@ -226,14 +226,14 @@ To connect to a running desktop app instead of the standalone server, append
 
 ### What it exposes
 
-- **A small declared surface plus an on-demand command catalog.** The advertised list is 33 tools
+- **A small declared surface plus an on-demand command catalog.** The advertised list is 35 tools
   — the session, perception, export and discovery tools: `create_document`, `create_sprite_spec`,
   `open_document`, `save_document`, `finalize_document`, `import_image` (PNG or Aseprite),
   `select_document`, `close_document`, `list_documents`, `get_document`, `get_preview`, `preview_pose`,
-  `preview_animation`, `preview_tilemap`, `read_grid`, `get_pixels`, `histogram`, `quality_report`, `get_palette`,
-  `get_history`, `undo`, `redo`, `apply_ops`, `export_png`, `export_sheet`, `export_tiled`, `export_gif`,
-  `list_commands`, `describe_command`, `find_workflow`, `read_skill`, and the scripting tools
-  `run_script`, `load_plugin`, `list_plugins`.
+  `preview_animation`, `preview_tilemap`, `read_grid`, `get_pixels`, `histogram`, `get_selection`,
+  `set_selection`, `get_palette`, `get_history`, `undo`, `redo`, `apply_ops`, `export_png`,
+  `export_sheet`, `export_tiled`, `export_gif`, `list_commands`, `describe_command`,
+  `find_workflow`, `read_skill`, and the scripting tools `run_script`, `load_plugin`, `list_plugins`.
 
   The ~90 core commands (`draw_rect`, `autotile`, `create_tileset`, `add_palette_ramp`, …) are **not**
   in that list up front: shipping all 127 cost ~55K tokens of tool definitions in the context of every
@@ -288,10 +288,32 @@ To connect to a running desktop app instead of the standalone server, append
   `params` is exposed to the script as the global of the same name, which with `path` makes one
   file a function of its inputs: tuning a value costs one short call instead of re-sending the
   program. A parameterised generator is the case this exists for.
-- **`quality_report { brief: true }`** returns only the numbers a model acts on, plus each warning
-  as `{code, severity}`. Same analysis, about a third of the bytes: the per-plane arrays, the
-  landscape block, the region breakdown and the warning prose are dropped. Drop the flag when a
-  specific diagnostic is needed.
+- **`get_selection`: the user points, the agent stops guessing.** In the desktop app the
+  select tool (marquee icon, `M`) drags a rectangle; the canvas dims everything outside it
+  and tints what is inside, and a readout in the bottom-right shows the size, the origin
+  and a **Hint / Confine** toggle. The user then talks about what is in the box — "the head
+  in my selection is too small" — and `get_selection` is how the agent finds out where they
+  mean. It returns the rect plus the layer and frame the box was drawn on, so the agent
+  knows which layer it is looking at rather than assuming the active one. It answers
+  `{selection: null}` when there is no box, and that is a real answer: work on the whole
+  canvas rather than inventing a region. `get_preview {rect}`, `read_grid {rect}` and
+  `histogram {rect}` all take that rect, so the agent can inspect the region closely before
+  touching it. `set_selection` is the same box from the other side, for confirming a guess
+  or narrowing a box the user drew too loosely.
+  This works without any synchronisation code because the app hosts the MCP server in its
+  main process and both go through the one `DocumentStore`; the box is a field on the shared
+  `PixelDocument`, not a copy each side maintains. It is session state, deliberately: it is
+  not part of `Sprite`, so it cannot reach the `.pixel` file, an export or a spritesheet, it
+  costs no undo step, and it does not mark the document dirty — a box says where the subject
+  is, it is not an edit. A drag that runs backwards is normalised, one that leaves the canvas
+  is clipped, a click with no drag clears the box, and a box whose layer or frame has since
+  been deleted is dropped on read rather than handed over, because an agent acting on a
+  dangling layer id would edit the wrong pixels.
+  `mode` is the one real design decision here. `hint` is the default because the motivating
+  request — make the selected head bigger — is *incompatible* with a hard clip: the edit has
+  to reach outside a box that tightly bounds the head. `enforce` confines every write to the
+  box, which is what you want for cleaning up a known area, and the toggle is in the canvas
+  readout rather than buried in a preference because the right answer depends on the request.
 - **`read_grid` and the grid resource: text where a picture cannot answer the question.**
   A `image/png` is the only way to judge whether a piece *looks* good, but it is a poor
   tool for the questions an agent actually iterates on: a 256px downsample of a 32x32
@@ -366,28 +388,7 @@ To connect to a running desktop app instead of the standalone server, append
    source version, frame durations, tags, actual output paths/sizes, and SHA-256 hashes;
    `incremental: true` reuses that manifest to skip unchanged source/output files. The legacy
    PNG-only `exports` array remains accepted.
-8. **`quality_report` is asset-aware where it matters.** Only `character` changes the
-   analysis: it suppresses full-width-band/landscape findings (a figure is not a horizon)
-   and defaults to all-frame analysis reporting silhouette overlap, centroid drift, palette
-   Jaccard, canvas-edge contact and last-to-first loop closure - each with a real `warning`
-   entry, not just a number. A transition counts as a silhouette jump when overlap falls
-   below `minSilhouetteIouWarning` (default 0.5), which is scale-invariant: a 64x64
-   character moving a limb must not be judged by how much of the whole canvas it touched.
-   `assetType: "auto"` infers character from a rig or multiple frames; every other value is
-   a **label** for the same single-frame diagnostics, echoed back with `assetTypeIsLabel:
-   true` so a caller never mistakes a label for a different analysis.
-   `intentionalDetailRects` exempts eyes, teeth, hair, fabric and weapon highlights from
-   isolated/outlier/edge/highlight checks only; it deliberately does not suppress the
-   light-source probe.
-   The landscape analysis lives at **`structure.landscape`** and nowhere else. It was also
-   serialised at `landscape`, with its `horizon`/`ridge`/`waterline`/`guideLines` repeated a
-   level up in `structure` — five copies of the same object, 2.4KB of a 4.9KB response for a
-   96x96 sprite. When the frame is not a scene the block collapses to
-   `{measurable: false, scene, conclusion}` instead of a page of nulls.
-   `softnessScore` (an alias of `defectScore`) and `presence.lightShare` (an alias of
-   `presence.brightestShare`, which was itself equal to `overexposedRatio`) are gone: three
-   names for one number was three chances to read the wrong one.
-9. **`add_palette_ramp` builds hue-shifted material ramps.** Give it a dark and a light
+8. **`add_palette_ramp` builds hue-shifted material ramps.** Give it a dark and a light
    anchor plus a step count, and it generates the intermediate colours in HSL, pulling the
    dark end toward blue/violet and the light end toward amber by `hueShift` degrees
    (default 20). `shadowHue`/`highlightHue` set absolute endpoint hues, `saturationBoost`
@@ -398,18 +399,13 @@ To connect to a running desktop app instead of the standalone server, append
    optional layer/region limits. `prune_palette` scans the raw cels in a document/frame/tag
    scope (including hidden layers), defaults to dry-run, protects explicit `keep` indices,
    and returns an old-to-new index map before removing genuinely unused slots.
-10. **Binary and generative primitives avoid per-pixel JSON overhead.** `put_pixels` writes
+9. **Binary and generative primitives avoid per-pixel JSON overhead.** `put_pixels` writes
    a base64 RGBA8888 rectangle in one command, with the script convenience API
    `putPixels(rect, data, options?)`; the core raster API also exposes
    `putPixels(buffer, rect, rgba, options?)` for an in-memory `Uint8Array`/`Uint8ClampedArray`.
    `banded_gradient`, `noise_fill` (value noise/fBm via `octaves`), `ridge_line`
    (seeded ridged fBm terrain contours) and `scatter` generate deterministic fields in
    one batch command, with palette-aware colours, clipping and safety limits.
-11. **Landscape diagnostics do not stop at the alpha skyline.** `quality_report` adds
-   `structure.landscape` (also exposed as top-level `landscape`) for full-bleed scenes:
-   it locates internal horizon/ridge/waterline candidates, reports boundary regularity,
-   and looks for a coherent or bright-path vertical/diagonal guide. It is evidence for
-   composition, not a replacement for looking at the image.
 
 ### Commands built for animation
 
@@ -486,10 +482,11 @@ structure for terrain, walls and floors, and it is what an agent uses to build a
   invalid cells and the exact cells/rect changed by the previous mutation. `underlay`
   composites a ground/base grid first, so partial-alpha bank masks can be judged without
   baking either map.
-- `quality_report { tilemap, underlay? }` reports invalid indices, empty and dominant ratios, variant
-  entropy, same-tile adjacency/runs, connected terrain, singleton cells and open edges.
-  Pixel-noise and flat-band findings become informational in this mode because ripples,
-  crop rows and road texture are intentional.
+- `preview_tilemap`'s `structure` block reports invalid indices, empty and dominant ratios,
+  variant entropy, same-tile adjacency/runs, connected terrain, singleton cells and open
+  edges. Read it as evidence: ripples, crop rows and road texture are intentional, so a
+  long same-tile run is a fact about the map rather than a defect. `export_tiled` refuses
+  to write a map whose indices or cell size are malformed.
 - Gameplay metadata lives beside the visual grid. `set_tile_properties` /
   `remove_tile_properties` / `get_tile_properties` store collision, walkability and
   movement values per tile index. `add_map_object`, `update_map_object`,

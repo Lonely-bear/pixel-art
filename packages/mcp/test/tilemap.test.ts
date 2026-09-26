@@ -276,28 +276,6 @@ describe('tilemaps and Tiled export', () => {
     expect(result.content.some((content) => content.type === 'image' && content.mimeType === 'image/png')).toBe(true);
   });
 
-  it('adds map-aware tile structure to quality_report without baking', async () => {
-    await makeLevelDocument();
-    await run('add_tilemap', { name: 'Ground', width: 3, height: 2, tileWidth: 16, tileHeight: 16 });
-    await run('add_tilemap', { name: 'Base', width: 3, height: 2, tileWidth: 16, tileHeight: 16 });
-    await run('fill_tilemap', { tilemap: 'Ground', tile: 1, rect: { x: 0, y: 0, w: 2, h: 1 } });
-    await run('fill_tilemap', { tilemap: 'Base', tile: 0 });
-
-    const body = payload((await client.callTool({
-      name: 'quality_report',
-      arguments: { tilemap: 'Ground', underlay: 'Base', replaceEmpty: 2 },
-    })) as ToolResult);
-    expect(body.source).toMatchObject({ kind: 'tilemap', name: 'Ground', underlay: { name: 'Base' } });
-    expect(body.frame).toBeNull();
-    expect(body.structure.tilemap).toMatchObject({
-      validFilled: 2,
-      empty: 4,
-      invalid: 0,
-      dominantVariant: { tile: 1, count: 2 },
-    });
-    expect(body.structure.tilemap.repetition.sameTileRatio).toBe(1);
-  });
-
   it('does not mark a saved document dirty when get_tilemap reads it', async () => {
     await makeLevelDocument();
     await run('add_tilemap', { width: 2, height: 2, tileWidth: 16, tileHeight: 16 });

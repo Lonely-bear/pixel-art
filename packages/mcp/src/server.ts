@@ -62,6 +62,44 @@ A fresh session already has one 32x32 scratch document open and active, so a bat
 that works is not proof the document you meant is the one you edited - check
 \`list_documents\`, or name your \`document\`, when it matters.
 
+Before the first edit, settle two things with the user. Both are cheap to ask and
+expensive to guess, and each one changes what you do next:
+
+1. **Canvas size, when the file is new.** If the request is a fresh sprite and no size
+   came with it, ask - do not guess, and never silently inherit the scratch document's
+   32x32. Offer two or three options that suit what the user is actually making, and
+   say what each one costs them: a small canvas (16x16, 32x32) forces every shape to stay
+   readable, a large one (128x128, 256x256, 512x512 or beyond) buys room for detail and
+   interior structure, and a canvas that is not square suits a sprite that is not square.
+   Any size from 1x1 to 4096x4096 is supported. A large canvas is a legitimate answer,
+   not something to talk the user down from - if they ask for 512x512, build 512x512.
+   Scale your method to the size rather than shrinking their idea: on a big canvas work
+   in \`rect\` regions, batch with \`apply_ops\` or \`run_script\`, and crop-zoom
+   \`get_preview\` instead of inspecting the whole canvas on every pass. This gate
+   outranks any default stated elsewhere in this server or in a prompt.
+2. **Who reviews the pictures.** Ask whether you should judge the previews yourself as
+   you go, or whether the user will review and hand back notes. If you review, open
+   the images and actually look - two or three \`get_preview\` gates, at the points where
+   the silhouette, the shading and the outline each get decided, rather than a preview
+   per edit. If the user reviews, do not spend calls on previews nobody asked for:
+   verify with \`read_grid\`, keep each pass batched, and expect to be told what to
+   change. Either way, \`despeckle\`/\`antialias\` are for defects you have actually spotted.
+
+**The user can box a region on the canvas, and when they do, that is your scope.** They
+pick the select tool, drag a rectangle, and then talk to you about what is inside it -
+"the head in my selection is too small". \`get_selection\` is how you find out where they
+mean, and it returns the rect plus the layer and frame the box was drawn on. Call it
+whenever they say "my selection", "the part I boxed", "this side", "over here" or
+anything else that points rather than names; do not guess a region when you can read
+the real one. \`get_preview {rect}\`, \`read_grid {rect}\` and \`histogram {rect}\` all take
+that rect, so you can look closely before you touch anything. It answers
+\`{selection: null}\` when there is no box, which is a real answer: work on the whole
+canvas rather than inventing one. \`set_selection\` lets you box a region yourself to
+confirm a guess, and \`mode\` says whether the box is a \`hint\` (the default - you may
+write just outside when the change needs room, which is what "make the head bigger"
+requires) or \`enforce\` (stay inside it). Respect \`enforce\` strictly; a box is not a
+suggestion once they have asked for it.
+
 The tool list is deliberately small. \`apply_ops\`, \`run_script\`, \`list_commands\`,
 \`describe_command\` and \`find_workflow\` are the entry points; the ~90 drawing,
 structure, palette, rig and tilemap **commands** are not in the list until this session
@@ -74,7 +112,8 @@ entry-point tools themselves, which is where to read the full parameter list of
 \`apply_ops\`, \`finalize_document\` or \`run_script\`.
 
 Workflow that works:
-1. \`create_document\` returns the complete layer/frame/palette structure. Use
+1. \`create_document\` returns the complete layer/frame/palette structure, at whatever
+   size the user settled on above. Use
    \`create_sprite_spec\` when a character also needs tags, palette roles and a persistent rig.
    Call \`find_workflow\` for a multi-step task and \`describe_command\` for one exact schema.
 2. Block the silhouette in one flat colour. \`read_grid\` returns the artwork as one
@@ -98,9 +137,11 @@ Workflow that works:
    \`transitions\` for organic edges, and \`preview_tilemap\` with the returned changed
    cells/rect for an immediate grid+index PNG. A mutation's optional \`bake\` redraws only
    changed cells with alpha-over, so an unbaked grid does not need a full rebake to look.
-6. Before finishing, run \`quality_report\`. Use \`assetType: "character"\` and
-   \`intentionalDetailRects\` for characters, \`tilemap\` for unbaked grids, and
-   \`despeckle\`/\`antialias\` only for defects the report actually identifies.
+6. Before finishing, look at the whole piece one more time at a scale where the tones
+   read, and fix what you can still see: a stray speckle, a clipped highlight, a
+   silhouette that lost its shape. If the user took over the reviewing, this step is
+   theirs - hand the finished piece over instead of fixing what you have not been
+   asked to look at. \`despeckle\`/\`antialias\` are for defects you have actually spotted.
 7. Finish with one \`finalize_document\` export plan. It writes source, PNG/frame/sheet,
    GIF, pose and contact outputs; add a hashed manifest and \`incremental: true\` for a
    reusable asset package.

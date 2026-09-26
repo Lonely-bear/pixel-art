@@ -42,10 +42,6 @@ const DESCRIPTION_BUDGET: Record<string, number> = {
   // The tilemap preview is the one place a structural defect has to be seen rather
   // than described, so it names its overlays instead of deferring to the schema.
   preview_tilemap: 600,
-  // Three modes to choose between — full, `brief`, and `assetType: "character"` — and
-  // the report is the step every workflow ends on, so its description is the one worth
-  // being explicit in.
-  quality_report: 700,
   // The primary way to check a drawing, so it has to say when to reach for it *instead*
   // of a preview, and name the four views. Everything else about it - regions, frames,
   // layers, diffing - is in the schema, where it costs nothing unless it is used.
@@ -81,7 +77,7 @@ describe('declared tool surface', () => {
       expect(names).toContain(entry);
     }
     // The perception and delivery tools an agent needs unprompted.
-    for (const always of ['get_preview', 'preview_animation', 'quality_report', 'finalize_document', 'get_document']) {
+    for (const always of ['get_preview', 'preview_animation', 'finalize_document', 'get_document']) {
       expect(names).toContain(always);
     }
     // And the catalogue really is not in the list.
@@ -347,95 +343,6 @@ describe('scripted work', () => {
     expect(result.isError).toBe(true);
     // A breadcrumb written before the throw is the cheapest bug report there is.
     expect(payload(result).logs).toEqual(['about to fail']);
-  });
-});
-
-describe('quality report payload', () => {
-  async function spriteReport(brief = false) {
-    await connect();
-    await client.callTool({ name: 'create_document', arguments: { width: 96, height: 96, layers: ['base'] } });
-    await client.callTool({
-      name: 'apply_ops',
-      arguments: {
-        ops: [
-          { command: 'draw_ellipse', rect: { x: 20, y: 12, w: 56, h: 60 }, color: '#8a5a3a', fill: true },
-          { command: 'draw_ellipse', rect: { x: 30, y: 24, w: 14, h: 10 }, color: '#ffffff', fill: true },
-        ],
-      },
-    });
-    return payload((await client.callTool({
-      name: 'quality_report',
-      arguments: brief ? { brief: true } : {},
-    })) as ToolResult) as Record<string, unknown>;
-  }
-
-  it('reaches no block from two paths', async () => {
-    // The same landscape object used to be serialised at `landscape` and
-    // `structure.landscape`, with its horizon/ridge/waterline/guideLines repeated a
-    // level up: five copies, 2.4KB of a 4.9KB response.
-    const report = await spriteReport();
-    const structure = report.structure as Record<string, unknown>;
-    expect(report.landscape).toBeUndefined();
-    expect(structure.horizon).toBeUndefined();
-    expect(structure.ridge).toBeUndefined();
-    expect(structure.waterline).toBeUndefined();
-    expect(structure.guideLines).toBeUndefined();
-    expect(structure.landscape).toBeTruthy();
-  });
-
-  it('drops the identity aliases that were three names for one number', async () => {
-    const report = await spriteReport();
-    expect(report.softnessScore).toBeUndefined();
-    const presence = report.presence as Record<string, unknown>;
-    expect(presence.lightShare).toBeUndefined();
-    // The two that remain still say the same thing, which is the point.
-    expect(typeof presence.brightestShare).toBe('number');
-    expect(report.overexposedRatio).toBe(presence.brightestShare);
-  });
-
-  it('collapses an unmeasurable landscape to a verdict', async () => {
-    const report = await spriteReport();
-    const landscape = (report.structure as { landscape: Record<string, unknown> }).landscape;
-    expect(landscape.measurable).toBe(false);
-    expect(landscape.scene).toBeTruthy();
-    expect(landscape.conclusion).toBeTruthy();
-    // The page of nulls is gone; the question it answered is not.
-    expect(landscape.horizon).toBeUndefined();
-    expect(landscape.horizontalBoundaries).toBeUndefined();
-  });
-
-  it('brief keeps every number the craft guide tells a model to read', async () => {
-    const brief = await spriteReport(true);
-    const at = (path: string): unknown => path.split('.').reduce<unknown>((n, k) => (n as Record<string, unknown>)?.[k], brief);
-    for (const path of [
-      'defectScore', 'defectScoreContext',
-      'noise.isolatedRatio', 'noise.outliers', 'noise.texturedOutliers',
-      'edges.meanAdjacentDelta', 'overexposedRatio',
-      'palette.outsideRatio', 'palette.unusedIndices', 'palette.crowded',
-      'structure.strongBands',
-      'presence.valueRange', 'presence.darkShare', 'presence.flatShare',
-      'presence.planeSeparation', 'presence.lightConcentration',
-    ]) {
-      expect(at(path), `brief is missing ${path}`).toBeDefined();
-    }
-    // And nothing that only adds weight.
-    expect(brief.brief).toBe(true);
-    expect((brief.structure as Record<string, unknown>).landscape).toBeUndefined();
-    expect((brief.presence as Record<string, unknown>).planes).toBeUndefined();
-    expect((brief.presence as Record<string, unknown>).lightShare).toBeUndefined();
-    for (const warning of brief.warnings as Array<Record<string, unknown>>) {
-      expect(Object.keys(warning).sort()).toEqual(['code', 'severity']);
-    }
-  });
-
-  it('brief is a fraction of the bytes and reports the same analysis', async () => {
-    const full = await spriteReport();
-    const brief = await spriteReport(true);
-    const size = (value: unknown) => Buffer.byteLength(JSON.stringify(value), 'utf8');
-    expect(size(brief)).toBeLessThan(size(full) * 0.5);
-    // Same analysis: the shared numbers are identical, not re-derived.
-    expect(brief.defectScore).toBe(full.defectScore);
-    expect(brief.opaqueRatio).toBe(full.opaqueRatio);
   });
 });
 

@@ -38,7 +38,6 @@ import {
   flattenAlpha,
   findRigTween,
   interpolatePose,
-  luminanceOf,
   renderGridView,
   rowsFromCells,
   formatGrid,
@@ -56,8 +55,6 @@ import {
   resolveLayer,
   resolveDitherLevel as resolveCoreDitherLevel,
   ditherLevelResolution as coreDitherLevelResolution,
-  blitTilemap,
-  renderTilemap,
   renderInterpolatedPose,
   renderPose,
   requireRig,
@@ -76,14 +73,12 @@ import {
   type RenderedPose,
   type RigPose,
   type Sprite,
-  type TilemapLayer,
 } from '@pixel/core';
 import { z } from 'zod';
 import { ScriptRuntime } from '@pixel/script';
 import { BUILTIN_PALETTES, type DocumentStore, type PixelDocument } from './session.js';
 import { PIXEL_ART_SKILL } from './skill.js';
 import { advertiseSchema, TOOL_RESULT_ENVELOPE } from './surface.js';
-import { analyzeLandscape, type LandscapeAnalysis } from './quality-landscape.js';
 import { analyzeTilemapQuality } from './quality-tilemap.js';
 import { renderTilemapPreview } from './tilemap-preview.js';
 
@@ -295,7 +290,7 @@ const READ_ONLY_TOOLS = new Set([
   'get_pixels',
   'read_grid',
   'histogram',
-  'quality_report',
+  'get_selection',
   'list_commands',
   'describe_command',
   'find_workflow',
@@ -396,7 +391,8 @@ const SESSION_TOOLS: Array<{ name: string; description: string }> = [
   { name: 'get_pixels', description: 'Exact pixel colours in a small region.' },
   { name: 'read_grid', description: 'The artwork as a character grid: silhouette, luminance, palette slot or colour name. The default way to check a drawing.' },
   { name: 'histogram', description: 'Per-colour pixel counts and unused palette slots for a region.' },
-  { name: 'quality_report', description: 'Asset-aware raster report with character animation stability and intentional-detail exemptions.' },
+  { name: 'get_selection', description: "The rectangle the user boxed in the app, with its layer and frame." },
+  { name: 'set_selection', description: 'Box a region on the app canvas, or clear the box.' },
   { name: 'get_document', description: 'Layers, frames, tags, palette.' },
   { name: 'get_palette', description: 'Palette as hex colours with indices.' },
   { name: 'list_documents', description: 'List open documents.' },
@@ -904,393 +900,6 @@ function describeSprite(sprite: Sprite): Record<string, unknown> {
   };
 }
 
-function documentPaletteUsage(sprite: Sprite): {
-  used: number;
-  unused: number;
-  usedIndices: number[];
-  unusedIndices: number[];
-} | null {
-  // Bound the scan by cels, not frames: the loop below visits every cel of every frame.
-  let cels = 0;
-  for (const frame of sprite.frames) cels += frame.cels.size;
-  if (sprite.width * sprite.height * cels > 16_777_216) return null;
-  const usedKeys = new Set<number>();
-  for (const frame of sprite.frames) {
-    for (const buffer of frame.cels.values()) {
-      for (let i = 0; i < buffer.data.length; i += 4) {
-        if (buffer.data[i + 3] === 0) continue;
-        usedKeys.add(((buffer.data[i] & 255) << 24) | ((buffer.data[i + 1] & 255) << 16) |
-          ((buffer.data[i + 2] & 255) << 8) | (buffer.data[i + 3] & 255));
-      }
-    }
-  }
-  const usedIndices: number[] = [];
-  const unusedIndices: number[] = [];
-  sprite.palette.colors.forEach((color, index) => {
-    const key = ((color.r & 255) << 24) | ((color.g & 255) << 16) | ((color.b & 255) << 8) | (color.a & 255);
-    (usedKeys.has(key) ? usedIndices : unusedIndices).push(index);
-  });
-  return { used: usedIndices.length, unused: unusedIndices.length, usedIndices, unusedIndices };
-}
-
-/**
- * Asset labels accepted by `quality_report`.
- *
- * Only `character` switches the analysis: it suppresses full-width-band and landscape
- * findings (a character is not a horizon) and turns on the cross-frame stability pass.
- * The remaining values are labels for the same single-frame raster diagnostics - they
- * record intent in the report so a later pass can tell a prop apart from a backdrop,
- * and they make `auto` inference explicit rather than magic.
- */
-type QualityAssetType = 'raster' | 'character' | 'landscape' | 'prop' | 'tile' | 'auto';
-
-/**
- * Collapse `auto` into a concrete label and report back what was inferred.
- *
- * The inference stays deliberately conservative: a rig or more than one frame means the
- * caller is dealing with a character, a tilemap being analysed directly means `tile`, and
- * anything else stays `raster`. Returning the guess matters more than the guess itself -
- * a wrong automatic label should be visible and correctable, not silently baked in.
- */
-function resolveQualityAssetType(
-  sprite: Sprite,
-  requested: QualityAssetType | undefined,
-  analysingTilemap: boolean,
-): Exclude<QualityAssetType, 'auto'> {
-  if (requested && requested !== 'auto') return requested;
-  if (analysingTilemap) return 'tile';
-  if (sprite.rig || sprite.frames.length > 1) return 'character';
-  return 'raster';
-}
-
-interface QualityAnalysisOptions {
-  rect?: { x: number; y: number; w: number; h: number };
-  noiseThreshold?: number;
-  alphaThreshold?: number;
-  /** Analyse this tilemap directly instead of a composited pixel frame. */
-  tilemap?: TilemapLayer;
-  /** Optional base map under an alpha-masked terrain/edge map. */
-  underlay?: TilemapLayer;
-  replaceEmpty?: number;
-  /** Optional square grid for per-region outlier/isolated counts. */
-  grid?: number;
-  /**
-   * Regions filled with deliberate texture - `scatter`, grain, foliage, sparkle.
-   * Outliers inside them are counted separately instead of raising noise warnings,
-   * because high-frequency detail is the point there, not a defect.
-   */
-  textureRects?: Array<{ x: number; y: number; w: number; h: number }>;
-  assetType?: QualityAssetType;
-  intentionalDetailRects?: Array<{
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-    kind?: 'eye' | 'teeth' | 'weapon' | 'hair' | 'fabric' | 'other';
-  }>;
-}
-
-type PixelAt = (x: number, y: number) => { r: number; g: number; b: number; a: number } | null;
-
-// `luminanceOf` now comes from @pixel/core, so the text grid and the quality report
-// cannot drift apart on what "light" means.
-
-/**
- * Palette slots that never reach the canvas, plus the used pairs that sit closer
- * together than the eye resolves as separate tones.
- *
- * Reporting the *indices* matters: "5 colours are unused" is not actionable, but
- * "remove slots 17 and 18" is.
- */
-function analyzePaletteUsage(
-  paletteColors: readonly { r: number; g: number; b: number; a: number }[],
-  unique: Set<number>,
-  crowdedDelta: number,
-): { unusedIndices: number[]; crowded: Array<{ a: number; b: number; delta: number }> } {
-  const packed = (c: { r: number; g: number; b: number; a: number }): number =>
-    ((c.r & 255) << 24) | ((c.g & 255) << 16) | ((c.b & 255) << 8) | (c.a & 255);
-  const unusedIndices: number[] = [];
-  const present: Array<{ index: number; color: { r: number; g: number; b: number } }> = [];
-  paletteColors.forEach((color, index) => {
-    if (unique.has(packed(color))) present.push({ index, color });
-    else unusedIndices.push(index);
-  });
-  const crowded: Array<{ a: number; b: number; delta: number }> = [];
-  for (let i = 0; i < present.length; i++) {
-    for (let j = i + 1; j < present.length; j++) {
-      const a = present[i];
-      const b = present[j];
-      const delta = Math.max(
-        Math.abs(a.color.r - b.color.r),
-        Math.abs(a.color.g - b.color.g),
-        Math.abs(a.color.b - b.color.b),
-      );
-      if (delta > 0 && delta < crowdedDelta) crowded.push({ a: a.index, b: b.index, delta });
-    }
-  }
-  crowded.sort((left, right) => left.delta - right.delta);
-  return { unusedIndices, crowded: crowded.slice(0, 12) };
-}
-
-/**
- * Count full-width tonal edges, split by how hard the step is.
- *
- * A dithered seam only perturbs alternate pixels, so its mean delta stays around half
- * the step and is filtered out. But a legitimate 10-band sky gradient also produces
- * nine edges, so counting them all would condemn every well-formed gradient. What
- * actually flattens a composition is a run of *strong* unrelated steps, so the strong
- * count is what the warning keys on and the total is kept as context.
- */
-function countHorizontalBands(
-  at: PixelAt,
-  width: number,
-  height: number,
-  alphaThreshold: number,
-  deltaThreshold: number,
-  strongThreshold: number,
-): { horizontalBands: number; strongBands: number } {
-  let bands = 0;
-  let strongBands = 0;
-  for (let y = 1; y < height; y++) {
-    let sum = 0;
-    let count = 0;
-    for (let x = 0; x < width; x++) {
-      const above = at(x, y - 1);
-      const below = at(x, y);
-      if (!above || !below || above.a < alphaThreshold || below.a < alphaThreshold) continue;
-      sum += Math.abs(luminanceOf(below) - luminanceOf(above));
-      count++;
-    }
-    if (count < width * 0.6) continue;
-    const mean = sum / count;
-    if (mean < deltaThreshold) continue;
-    bands++;
-    if (mean >= strongThreshold) strongBands++;
-  }
-  return { horizontalBands: bands, strongBands };
-}
-
-function coefficientOfVariation(values: number[]): number {
-  if (values.length < 2) return 0;
-  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
-  if (mean === 0) return 0;
-  const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
-  return Math.sqrt(variance) / Math.abs(mean);
-}
-
-/**
- * Presence checks: does the piece still *have* the things it needs?
- *
- * Every other metric here is a defect detector - it answers "is anything wrong".
- * That is a trap on its own: driving a defect score to zero flattens the piece,
- * because intentional texture (sparkle, grain, foliage) scores identically to noise.
- * A piece can be flawless on every defect metric and still be a dark, flat, lifeless
- * rectangle, so these measure the positive side instead.
- */
-function analyzePresence(
-  at: PixelAt,
-  width: number,
-  height: number,
-  alphaThreshold: number,
-  isTextured?: (x: number, y: number) => boolean,
-): {
-  valueRange: number;
-  darkShare: number;
-  lightShare: number;
-  brightestShare: number;
-  brightClusterShare: number;
-  planes: Array<{ y0: number; y1: number; mean: number }>;
-  flatestBand: { y0: number; y1: number; share: number; value: number };
-} {
-  const lum: number[] = [];
-  const rowMean: number[] = [];
-  for (let y = 0; y < height; y++) {
-    let sum = 0;
-    let count = 0;
-    for (let x = 0; x < width; x++) {
-      const c = at(x, y);
-      if (!c || c.a < alphaThreshold) continue;
-      const l = luminanceOf(c);
-      lum.push(l);
-      sum += l;
-      count++;
-    }
-    rowMean.push(count > 0 ? sum / count : -1);
-  }
-
-  // Value spread: a piece that has collapsed into a narrow band has lost its form
-  // even when every defect metric is clean.
-  let min = 255;
-  let max = 0;
-  for (const l of lum) {
-    if (l < min) min = l;
-    if (l > max) max = l;
-  }
-  const valueRange = lum.length > 0 ? max - min : 0;
-
-  // Weighting the extremes by how much of the canvas they occupy is what separates
-  // "a calm scene that is legitimately dark" from "everything went dark".
-  let dark = 0;
-  let light = 0;
-  for (const l of lum) {
-    if (l < 48) dark++;
-    if (l > 192) light++;
-  }
-  const total = Math.max(1, lum.length);
-  const darkShare = dark / total;
-  const lightShare = light / total;
-
-  // Light source detection. A scene that is genuinely lit has a *concentrated* bright
-  // region; a scene that is merely bright has many mid-to-light pixels spread evenly.
-  // Declared texture is excluded: sparkle, glitter and specular grain are by
-  // definition scattered highlights, so counting them would make every sunset lake
-  // look unlit no matter how solid its sun is.
-  let brightPixels = 0;
-  const brightMask = new Uint8Array(width * height);
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const c = at(x, y);
-      if (!c || c.a < alphaThreshold || luminanceOf(c) <= 192) continue;
-      if (isTextured?.(x, y)) continue;
-      brightPixels++;
-      brightMask[y * width + x] = 1;
-    }
-  }
-  // Largest 4-connected bright cluster, by flood fill over the mask.
-  let brightCluster = 0;
-  const seen = new Uint8Array(width * height);
-  const stack: number[] = [];
-  for (let start = 0; start < brightMask.length; start++) {
-    if (brightMask[start] === 0 || seen[start] === 1) continue;
-    let size = 0;
-    stack.length = 0;
-    stack.push(start);
-    seen[start] = 1;
-    while (stack.length > 0) {
-      const index = stack.pop()!;
-      size++;
-      const cx = index % width;
-      const cy = (index - cx) / width;
-      for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as Array<[number, number]>) {
-        const nx = cx + ox;
-        const ny = cy + oy;
-        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
-        const next = ny * width + nx;
-        if (brightMask[next] === 0 || seen[next] === 1) continue;
-        seen[next] = 1;
-        stack.push(next);
-      }
-    }
-    if (size > brightCluster) brightCluster = size;
-  }
-
-  // Four horizontal planes, so depth can be checked rather than assumed.
-  const planes: Array<{ y0: number; y1: number; mean: number }> = [];
-  const planeHeight = Math.max(1, Math.floor(height / 4));
-  for (let p = 0; p < 4; p++) {
-    const y0 = p * planeHeight;
-    const y1 = p === 3 ? height : y0 + planeHeight;
-    let sum = 0;
-    let count = 0;
-    for (let y = y0; y < y1; y++) {
-      if (rowMean[y] < 0) continue;
-      sum += rowMean[y];
-      count++;
-    }
-    planes.push({ y0, y1, mean: count > 0 ? sum / count : -1 });
-  }
-
-  // The most common single value: a "dead flat" region is a large share of the
-  // frame sitting on one colour, which reads as a hole rather than a surface.
-  const histogram = new Uint32Array(256);
-  for (const l of lum) histogram[Math.max(0, Math.min(255, Math.round(l)))]++;
-  let flatValue = 0;
-  let flatCount = 0;
-  for (let i = 0; i < 256; i++) {
-    if (histogram[i] > flatCount) {
-      flatCount = histogram[i];
-      flatValue = i;
-    }
-  }
-  return {
-    valueRange,
-    darkShare,
-    lightShare,
-    brightestShare: brightPixels / total,
-    brightClusterShare: brightCluster / total,
-    planes,
-    flatestBand: { y0: 0, y1: height, share: flatCount / total, value: flatValue },
-  };
-}
-
-/**
- * Regularity of the silhouette's skyline.
- *
- * Take the topmost solid pixel per column, find the peaks in that profile, and measure
- * how evenly they are spaced and how uniform their height is. Near-zero variation over
- * five or more peaks is the signature of a hedge, a picket fence or a row of identical
- * props - the procedural-repetition failure that no existing metric catches.
- */
-function analyzeSkylineRhythm(
-  at: PixelAt,
-  width: number,
-  height: number,
-  alphaThreshold: number,
-): { peaks: number; spacingCV: number; heightCV: number; uniform: boolean; measurable: boolean; note: string } {
-  const skyline: Array<{ x: number; y: number }> = [];
-  let offTopEdge = 0;
-  for (let x = 0; x < width; x++) {
-    for (let y = 0; y < height; y++) {
-      const c = at(x, y);
-      if (c && c.a >= alphaThreshold) {
-        skyline.push({ x, y });
-        if (y > 0) offTopEdge++;
-        break;
-      }
-    }
-  }
-  const unmeasurable = (note: string) => ({
-    peaks: 0, spacingCV: 0, heightCV: 0, uniform: false, measurable: false, note,
-  });
-  // A canvas that is opaque right down to the top edge has no silhouette at all - a
-  // full-bleed background or a landscape whose sky fills the frame. Say so rather than
-  // returning `peaks: 0`, which reads like "checked, nothing wrong".
-  if (skyline.length >= width * 0.9 && offTopEdge === 0) {
-    return unmeasurable('opaque from the top edge: the frame has no silhouette to measure');
-  }
-  if (skyline.length < 9) return unmeasurable('too few columns contain artwork');
-
-  const peaks: Array<{ x: number; y: number }> = [];
-  for (let i = 1; i < skyline.length - 1; i++) {
-    const y = skyline[i].y;
-    const left = skyline[i - 1].y;
-    const right = skyline[i + 1].y;
-    // Require a real rise so a flat top edge does not manufacture hundreds of peaks.
-    if (y <= left && y <= right && (left - y >= 2 || right - y >= 2)) {
-      peaks.push({ x: skyline[i].x, y });
-    }
-  }
-  if (peaks.length < 3) {
-    return {
-      peaks: peaks.length, spacingCV: 0, heightCV: 0, uniform: false, measurable: true,
-      note: `only ${peaks.length} peak(s) in the silhouette - too few to judge repetition`,
-    };
-  }
-
-  const spacings: number[] = [];
-  for (let i = 1; i < peaks.length; i++) spacings.push(peaks[i].x - peaks[i - 1].x);
-  const spacingCV = coefficientOfVariation(spacings);
-  const heightCV = coefficientOfVariation(peaks.map((peak) => peak.y));
-  return {
-    peaks: peaks.length,
-    spacingCV,
-    heightCV,
-    uniform: peaks.length >= 5 && spacingCV < 0.18 && heightCV < 0.2,
-    measurable: true,
-    note: 'spacing and height variation measured across the silhouette peaks',
-  };
-}
-
 /**
  * How many distinct coverage levels a pattern can actually produce.
  *
@@ -1369,920 +978,6 @@ function ditherAdvisories(params: Record<string, unknown>): string[] {
     );
   }
   return notes;
-}
-
-/**
- * Objective heuristic report for the perceptual problems agents cannot see in a
- * thumbnail: isolated dither speckles, high-frequency outliers, clipped highlights
- * and an over-saturated edge field. It is intentionally a report, not a mutation;
- * `despeckle` and `antialias` are the matching fix commands.
- */
-function analyzeQuality(sprite: Sprite, frameRef: number | string | undefined, options: QualityAnalysisOptions = {}): Record<string, unknown> {
-  if (
-    options.tilemap &&
-    options.underlay &&
-    (options.tilemap.tileWidth !== options.underlay.tileWidth || options.tilemap.tileHeight !== options.underlay.tileHeight)
-  ) {
-    throw new Error('Tilemap quality underlay must use the same cell size as the active map.');
-  }
-  if (options.tilemap && sprite.tileset && options.replaceEmpty !== undefined) {
-    const available = tileCount(sprite.tileset);
-    if (options.replaceEmpty < -1 || options.replaceEmpty >= available) {
-      throw new Error(`replaceEmpty ${options.replaceEmpty} is outside the ${available}-tile tileset.`);
-    }
-  }
-  const tilemapAnalysis = options.tilemap && sprite.tileset
-    ? analyzeTilemapQuality(options.tilemap, sprite.tileset)
-    : null;
-  const resolvedAssetType = resolveQualityAssetType(sprite, options.assetType, tilemapAnalysis !== null);
-  const frame = options.tilemap ? null : resolveFrame(sprite, frameRef ?? 0);
-  let buffer: PixelBuffer;
-  if (options.tilemap) {
-    if (options.rect) {
-      // A crop is enough for the report, so avoid allocating a potentially huge
-      // standalone map just to throw most of it away.
-      buffer = new PixelBuffer(options.rect.w, options.rect.h);
-      if (options.underlay) {
-        blitTilemap(buffer, sprite.tileset!, options.underlay, {
-          offsetX: -options.rect.x,
-          offsetY: -options.rect.y,
-          blend: 'copy',
-        });
-      }
-      blitTilemap(buffer, sprite.tileset!, options.tilemap, {
-        offsetX: -options.rect.x,
-        offsetY: -options.rect.y,
-        blend: 'over',
-        replaceEmpty: options.replaceEmpty ?? null,
-      });
-    } else {
-      const sourceWidth = options.tilemap.width * options.tilemap.tileWidth;
-      const sourceHeight = options.tilemap.height * options.tilemap.tileHeight;
-      if (sourceWidth * sourceHeight > 16_777_216) {
-        throw new Error(
-          `Tilemap analysis would render ${sourceWidth}x${sourceHeight} pixels. Pass a smaller pixel-space \`rect\`.`,
-        );
-      }
-      if (options.underlay) {
-        buffer = renderTilemap(sprite.tileset!, options.underlay, { blend: 'copy' });
-        blitTilemap(buffer, sprite.tileset!, options.tilemap, {
-          blend: 'over',
-          replaceEmpty: options.replaceEmpty ?? null,
-        });
-      } else {
-        buffer = renderTilemap(sprite.tileset!, options.tilemap, {
-          blend: 'over',
-          replaceEmpty: options.replaceEmpty ?? null,
-        });
-      }
-    }
-  } else {
-    const full = compositeFrame(sprite, frame!.id);
-    buffer = options.rect ? extractRegion(full, options.rect) : full;
-  }
-  const tilemapMode = options.tilemap !== undefined;
-  const { width, height, data } = buffer;
-  const total = width * height;
-  const noiseThreshold = Math.max(0, Math.min(255, options.noiseThreshold ?? 40));
-  const alphaThreshold = Math.max(1, Math.min(255, Math.floor(options.alphaThreshold ?? 1)));
-  const paletteColors = sprite.palette.colors;
-  const paletteSet = new Set(paletteColors.map((c) => ((c.r & 255) << 24) | ((c.g & 255) << 16) | ((c.b & 255) << 8) | (c.a & 255)));
-  const unique = new Set<number>();
-  let opaque = 0;
-  let semi = 0;
-  let transparent = 0;
-  let palettePixels = 0;
-  let luminanceSum = 0;
-  let luminanceSq = 0;
-  let luminanceCount = 0;
-  let edgeSum = 0;
-  let edgeCount = 0;
-  let isolated = 0;
-  let outliers = 0;
-  let texturedOutliers = 0;
-  let intentionalPixels = 0;
-  let overexposed = 0;
-  // textureRects arrive in canvas space; the analysis may run on an extracted rect.
-  const textureOffsetX = options.rect?.x ?? 0;
-  const textureOffsetY = options.rect?.y ?? 0;
-  const inCanvasRects = (
-    x: number,
-    y: number,
-    rects: Array<{ x: number; y: number; w: number; h: number }> | undefined,
-  ): boolean => {
-    if (!rects || rects.length === 0) return false;
-    const cx = x + textureOffsetX;
-    const cy = y + textureOffsetY;
-    return rects.some((rect) => cx >= rect.x && cy >= rect.y && cx < rect.x + rect.w && cy < rect.y + rect.h);
-  };
-  const isTextured = (x: number, y: number): boolean => inCanvasRects(x, y, options.textureRects);
-  const isIntentional = (x: number, y: number): boolean =>
-    inCanvasRects(x, y, options.intentionalDetailRects);
-  const isExemptDetail = (x: number, y: number): boolean => isTextured(x, y) || isIntentional(x, y);
-  const offsets: Array<[number, number]> = [
-    [0, -1], [1, -1], [1, 0], [1, 1],
-    [0, 1], [-1, 1], [-1, 0], [-1, -1],
-  ];
-  const at = (x: number, y: number): { r: number; g: number; b: number; a: number } | null => {
-    if (x < 0 || y < 0 || x >= width || y >= height) return null;
-    const i = (y * width + x) * 4;
-    return { r: data[i], g: data[i + 1], b: data[i + 2], a: data[i + 3] };
-  };
-  const packed = (c: { r: number; g: number; b: number; a: number }): number =>
-    ((c.r & 255) << 24) | ((c.g & 255) << 16) | ((c.b & 255) << 8) | (c.a & 255);
-  const distance = (a: { r: number; g: number; b: number }, b: { r: number; g: number; b: number }): number =>
-    Math.max(Math.abs(a.r - b.r), Math.abs(a.g - b.g), Math.abs(a.b - b.b));
-
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const c = at(x, y)!;
-      const key = packed(c);
-      const solid = c.a >= alphaThreshold;
-      if (!solid) {
-        if (c.a === 0) transparent++;
-        else semi++;
-        continue;
-      }
-      opaque++;
-      unique.add(key);
-      if (paletteSet.has(key)) palettePixels++;
-      const luminance = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
-      luminanceSum += luminance;
-      luminanceSq += luminance * luminance;
-      luminanceCount++;
-      const intentional = isIntentional(x, y);
-      if (intentional) intentionalPixels++;
-      if (luminance > 235 && !intentional) overexposed++;
-
-      let neighbours = 0;
-      let matching = 0;
-      let nr = 0;
-      let ng = 0;
-      let nb = 0;
-      for (const [ox, oy] of offsets) {
-        const n = at(x + ox, y + oy);
-        if (!n || n.a < alphaThreshold) continue;
-        neighbours++;
-        nr += n.r;
-        ng += n.g;
-        nb += n.b;
-        if (distance(c, n) <= 8) matching++;
-      }
-      for (const [ox, oy] of [[1, 0], [0, 1]] as Array<[number, number]>) {
-        const n = at(x + ox, y + oy);
-        if (!n || n.a < alphaThreshold) continue;
-        if (intentional && isIntentional(x + ox, y + oy)) continue;
-        edgeSum += Math.abs(luminance - (0.2126 * n.r + 0.7152 * n.g + 0.0722 * n.b));
-        edgeCount++;
-      }
-      if (neighbours === 0) {
-        if (!intentional) isolated++;
-      } else if (matching <= 1) {
-        const avg = { r: nr / neighbours, g: ng / neighbours, b: nb / neighbours };
-        if (distance(c, avg) > noiseThreshold) {
-          if (isExemptDetail(x, y)) texturedOutliers++;
-          else outliers++;
-        }
-      }
-    }
-  }
-
-  const meanLuminance = luminanceCount > 0 ? luminanceSum / luminanceCount : 0;
-  const luminanceStd = luminanceCount > 0 ? Math.sqrt(Math.max(0, luminanceSq / luminanceCount - meanLuminance * meanLuminance)) : 0;
-  const meanEdge = edgeCount > 0 ? edgeSum / edgeCount : 0;
-  const isolatedRatio = opaque > 0 ? isolated / opaque : 0;
-  const outlierRatio = opaque > 0 ? outliers / opaque : 0;
-  const overexposedRatio = opaque > 0 ? overexposed / opaque : 0;
-  const paletteUsed = paletteColors.filter((c) => {
-    const key = packed(c);
-    return unique.has(key);
-  }).length;
-  const outsidePaletteRatio = opaque > 0 ? Math.max(0, 1 - palettePixels / opaque) : 0;
-  const paletteUsage = analyzePaletteUsage(paletteColors, unique, 6);
-  const bands = countHorizontalBands(at, width, height, alphaThreshold, 20, 32);
-  const rhythm = analyzeSkylineRhythm(at, width, height, alphaThreshold);
-  const landscape = analyzeLandscape(buffer, alphaThreshold);
-  // Only `textureRects` may suppress the light-source probe. `intentionalDetailRects`
-  // is documented as exempting isolated/outlier/edge/overexposed pixels, and letting it
-  // filter bright pixels here would silently flip `hasLightSource` for a whole frame.
-  const presence = analyzePresence(at, width, height, alphaThreshold, isTextured);
-  const planeMeans = presence.planes.map((p) => p.mean).filter((m) => m >= 0);
-  // Depth only exists if adjacent planes differ. Equal means mean the scene has
-  // stacked into one tonal slab, which no defect metric notices.
-  const planeSeparation = planeMeans.length >= 2
-    ? Math.min(
-        ...planeMeans.slice(1).map((mean, index) => Math.abs(mean - planeMeans[index])),
-      )
-    : -1;
-  // Named `defectScore` rather than "softness": a high score means the measurable
-  // defects are absent, which is necessary but not sufficient. A deliberately
-  // sanded-flat piece scores 100 here, which is exactly the trap this had become.
-  const defectScore = Math.max(
-    0,
-    Math.min(
-      100,
-      100 -
-        Math.min(30, isolatedRatio * 1200) -
-        Math.min(25, outlierRatio * 700) -
-        Math.min(25, Math.max(0, meanEdge - 10) * 2.2) -
-        Math.min(20, overexposedRatio * 500),
-    ),
-  );
-
-  const warnings: Array<{ code: string; severity: 'info' | 'warning'; message: string }> = [];
-  const rasterSeverity = tilemapMode ? 'info' as const : 'warning' as const;
-  const rasterContext = tilemapMode
-    ? ' In tilemap mode this is tile texture evidence, not an automatic defect; inspect `structure.tilemap` and the debug preview before changing pixels.'
-    : '';
-  if (isolatedRatio > 0.005) {
-    warnings.push({
-      code: 'isolated_pixels',
-      severity: rasterSeverity,
-      message: `${isolated} isolated solid pixels (${(isolatedRatio * 100).toFixed(2)}%). Run \`despeckle\` under a clip or rect to remove single-pixel noise.${rasterContext}`,
-    });
-  }
-  if (outlierRatio > 0.01) {
-    const exempt = options.textureRects?.length ?? 0;
-    warnings.push({
-      code: 'high_frequency_noise',
-      severity: rasterSeverity,
-      message:
-        `${(outlierRatio * 100).toFixed(2)}% of solid pixels are colour outliers against their neighbourhood` +
-        (exempt > 0 ? `, excluding ${exempt} declared texture region(s)` : '') +
-        '. If this area is deliberate texture - sparkle, grain, foliage, water ripples or crop rows - pass it as `textureRects` rather than despeckling it; otherwise prefer cluster dither (`cluster2`/`cluster4`) or `despeckle`.' +
-        rasterContext,
-    });
-  }
-  if (meanEdge > 16) {
-    warnings.push({
-      code: 'high_edge_contrast',
-      severity: rasterSeverity,
-      // This one is a judgement call, not a defect, and a hard "run antialias" here
-      // contradicts the craft guide: blending is for curves only, at a low amount, and
-      // it pushes colours off a locked palette. An agent took this message literally
-      // once and would have softened a sprite that was already correct.
-      message:
-        `Mean adjacent luminance delta is ${meanEdge.toFixed(1)}; the edge field is harsh. ` +
-        'A high value is normal for pixel art and is not on its own a defect - hard edges are the medium. ' +
-        'Prefer a one-step ramp at the hottest transition over blending. Only if the harshness is on a ' +
-        'curve and the step is genuinely ugly there, `antialias` with a low `amount` (0.3-0.5) and a `clip` ' +
-        'to the silhouette, and never on a palette-locked document.' +
-        rasterContext,
-    });
-  }
-  if (overexposedRatio > 0.02) {
-    warnings.push({
-      code: 'clipped_highlights',
-      severity: rasterSeverity,
-      message: `${(overexposedRatio * 100).toFixed(2)}% of solid pixels are near-white. Reduce glow/bloom coverage; a soft pixel piece keeps a value ceiling, not a white-out.${rasterContext}`,
-    });
-  }
-  if (paletteUsage.unusedIndices.length > 0) {
-    const slots = paletteUsage.unusedIndices;
-    const preview = slots.slice(0, 12).join(', ');
-    warnings.push({
-      code: 'unused_palette_slots',
-      severity: 'info',
-      message: `${slots.length} of ${paletteColors.length} palette slots are unused: indices ${preview}${slots.length > 12 ? ', ...' : ''}. Use them deliberately or drop them; \`palette.unusedIndices\` lists them all.`,
-    });
-  }
-  if (paletteUsage.crowded.length > 0) {
-    const worst = paletteUsage.crowded[0];
-    warnings.push({
-      code: 'palette_crowding',
-      severity: 'info',
-      message: `${paletteUsage.crowded.length} in-use palette pair(s) sit closer than 6/255 on the max channel and will read as the same tone (closest: slots ${worst.a} and ${worst.b}, delta ${worst.delta}). Widen the ramp or drop one of the pair.`,
-    });
-  }
-  if (tilemapAnalysis) {
-    if (!tilemapAnalysis.dataLengthValid) {
-      warnings.push({
-        code: 'tilemap_data_length_mismatch',
-        severity: 'warning',
-        message: `Tilemap data has ${tilemapAnalysis.cells} expected cells but stores ${tilemapAnalysis.dataLength} values. Resize or recreate the map before export.`,
-      });
-    }
-    if (tilemapAnalysis.invalid > 0) {
-      warnings.push({
-        code: 'tilemap_invalid_indices',
-        severity: 'warning',
-        message: `${tilemapAnalysis.invalid} cell(s) reference tiles outside the ${tilemapAnalysis.tileCount}-tile tileset. ${tilemapAnalysis.invalidExamples.length} coordinates are listed in \`structure.tilemap.invalidExamples\`.`,
-      });
-    }
-    if (!tilemapAnalysis.tileSizeMatchesTileset) {
-      warnings.push({
-        code: 'tilemap_tile_size_mismatch',
-        severity: 'info',
-        message: `Tilemap cells are ${tilemapAnalysis.tileWidth}x${tilemapAnalysis.tileHeight}, but the source tiles are a different size. This is valid when scaling is intentional; otherwise alpha-mask and Tiled alignment will be ambiguous.`,
-      });
-    }
-    if (tilemapAnalysis.validFilled === 0) {
-      warnings.push({
-        code: 'tilemap_empty',
-        severity: 'warning',
-        message: 'The tilemap has no valid filled cells. Nothing will render or export as terrain.',
-      });
-    }
-    if (
-      tilemapAnalysis.dominantVariant &&
-      tilemapAnalysis.validFilled >= 32 &&
-      tilemapAnalysis.dominantVariant.ratio > 0.78
-    ) {
-      warnings.push({
-        code: 'tilemap_dominant_variant',
-        severity: 'info',
-        message: `Tile ${tilemapAnalysis.dominantVariant.tile} covers ${(tilemapAnalysis.dominantVariant.ratio * 100).toFixed(1)}% of the map. Use \`stroke_tilemap\` with weighted \`tiles\` and \`avoidRepeats\` when that variant is texture rather than a deliberate road/water field.`,
-      });
-    }
-    if (
-      tilemapAnalysis.repetition.sameTileRatio > 0.72 &&
-      tilemapAnalysis.variants.length > 1 &&
-      tilemapAnalysis.validFilled >= 32
-    ) {
-      warnings.push({
-        code: 'tilemap_repetitive_tiles',
-        severity: 'info',
-        message: `${(tilemapAnalysis.repetition.sameTileRatio * 100).toFixed(1)}% of tile-to-tile adjacencies repeat the same index. This is expected for fields, water and roads; use weighted variants if the repetition reads as wallpaper.`,
-      });
-    }
-    if (
-      tilemapAnalysis.terrain.singletonComponents > 0 &&
-      tilemapAnalysis.terrain.singletonComponents / Math.max(1, tilemapAnalysis.terrain.components) > 0.35
-    ) {
-      warnings.push({
-        code: 'tilemap_fragmented_terrain',
-        severity: 'info',
-        message: `${tilemapAnalysis.terrain.singletonComponents} of ${tilemapAnalysis.terrain.components} non-empty terrain components are single cells. Inspect scale and \`terrain.openEdges\`; a sparse map may be intentional.`,
-      });
-    }
-  }
-  if (bands.strongBands > 3) {
-    warnings.push({
-      code: 'horizontal_banding',
-      severity: rasterSeverity,
-      message: `${bands.strongBands} strong full-width tonal edges (${bands.horizontalBands} edges in total). Past about three strong ones the composition reads as stacked stripes rather than depth. Break them with a vertical or diagonal element - a light path, a foreground silhouette, a waterfall.${rasterContext}`,
-    });
-  }
-  // Full-bleed landscape diagnostics are separate from defectScore. They report the
-  // internal horizon/ridge/waterline candidates and whether a coherent vertical or
-  // diagonal guide actually crosses the lower frame; the old alpha skyline rhythm
-  // cannot see any of this when the sky is opaque from y=0.
-  const landscapeRepeated =
-    (landscape.rhythm.lowerBandUniform &&
-      landscape.horizontalBoundaries.some((candidate) => candidate.strength >= 10)) ||
-    Boolean(
-      landscape.waterline &&
-      landscape.waterline.strength >= 10 &&
-      landscape.waterline.coverage >= 0.65 &&
-      landscape.waterline.regularity > 0.84,
-    );
-  if (landscape.measurable && landscape.scene === 'landscape' && !landscape.guideLines.present && landscapeRepeated) {
-    warnings.push({
-      code: 'landscape_repeated_bands',
-      severity: 'warning',
-      message: `Landscape structure is measurable: ${landscape.horizontalBoundaries.length} internal horizontal boundary candidate(s), including waterline ${landscape.waterline ? `near y=${landscape.waterline.y}` : 'not confidently located'}. Their lower-band rhythm is regular, but no vertical/diagonal guiding line was detected. Vary the terrain/water edges or add one coherent path, foreground silhouette, or waterfall.`,
-    });
-  }
-  if (
-    landscape.measurable &&
-    landscape.scene === 'landscape' &&
-    !landscape.guideLines.present &&
-    !landscapeRepeated &&
-    landscape.horizontalBoundaries.length >= 3 &&
-    landscape.horizontalBoundaries.some((candidate) => candidate.strength >= 10)
-  ) {
-    warnings.push({
-      code: 'landscape_missing_guide',
-      severity: 'info',
-      message: 'Several internal landscape boundaries are measurable, but no confident vertical or diagonal guide was found. Check the whole composition at 100% before accepting the horizontal structure.',
-    });
-  }
-  // Presence checks. These fire on a piece that is *missing* something, which is the
-  // failure the defect metrics above structurally cannot see.
-  // A strong local maximum is the signature of a light source. If there is no such a
-  // peak, a scene that needs one (a sky, a room, a landscape) has lost its key light,
-  // which no aggregate - a mean, a standard deviation - can express: a dim image and a
-  // dark image have the same average.
-  // A light source is a *concentrated* highlight. Compare the largest bright cluster
-  // against the total bright area rather than using a fixed threshold, so the check
-  // scales with how bright a piece is overall: an evenly-lit sky is bright but not lit.
-  const brightestShare = presence.brightestShare;
-  const brightClusterShare = presence.brightClusterShare;
-  const concentration = brightestShare > 0 ? brightClusterShare / brightestShare : 0;
-  const hasLightSource = brightestShare > 0.0008 && concentration > 0.3;
-  if (!hasLightSource && presence.valueRange >= 90 && brightestShare > 0.0008) {
-    warnings.push({
-      code: 'no_light_source',
-      severity: 'warning',
-      message:
-        `Bright pixels cover ${(brightestShare * 100).toFixed(2)}% of the canvas but the largest single bright cluster is only ${(concentration * 100).toFixed(0)}% of them, so the light is spread evenly and the piece reads as ambient rather than lit. A scene needs a concentrated source - a sun, a lamp, a specular edge. If the scattered highlights are deliberate sparkle or water glitter, declare them as \`textureRects\` so they stop counting against the light source.`,
-    });
-  }
-  if (presence.valueRange < 90) {
-    warnings.push({
-      code: 'narrow_value_range',
-      severity: 'warning',
-      message: `The whole piece spans only ${presence.valueRange.toFixed(0)}/255 of luminance. Without a wide spread there are no darks, no lights and no room to read form - a clean defect score with a narrow range means the shading was sanded away, not that the piece is correct.`,
-    });
-  }
-  if (presence.darkShare > 0.75) {
-    warnings.push({
-      code: 'value_collapse_dark',
-      severity: 'warning',
-      message: `${(presence.darkShare * 100).toFixed(1)}% of solid pixels sit below luminance 48. Deep shadow is legitimate, but past roughly three quarters of the canvas it reads as an underexposed image rather than a dark scene.`,
-    });
-  }
-  // Flag a pair of planes that sit at the same value, but only when the piece as a
-  // whole has real tonal range. Without the range guard this fires on scenes that are
-  // legitimately narrow-band (a moonlit night, a flat graphic) and buries the collapse
-  // warning that actually matters.
-  if (planeSeparation >= 0 && planeSeparation < 6 && presence.valueRange >= 90) {
-    const pair = planeMeans
-      .map((mean, index) => ({ index, delta: index > 0 ? Math.abs(mean - planeMeans[index - 1]) : Infinity }))
-      .filter((entry) => entry.delta < 6)
-      .map((entry) => `plane ${entry.index - 1} and ${entry.index} (${planeMeans[entry.index - 1].toFixed(0)} vs ${planeMeans[entry.index].toFixed(0)})`)
-      .join(', ');
-    warnings.push({
-      code: 'flat_depth_planes',
-      severity: 'warning',
-      message: `${pair} sit at nearly the same value, so that depth boundary is not readable (all plane means: ${planeMeans.map((m) => m.toFixed(0)).join(', ')}). Push one plane darker or the other lighter.`,
-    });
-  }
-  if (presence.flatestBand.share > 0.45) {
-    warnings.push({
-      code: 'dead_flat_region',
-      severity: rasterSeverity,
-      message: `${(presence.flatestBand.share * 100).toFixed(1)}% of the canvas sits on a single luminance value (about ${presence.flatestBand.value}). A large uniform area reads as a hole in the piece; give it a value gradient or break it with texture.${rasterContext}`,
-    });
-  }
-  if (rhythm.uniform) {
-    warnings.push({
-      code: 'uniform_rhythm',
-      severity: 'warning',
-      message: `The silhouette resolves into ${rhythm.peaks} peaks with very even spacing (CV ${rhythm.spacingCV.toFixed(2)}) and height (CV ${rhythm.heightCV.toFixed(2)}), which reads as a hedge or wallpaper. Vary spacing and size, and leave gaps.`,
-    });
-  }
-  if (sprite.paletteLocked && outsidePaletteRatio > 0.1) {
-    warnings.push({
-      code: 'outside_palette_pixels',
-      severity: 'warning',
-      message: `${(outsidePaletteRatio * 100).toFixed(1)}% of solid pixels are not exact palette swatches, usually from translucent blends. Use opaque cluster dither if palette purity matters.`,
-    });
-  }
-
-  const regions: Array<Record<string, unknown>> = [];
-  const grid = Math.max(1, Math.floor(options.grid ?? 1));
-  if (grid > 1) {
-    const cellWidth = Math.ceil(width / grid);
-    const cellHeight = Math.ceil(height / grid);
-    for (let ry = 0; ry < grid; ry++) {
-      for (let rx = 0; rx < grid; rx++) {
-        const x0 = rx * cellWidth;
-        const y0 = ry * cellHeight;
-        const x1 = Math.min(width, x0 + cellWidth);
-        const y1 = Math.min(height, y0 + cellHeight);
-        let regionOpaque = 0;
-        let regionIsolated = 0;
-        let regionOutliers = 0;
-        let regionEdgeSum = 0;
-        let regionEdgeCount = 0;
-        for (let y = y0; y < y1; y++) {
-          for (let x = x0; x < x1; x++) {
-            const c = at(x, y)!;
-            if (c.a < alphaThreshold) continue;
-            regionOpaque++;
-            let neighbours = 0;
-            let matching = 0;
-            let nr = 0;
-            let ng = 0;
-            let nb = 0;
-            for (const [ox, oy] of offsets) {
-              const n = at(x + ox, y + oy);
-              if (!n || n.a < alphaThreshold) continue;
-              neighbours++;
-              nr += n.r;
-              ng += n.g;
-              nb += n.b;
-              if (distance(c, n) <= 8) matching++;
-            }
-            if (neighbours === 0) {
-              regionIsolated++;
-            } else if (matching <= 1 && distance(c, { r: nr / neighbours, g: ng / neighbours, b: nb / neighbours }) > noiseThreshold) {
-              regionOutliers++;
-            }
-            for (const [ox, oy] of [[1, 0], [0, 1]] as Array<[number, number]>) {
-              const n = at(x + ox, y + oy);
-              if (!n || n.a < alphaThreshold) continue;
-              const lum = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
-              regionEdgeSum += Math.abs(lum - (0.2126 * n.r + 0.7152 * n.g + 0.0722 * n.b));
-              regionEdgeCount++;
-            }
-          }
-        }
-        regions.push({
-          x: x0,
-          y: y0,
-          w: x1 - x0,
-          h: y1 - y0,
-          opaque: regionOpaque,
-          isolated: regionIsolated,
-          outliers: regionOutliers,
-          meanAdjacentDelta: regionEdgeCount > 0 ? regionEdgeSum / regionEdgeCount : 0,
-        });
-      }
-    }
-  }
-
-  const characterMode = resolvedAssetType === 'character';
-  // A character is not a horizon: full-width bands, scene rhythm and depth-plane
-  // findings describe a backdrop, not a figure, so they are dropped rather than
-  // reported as if the artist had got the silhouette wrong.
-  const reportedWarnings = characterMode
-    ? warnings.filter((warning) =>
-        warning.code !== 'horizontal_banding' &&
-        warning.code !== 'uniform_rhythm' &&
-        warning.code !== 'flat_depth_planes' &&
-        !warning.code.startsWith('landscape_'),
-      )
-    : warnings;
-
-  return {
-    source: options.tilemap
-      ? {
-          kind: 'tilemap',
-          id: options.tilemap.id,
-          name: options.tilemap.name,
-          underlay: options.underlay ? { id: options.underlay.id, name: options.underlay.name } : null,
-        }
-      : { kind: 'frame', frame: frame ? sprite.frames.findIndex((f) => f.id === frame.id) : 0, frameId: frame?.id ?? null },
-    frame: frame ? sprite.frames.findIndex((f) => f.id === frame.id) : null,
-    frameId: frame?.id ?? null,
-    width,
-    height,
-    rect: options.rect ?? null,
-    pixels: total,
-    opaque,
-    semiTransparent: semi,
-    transparent,
-    opaqueRatio: total > 0 ? opaque / total : 0,
-    uniqueColors: unique.size,
-    palette: {
-      size: paletteColors.length,
-      used: paletteUsed,
-      unused: paletteColors.length - paletteUsed,
-      unusedIndices: paletteUsage.unusedIndices,
-      crowded: paletteUsage.crowded,
-      locked: sprite.paletteLocked ?? false,
-      outsideRatio: outsidePaletteRatio,
-    },
-    structure: {
-      horizontalBands: bands.horizontalBands,
-      strongBands: bands.strongBands,
-      rhythm,
-      // The single home for the landscape analysis. It used to be reachable at
-      // `landscape` and `structure.landscape` as well, and its horizon/ridge/
-      // waterline/guideLines were each repeated one level up: five copies of the same
-      // object, 2.4KB of a 4.9KB response for a 96x96 sprite. `horizon`, `ridge`,
-      // `waterline` and `guideLines` are read off `structure.landscape` directly.
-      landscape: reportLandscape(landscape),
-      ...(tilemapAnalysis ? { tilemap: tilemapAnalysis } : {}),
-    },
-    presence: {
-      valueRange: presence.valueRange,
-      darkShare: presence.darkShare,
-      // `lightShare` was an alias of `brightestShare` on every input, and both were
-      // also equal to the top-level `overexposedRatio`. Three names for one number;
-      // the one that says what it measures is kept.
-      brightestShare,
-      brightClusterShare,
-      lightConcentration: concentration,
-      hasLightSource,
-      flatShare: presence.flatestBand.share,
-      planeSeparation,
-      planes: presence.planes,
-    },
-    luminance: {
-      mean: meanLuminance,
-      std: luminanceStd,
-    },
-    edges: {
-      meanAdjacentDelta: meanEdge,
-    },
-    noise: {
-      isolated,
-      isolatedRatio,
-      outliers,
-      outlierRatio,
-      texturedOutliers,
-      textureRects: options.textureRects ?? [],
-      intentionalPixels,
-      intentionalDetailRects: options.intentionalDetailRects ?? [],
-      threshold: noiseThreshold,
-    },
-    overexposedRatio,
-    assetType: resolvedAssetType,
-    assetTypeRequested: options.assetType ?? null,
-    assetTypeIsLabel: resolvedAssetType !== 'character',
-    defectScore,
-    defectScoreContext: tilemapMode
-      ? 'tilemap-texture-diagnostic'
-      : resolvedAssetType === 'character'
-        ? 'character-raster-diagnostic'
-        : `${resolvedAssetType}-raster-diagnostic`,
-    ...(regions.length > 0 ? { regions } : {}),
-    warnings: reportedWarnings,
-  };
-}
-
-/**
- * The landscape analysis, trimmed to what it actually found.
- *
- * On a character sprite there is no landscape: `measurable` is false, every candidate
- * is null, and the block is ~1KB of scaffolding that says nothing. Returning the verdict
- * and the two words that explain it costs 60 bytes instead. The full analysis is still
- * returned whenever the frame is a scene, which is when it is worth reading.
- */
-function reportLandscape(landscape: LandscapeAnalysis): Record<string, unknown> {
-  if (landscape.measurable) return landscape as unknown as Record<string, unknown>;
-  return {
-    measurable: false,
-    scene: landscape.scene,
-    conclusion: landscape.conclusion,
-  };
-}
-
-/**
- * The numbers the craft guide actually tells a model to read, and nothing else.
- *
- * `brief` is not a summary of the report, it is the subset a model acts on. The full
- * response keeps every diagnostic; this drops the arrays, the per-plane means, the
- * region breakdown, the landscape block and the warning prose, which together are most
- * of the bytes and none of the decisions. Warning *messages* go too: the code is what
- * branches, and the text is one more call away.
- */
-function briefQualityReport(report: Record<string, unknown>): Record<string, unknown> {
-  const at = (path: string): unknown => path.split('.').reduce<unknown>((node, key) => (node as Record<string, unknown>)?.[key], report);
-  const number = (path: string): number | undefined => {
-    const value = at(path);
-    return typeof value === 'number' ? value : undefined;
-  };
-  const pick = (source: Record<string, unknown>, keys: string[]): Record<string, unknown> => {
-    const out: Record<string, unknown> = {};
-    for (const key of keys) if (source[key] !== undefined) out[key] = source[key];
-    return out;
-  };
-  const noise = (report.noise ?? {}) as Record<string, unknown>;
-  const edges = (report.edges ?? {}) as Record<string, unknown>;
-  const palette = (report.palette ?? {}) as Record<string, unknown>;
-  const structure = (report.structure ?? {}) as Record<string, unknown>;
-  const presence = (report.presence ?? {}) as Record<string, unknown>;
-  const warnings = (report.warnings ?? []) as Array<Record<string, unknown>>;
-
-  return {
-    ok: true,
-    brief: true,
-    frame: report.frame,
-    width: report.width,
-    height: report.height,
-    opaqueRatio: report.opaqueRatio,
-    assetType: report.assetType,
-    defectScore: report.defectScore,
-    defectScoreContext: report.defectScoreContext,
-    noise: pick(noise, ['isolated', 'isolatedRatio', 'outliers', 'outlierRatio', 'texturedOutliers']),
-    edges: pick(edges, ['meanAdjacentDelta']),
-    overexposedRatio: report.overexposedRatio,
-    palette: pick(palette, ['size', 'outsideRatio', 'unusedIndices', 'crowded']),
-    structure: pick(structure, ['strongBands', 'horizontalBands']),
-    presence: pick(presence, [
-      'valueRange',
-      'darkShare',
-      'brightestShare',
-      'lightConcentration',
-      'hasLightSource',
-      'flatShare',
-      'planeSeparation',
-    ]),
-    warnings: warnings.map((warning) => pick(warning, ['code', 'severity'])),
-  };
-}
-
-interface AnimationQualityOptions {
-  alphaThreshold?: number;
-  maxChangedRatioWarning?: number;
-  minSilhouetteIouWarning?: number;
-  minPaletteJaccardWarning?: number;
-  maxCentroidDriftWarning?: number;
-}
-
-function analyzeCharacterAnimation(
-  sprite: Sprite,
-  sequence: ReturnType<typeof animationSequence>,
-  options: AnimationQualityOptions = {},
-): Record<string, unknown> {
-  const alphaThreshold = options.alphaThreshold ?? 1;
-  const totalPixels = sprite.width * sprite.height;
-  if (totalPixels * sequence.frames.length > 16_777_216) {
-    throw new Error(`Character animation analysis would inspect ${totalPixels * sequence.frames.length} pixels. Select fewer frames or a smaller canvas.`);
-  }
-  const paletteKeys = sprite.palette.colors.map((color) =>
-    ((color.r & 255) << 24) | ((color.g & 255) << 16) | ((color.b & 255) << 8) | (color.a & 255),
-  );
-  const frames: Array<Record<string, unknown>> = [];
-  const transitions: Array<Record<string, unknown>> = [];
-  const warnings: Array<{ code: string; severity: 'info' | 'warning'; message: string }> = [];
-  let firstMask: Uint8Array | undefined;
-  let firstFrame: Record<string, unknown> | undefined;
-  let previousMask: Uint8Array | undefined;
-  let previousFrame: Record<string, unknown> | undefined;
-
-  for (const entry of sequence.frames) {
-    const buffer = compositeFrame(sprite, entry.frameId);
-    const mask = new Uint8Array(totalPixels);
-    let area = 0;
-    let sumX = 0;
-    let sumY = 0;
-    let minX = sprite.width;
-    let minY = sprite.height;
-    let maxX = -1;
-    let maxY = -1;
-    const usedKeys = new Set<number>();
-    for (let i = 0; i < buffer.data.length; i += 4) {
-      if (buffer.data[i + 3] < alphaThreshold) continue;
-      const pixel = i / 4;
-      const x = pixel % sprite.width;
-      const y = Math.floor(pixel / sprite.width);
-      mask[pixel] = 1;
-      area++;
-      sumX += x;
-      sumY += y;
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
-      const key = ((buffer.data[i] & 255) << 24) | ((buffer.data[i + 1] & 255) << 16) |
-        ((buffer.data[i + 2] & 255) << 8) | (buffer.data[i + 3] & 255);
-      usedKeys.add(key);
-    }
-    const bounds = area > 0 ? { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 } : null;
-    const frameRecord: Record<string, unknown> = {
-      position: frames.length,
-      index: entry.index,
-      frameId: entry.frameId,
-      durationMs: entry.durationMs,
-      area,
-      bounds,
-      centroid: area > 0 ? { x: sumX / area, y: sumY / area } : null,
-      usedPaletteIndices: paletteKeys.flatMap((key, index) => usedKeys.has(key) ? [index] : []),
-      touchesCanvasEdge: area === 0 || minX === 0 || minY === 0 || maxX === sprite.width - 1 || maxY === sprite.height - 1,
-    };
-    frames.push(frameRecord);
-
-    if (previousMask && previousFrame) {
-      let intersection = 0;
-      let union = 0;
-      let changed = 0;
-      for (let i = 0; i < mask.length; i++) {
-        if (mask[i] && previousMask[i]) intersection++;
-        if (mask[i] || previousMask[i]) union++;
-        if (mask[i] !== previousMask[i]) changed++;
-      }
-      const previousUsed = new Set(previousFrame.usedPaletteIndices as number[]);
-      const currentUsed = new Set(frameRecord.usedPaletteIndices as number[]);
-      const paletteUnion = new Set([...previousUsed, ...currentUsed]);
-      const paletteIntersection = [...currentUsed].filter((index) => previousUsed.has(index)).length;
-      const transition = {
-        from: previousFrame.frameId,
-        to: frameRecord.frameId,
-        changedPixels: changed,
-        changedRatio: changed / Math.max(1, totalPixels),
-        silhouetteIou: union > 0 ? intersection / union : 1,
-        centroidDrift: previousFrame.centroid && frameRecord.centroid
-          ? Math.hypot(
-              (frameRecord.centroid as { x: number; y: number }).x - (previousFrame.centroid as { x: number; y: number }).x,
-              (frameRecord.centroid as { x: number; y: number }).y - (previousFrame.centroid as { x: number; y: number }).y,
-            )
-          : null,
-        paletteJaccard: paletteUnion.size > 0 ? paletteIntersection / paletteUnion.size : 1,
-      };
-      transitions.push(transition);
-      // Judge the silhouette by overlap, not by how much of the whole canvas changed:
-      // a 64x64 character moving a limb changes a few percent of the canvas and would
-      // never trip a canvas-relative threshold, while a small figure that teleports
-      // changes the same percentage as a large one that merely steps.
-      const iouFloor = options.minSilhouetteIouWarning ?? 0.5;
-      if (transition.silhouetteIou < iouFloor || transition.changedRatio > (options.maxChangedRatioWarning ?? 0.65)) {
-        warnings.push({
-          code: 'character_silhouette_jump',
-          severity: 'warning',
-          message: `Frame transition ${previousFrame.frameId} -> ${frameRecord.frameId} has silhouette overlap ${(transition.silhouetteIou * 100).toFixed(1)}% (${(transition.changedRatio * 100).toFixed(1)}% of the canvas changed); inspect for a teleported or disconnected part.`,
-        });
-      }
-      if (transition.paletteJaccard < (options.minPaletteJaccardWarning ?? 0.65)) {
-        warnings.push({ code: 'character_palette_flicker', severity: 'warning', message: `Frame transition ${previousFrame.frameId} -> ${frameRecord.frameId} changes ${(transition.paletteJaccard * 100).toFixed(1)}% of its palette usage; inspect unintended recolouring.` });
-      }
-      const drift = transition.centroidDrift;
-      if (drift !== null && drift > (options.maxCentroidDriftWarning ?? 3)) {
-        warnings.push({ code: 'character_centroid_drift', severity: 'warning', message: `Frame transition ${previousFrame.frameId} -> ${frameRecord.frameId} moves the silhouette centre by ${drift.toFixed(1)}px; a limb moving is fine, the whole body sliding is not.` });
-      }
-    } else {
-      firstMask = mask;
-      firstFrame = frameRecord;
-    }
-    // Edge contact is a property of one frame, not of a transition, so it is checked for
-    // every frame including the first - the rest pose is the one most likely to be cut off.
-    if (frameRecord.touchesCanvasEdge === true) {
-      warnings.push({ code: 'character_canvas_clipping', severity: 'warning', message: `Frame ${frameRecord.frameId} reaches the canvas edge; check whether a weapon or limb is cut off.` });
-    }
-    previousMask = mask;
-    previousFrame = frameRecord;
-  }
-
-  let loopClosure = null;
-  if (firstMask && previousMask && firstFrame && previousFrame && sequence.frames.length > 1) {
-    let changed = 0;
-    for (let i = 0; i < firstMask.length; i++) if (firstMask[i] !== previousMask[i]) changed++;
-    const changedRatio = changed / Math.max(1, totalPixels);
-    const closed = changedRatio <= (options.maxChangedRatioWarning ?? 0.65);
-    loopClosure = {
-      from: previousFrame.frameId,
-      to: firstFrame.frameId,
-      changedPixels: changed,
-      changedRatio,
-      closed,
-      ...(sequence.loops
-        ? null
-        : { note: 'This sequence does not loop, so a last-to-first difference is expected rather than a defect.' }),
-    };
-    // Only a looping sequence can be "not closing"; flagging a one-shot would be noise.
-    if (sequence.loops && !closed) {
-      warnings.push({
-        code: 'character_loop_not_closed',
-        severity: 'warning',
-        message: `The loop does not close: last -> first changes ${(changedRatio * 100).toFixed(1)}% of the canvas.`,
-      });
-    }
-  }
-
-  return {
-    tag: sequence.name,
-    loops: sequence.loops,
-    durationMs: sequence.durationMs,
-    frameCount: frames.length,
-    frames,
-    transitions,
-    loopClosure,
-    warnings,
-  };
-}
-
-function analyzeRigQuality(sprite: Sprite): Record<string, unknown> | undefined {
-  const rig = sprite.rig;
-  if (!rig) return undefined;
-  // Every pose is a full-canvas resample of every part, so poses x parts x pixels is the
-  // real cost. Cap it rather than letting a large rig stall a read-only report.
-  const posesToRender = Math.max(1, rig.poses.length);
-  if (sprite.width * sprite.height * Math.max(1, rig.parts.length) * posesToRender > 16_777_216) {
-    return {
-      restFrameId: rig.restFrameId,
-      partCount: rig.parts.length,
-      poseCount: rig.poses.length,
-      anchorCount: rig.anchors.length,
-      hitboxCount: rig.hitboxes.length,
-      poses: [],
-      skipped: `Skipped per-pose bounds for ${posesToRender} poses x ${rig.parts.length} parts at ${sprite.width}x${sprite.height}; use preview_pose on specific poses instead.`,
-    };
-  }
-  const poses = rig.poses.map((pose) => {
-    const rendered = renderPose(sprite, pose);
-    const geometry = resolveRigGeometry(sprite, pose);
-    const outsideAnchors = geometry.anchors.filter((anchor) => {
-      const point = anchor.world as { x: number; y: number };
-      return point.x < 0 || point.y < 0 || point.x > sprite.width || point.y > sprite.height;
-    }).map((anchor) => anchor.name);
-    const outsideHitboxPoints = geometry.hitboxes.flatMap((hitbox) => {
-      const points = hitbox.polygon as Array<{ x: number; y: number }>;
-      return points.some((point) => point.x < 0 || point.y < 0 || point.x > sprite.width || point.y > sprite.height)
-        ? [hitbox.name]
-        : [];
-    });
-    return {
-      pose: pose.name,
-      partBounds: rendered.partBounds,
-      partBoundsById: rendered.partBoundsById,
-      partPixels: rendered.partPixels,
-      clippedParts: rendered.clippedParts,
-      outsideAnchors,
-      outsideHitboxes: outsideHitboxPoints,
-    };
-  });
-  return {
-    restFrameId: rig.restFrameId,
-    partCount: rig.parts.length,
-    poseCount: rig.poses.length,
-    anchorCount: rig.anchors.length,
-    hitboxCount: rig.hitboxes.length,
-    poses,
-  };
 }
 
 /**
@@ -2631,7 +1326,7 @@ const WORKFLOW_CATALOG = [
       'Block the silhouette in ONE flat colour on the base layer, then get_preview before anything else.',
       'Build material ramps with add_palette_ramp - read its guide first, hue interpolates along the wheel.',
       'Shade on the layer above with clip, then outline the composite onto a top layer with outline.',
-      'get_preview between passes, and run quality_report before calling it done.',
+      'get_preview between passes, and look at the final preview again before calling it done.',
     ],
   },
   {
@@ -2672,7 +1367,7 @@ const WORKFLOW_CATALOG = [
     keywords: ['palette', 'ramp', 'unused', 'prune', 'role', 'skin', 'leather'],
     steps: [
       'Build coherent ramps with add_palette_ramp role or ensure_palette_role.',
-      'Inspect usage with quality_report/get_palette, then run prune_palette dryRun:true.',
+      'Inspect usage with get_palette, then run prune_palette dryRun:true.',
       'Commit pruning only after checking its old-to-new indexMap and keep list.',
     ],
   },
@@ -2691,7 +1386,7 @@ const WORKFLOW_CATALOG = [
     title: 'Deliver a production asset bundle',
     keywords: ['export', 'bundle', 'gif', 'sheet', 'manifest', 'engine'],
     steps: [
-      'Run quality_report and fix warnings.',
+      'Review the final preview and fix anything it still shows.',
       'Call finalize_document once with typed PNG/frames/sheet/GIF/contact outputs.',
       'Enable manifest hashes and verify every returned absolute path.',
     ],
@@ -2718,16 +1413,6 @@ const WORKFLOW_CATALOG = [
       'Fill a region with fill_tilemap, or lay terrain along a path with stroke_tilemap points/tiles and optional edge transitions.',
       'Let autotile pick the transition tiles afterwards; on a re-run omit indices so the previous pass\'s tiles count as terrain.',
       'Preview with preview_tilemap, passing the changedCells/changedRect a mutation returned, and bake with paint_tilemap.',
-    ],
-  },
-  {
-    id: 'landscape-quality',
-    title: 'Diagnose a landscape or tilemap asset',
-    keywords: ['landscape', 'tilemap', 'horizon', 'waterline', 'ridge'],
-    steps: [
-      'Run quality_report and read structure.landscape: horizon/ridge/waterline candidates, boundary regularity and guiding-line evidence. assetType:landscape only labels the report; the landscape diagnostics run for any non-character asset.',
-      'Pass tilemap/underlay for unbaked grid structure and terrain connectivity.',
-      'Treat warnings as evidence and confirm fixes with previews before finalisation.',
     ],
   },
 ] as const;
@@ -2918,7 +1603,7 @@ export function registerTools(
     {
       title: 'Create a document',
       description:
-        'Create a new blank sprite and make it active (pass `select: false` to keep the current document active). Returns the document id and version. Prefer small canvases (16x16 to 64x64) and 2-4 named layers. Pass `palette` to constrain colours, which is the single biggest quality win for pixel art.',
+        'Create a new blank sprite and make it active (pass `select: false` to keep the current document active). Returns the document id and version. Any size from 1x1 to 4096x4096 works: small keeps every shape readable, large (512x512 and up) buys room for detail, non-square suits a sprite that is not square. On a large canvas work in `rect` regions rather than per pixel. Use 2-4 named layers, and pass `palette` to constrain colours.',
       inputSchema: z.object({
         width: z.number().int().min(1).max(4096).describe('Canvas width in pixels.'),
         height: z.number().int().min(1).max(4096).describe('Canvas height in pixels.'),
@@ -4100,6 +2785,103 @@ export function registerTools(
 
   addTool(
     server,
+    'get_selection',
+    {
+      title: "Read the region the user boxed in",
+      description:
+        "Return the rectangle the user has boxed in the app's canvas, with the layer and frame it was drawn on. Call this whenever the user points rather than names - \"my selection\", \"the part I boxed\" - instead of guessing a region. `{selection: null}` is a real answer: work on the whole canvas. `mode` is `hint` (default; you may write just outside when the change needs room) or `enforce` (confine every write to it). Pass the returned `rect` to a drawing command's `rect`.",
+      inputSchema: z.object({
+        document: documentRef,
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    (args) => {
+      try {
+        const doc = store.require(args.document as string | undefined);
+        const selection = store.selection(doc);
+        if (!selection) {
+          return ok({
+            ok: true,
+            document: store.summary(doc),
+            selection: null,
+            note: 'The user has not boxed a region. Treat the whole canvas as the subject unless they name an area.',
+          });
+        }
+        const { sprite } = doc.editor;
+        const layer = selection.layerId ? sprite.layers.find((l) => l.id === selection.layerId) : undefined;
+        const frame = selection.frameId ? sprite.frames.find((f) => f.id === selection.frameId) : undefined;
+        return ok({
+          ok: true,
+          document: store.summary(doc),
+          selection: {
+            rect: selection.rect,
+            mode: selection.mode,
+            // `store.selection` has already dropped a box whose layer or frame is
+            // gone, so both of these resolve or the whole box is null.
+            layer: layer ? { id: layer.id, name: layer.name, index: sprite.layers.indexOf(layer) } : null,
+            frame: frame ? { id: frame.id, index: sprite.frames.indexOf(frame) } : null,
+            canvas: { width: sprite.width, height: sprite.height },
+          },
+        });
+      } catch (error) {
+        return fail((error as Error).message);
+      }
+    },
+  );
+
+  addTool(
+    server,
+    'set_selection',
+    {
+      title: 'Box a region, or clear the box',
+      description:
+        "Set the same rectangle `get_selection` reads, so you can point the app's canvas at a region yourself - useful for confirming a guess, or for narrowing a box the user drew too loosely. `rect` is `{x, y, w, h}` in canvas pixels, clipped to the canvas; a zero-area rect clears the box, as does `clear: true`. Session state: never written to the `.pixel` file, so this does not dirty the document.",
+      inputSchema: z.object({
+        document: documentRef,
+        rect: z
+          .object({ x: z.number().int(), y: z.number().int(), w: z.number().int(), h: z.number().int() })
+          .optional()
+          .describe('Region to box, `{x, y, w, h}`. Negative `w`/`h` is accepted, so a rect read off two corners works either way round.'),
+        mode: z
+          .enum(['hint', 'enforce'])
+          .optional()
+          .describe('`hint` leaves you free to write just outside the box; `enforce` asks to be confined to it. Omit to keep the current mode.'),
+        clear: z.boolean().optional().describe('Remove the selection. Same as passing a zero-area `rect`.'),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false },
+    },
+    (args) => {
+      try {
+        const doc = store.require(args.document as string | undefined);
+        if (args.clear === true || args.rect === undefined) {
+          if (args.clear !== true && args.rect === undefined) {
+            return fail('Pass a `rect` to box a region, or `clear: true` to remove the box.');
+          }
+          store.setSelection(doc, null);
+          return ok({ ok: true, document: store.summary(doc), selection: null });
+        }
+        const { sprite } = doc.editor;
+        const current = store.selection(doc);
+        const selection = store.setSelection(doc, {
+          rect: args.rect as { x: number; y: number; w: number; h: number },
+          layerId: current?.layerId,
+          frameId: current?.frameId,
+          mode: args.mode as 'hint' | 'enforce' | undefined,
+        });
+        if (!selection) {
+          return fail(
+            `That rect covers no pixel of the ${sprite.width}x${sprite.height} canvas, so there is nothing to select. Pass a rect that overlaps the canvas.`,
+          );
+        }
+        return ok({ ok: true, document: store.summary(doc), selection });
+      } catch (error) {
+        return fail((error as Error).message);
+      }
+    },
+  );
+
+  addTool(
+    server,
     'get_palette',
     {
       title: 'Read the palette',
@@ -4124,238 +2906,6 @@ export function registerTools(
         });
       } catch (error) {
         return fail((error as Error).message);
-      }
-    },
-  );
-
-  addTool(
-    server,
-    'quality_report',
-    {
-      title: 'Measure raster, character and landscape quality',
-      description:
-        'Read-only quality report, and the step that decides whether the piece is finished. It has two halves and both matter: `defects` says what is wrong, `presence` says whether the piece still has light, depth and form - a clean defect score with a narrow `presence.valueRange` means the work was sanded flat, not completed. `assetType: "character"` is the only value that changes the analysis, adding cross-frame stability over every frame. Fix what the report names, then re-read it. Pass `brief: true` for just the numbers you act on and the warning codes, which is a fraction of the bytes; the full report has every diagnostic.',
-      inputSchema: z.object({
-        document: documentRef,
-        assetType: z
-          .enum(['raster', 'character', 'landscape', 'prop', 'tile', 'auto'])
-          .optional()
-          .describe('Asset label. "character" changes the analysis (drops landscape/band warnings, adds cross-frame stability and defaults to all frames). "auto" infers character when the sprite has a rig or multiple frames. Other values label the same single-frame diagnostics and are echoed back with `assetTypeIsLabel: true`.'),
-        frame: frameRefSchema.optional().describe('Frame id or 0-based index. Defaults to frame 0. Do not pass with `tilemap`.'),
-        frames: z
-          .union([
-            z.literal('all'),
-            z.object({ from: z.number().int().min(0), to: z.number().int().min(0) }).strict(),
-            z.array(frameRefSchema).min(1),
-          ])
-          .optional()
-          .describe('Additionally analyse all frames, an inclusive range, or explicit frame references.'),
-        tag: z.union([z.string(), z.number().int()]).optional().describe('Analyse the expanded playback sequence for this animation tag.'),
-        tilemap: z
-          .union([z.string(), z.number().int()])
-          .optional()
-          .describe('Tilemap id, name or 0-based index. Analyses this grid directly instead of a composited frame.'),
-        underlay: z
-          .union([z.string(), z.number().int()])
-          .optional()
-          .describe('With `tilemap`, composite this base grid first so alpha-masked terrain edges are measured over real ground.'),
-        replaceEmpty: z
-          .number()
-          .int()
-          .min(-1)
-          .optional()
-          .describe('With `tilemap`, render empty cells using this tile before raster analysis.'),
-        rect: previewRectSchema.optional(),
-        noiseThreshold: z
-          .number()
-          .min(0)
-          .max(255)
-          .optional()
-          .describe('Colour distance above which a pixel counts as an outlier. Defaults to 40.'),
-        alphaThreshold: z
-          .number()
-          .int()
-          .min(1)
-          .max(255)
-          .optional()
-          .describe('Alpha at or above this counts as solid. Defaults to 1.'),
-        textureRects: z
-          .array(
-            z.object({
-              x: z.number().int().describe('Left edge in pixels, 0-based.'),
-              y: z.number().int().describe('Top edge in pixels, 0-based, y grows downward.'),
-              w: z.number().int().min(1).describe('Width in pixels.'),
-              h: z.number().int().min(1).describe('Height in pixels.'),
-            }),
-          )
-          .max(32)
-          .optional()
-          .describe(
-            'Regions deliberately filled with texture - `scatter` output, grain, foliage, sparkle, ' +
-              'water glitter. Colour outliers inside them are counted as `noise.texturedOutliers` and ' +
-              'do not raise the high-frequency warning, and their bright pixels are excluded from the ' +
-              'light-source check, because scattered highlights are not a light source. Pass the rects ' +
-              'you textured rather than lowering `noiseThreshold`, which would hide real defects ' +
-              'everywhere instead.',
-          ),
-        intentionalDetailRects: z
-          .array(
-            z.object({
-              x: z.number().int().describe('Left edge in pixels, 0-based.'),
-              y: z.number().int().describe('Top edge in pixels, 0-based, y grows downward.'),
-              w: z.number().int().min(1).describe('Width in pixels.'),
-              h: z.number().int().min(1).describe('Height in pixels.'),
-              kind: z
-                .enum(['eye', 'teeth', 'weapon', 'hair', 'fabric', 'other'])
-                .optional()
-                .describe('What kind of deliberate detail this is, recorded in the report so the exemption is auditable rather than a blanket suppression.'),
-            }).strict(),
-          )
-          .max(64)
-          .optional()
-          .describe('Designed high-contrast details. These regions are exempt from isolated-pixel, colour-outlier, clipped-highlight and edge-contrast warnings.'),
-        maxChangedRatioWarning: z.number().min(0).max(1).optional().describe('Canvas-relative changed-pixel threshold, also used for loop closure. Defaults to 0.65.'),
-        minSilhouetteIouWarning: z.number().min(0).max(1).optional().describe('Silhouette-overlap floor below which a transition counts as a jump. Scale-invariant. Defaults to 0.5.'),
-        maxCentroidDriftWarning: z.number().min(0).optional().describe('Character centroid-drift warning threshold in pixels. Defaults to 3.'),
-        minPaletteJaccardWarning: z.number().min(0).max(1).optional().describe('Character palette-flicker warning threshold. Defaults to 0.65.'),
-        grid: z
-          .number()
-          .int()
-          .min(1)
-          .max(8)
-          .optional()
-          .describe('Optional grid size for per-region isolated/outlier counts. 1 (default) returns one aggregate report.'),
-        brief: z
-          .boolean()
-          .optional()
-          .describe(
-            'Return only the numbers you act on plus each warning as `{code, severity}`. Same analysis, a fraction of the bytes: no per-plane arrays, no landscape block, no warning prose, no per-region breakdown. Drop it when you need a specific diagnostic.',
-          ),
-      }),
-      annotations: { readOnlyHint: true },
-    },
-    (args) => {
-      try {
-        const doc = store.require(args.document as string | undefined);
-        if (args.underlay !== undefined && args.tilemap === undefined) {
-          return fail('`underlay` requires `tilemap` in quality_report.');
-        }
-        if (args.tilemap !== undefined && args.frame !== undefined) {
-          return fail('Pass either `tilemap` or `frame` to quality_report, not both.');
-        }
-        if (args.tilemap !== undefined && (args.frames !== undefined || args.tag !== undefined || args.assetType === 'character')) {
-          return fail('`frames`, `tag`, and character mode cannot be combined with a tilemap quality report.');
-        }
-        if (args.frames !== undefined && args.tag !== undefined) {
-          return fail('Pass either `frames` or `tag` for animation analysis, not both.');
-        }
-        if (args.tilemap !== undefined && !doc.editor.sprite.tileset) {
-          return fail('Tilemap quality analysis needs a tileset. Run `create_tileset` first.');
-        }
-        const tilemap = args.tilemap === undefined
-          ? undefined
-          : resolveTilemap(doc.editor.sprite, args.tilemap as string | number);
-        const underlay = args.underlay === undefined
-          ? undefined
-          : resolveTilemap(doc.editor.sprite, args.underlay as string | number);
-        const assetType = args.assetType as QualityAssetType | undefined;
-        const resolvedAssetType = resolveQualityAssetType(
-          doc.editor.sprite,
-          assetType,
-          tilemap !== undefined,
-        );
-        const alphaThreshold = args.alphaThreshold as number | undefined;
-        let animation: Record<string, unknown> | undefined;
-        if (args.tag !== undefined) {
-          animation = analyzeCharacterAnimation(
-            doc.editor.sprite,
-            animationSequence(doc.editor.sprite, args.tag as string | number),
-            {
-              alphaThreshold,
-              maxChangedRatioWarning: args.maxChangedRatioWarning as number | undefined,
-              minSilhouetteIouWarning: args.minSilhouetteIouWarning as number | undefined,
-              minPaletteJaccardWarning: args.minPaletteJaccardWarning as number | undefined,
-              maxCentroidDriftWarning: args.maxCentroidDriftWarning as number | undefined,
-            },
-          );
-        } else if (args.frames !== undefined || resolvedAssetType === 'character') {
-          let sequence: ReturnType<typeof animationSequence>;
-          if (args.frames === undefined || args.frames === 'all') {
-            sequence = animationSequence(doc.editor.sprite);
-          } else if (Array.isArray(args.frames)) {
-            const frames = (args.frames as Array<string | number>).map((ref) => {
-              const frame = resolveFrame(doc.editor.sprite, ref);
-              return { index: doc.editor.sprite.frames.findIndex((candidate) => candidate.id === frame.id), frameId: frame.id, durationMs: frame.durationMs };
-            });
-            sequence = {
-              name: null,
-              frames,
-              loops: false,
-              durationMs: frames.reduce((sum, frame) => sum + frame.durationMs, 0),
-            };
-          } else {
-            const range = args.frames as { from: number; to: number };
-            const from = Math.min(range.from, range.to);
-            const to = Math.max(range.from, range.to);
-            if (to >= doc.editor.sprite.frames.length) return fail(`Frame range ${range.from}-${range.to} exceeds frame count.`);
-            const frames = doc.editor.sprite.frames.slice(from, to + 1).map((frame, offset) => ({
-              index: from + offset,
-              frameId: frame.id,
-              durationMs: frame.durationMs,
-            }));
-            sequence = { name: null, frames, loops: false, durationMs: frames.reduce((sum, frame) => sum + frame.durationMs, 0) };
-          }
-          animation = analyzeCharacterAnimation(doc.editor.sprite, sequence, {
-            alphaThreshold,
-            maxChangedRatioWarning: args.maxChangedRatioWarning as number | undefined,
-            minSilhouetteIouWarning: args.minSilhouetteIouWarning as number | undefined,
-            minPaletteJaccardWarning: args.minPaletteJaccardWarning as number | undefined,
-            maxCentroidDriftWarning: args.maxCentroidDriftWarning as number | undefined,
-          });
-        }
-        const rigDiagnostics = resolvedAssetType === 'character' ? analyzeRigQuality(doc.editor.sprite) : undefined;
-        const quality = analyzeQuality(doc.editor.sprite, args.frame as number | string | undefined, {
-          rect: args.rect as { x: number; y: number; w: number; h: number } | undefined,
-          noiseThreshold: args.noiseThreshold as number | undefined,
-          alphaThreshold,
-          grid: args.grid as number | undefined,
-          tilemap,
-          underlay,
-          replaceEmpty: args.replaceEmpty as number | undefined,
-          textureRects: args.textureRects as Array<{ x: number; y: number; w: number; h: number }> | undefined,
-          assetType,
-          intentionalDetailRects: args.intentionalDetailRects as Array<{
-            x: number;
-            y: number;
-            w: number;
-            h: number;
-            kind?: 'eye' | 'teeth' | 'weapon' | 'hair' | 'fabric' | 'other';
-          }> | undefined,
-        });
-        if (resolvedAssetType === 'character') {
-          const documentUsage = documentPaletteUsage(doc.editor.sprite);
-          quality.palette = {
-            ...(quality.palette as Record<string, unknown>),
-            ...(documentUsage ? { documentUsage } : { documentUsage: null }),
-            roles: doc.editor.sprite.palette.roles ?? {},
-          };
-        }
-        const full = {
-          ok: true,
-          document: store.summary(doc),
-          ...quality,
-          ...(animation ? { animation } : {}),
-          ...(rigDiagnostics ? { rig: rigDiagnostics } : {}),
-        };
-        // `brief` is a subset, never a different analysis: the same numbers, minus the
-        // scaffolding. A caller that needs a diagnostic the brief form dropped re-runs
-        // without it and gets the identical value.
-        return ok(args.brief === true ? briefQualityReport(full) : full);
-      } catch (error) {
-        return fail((error as Error).message, {
-          code: 'quality_failed',
-          remediation: 'Check that the target frame, tilemap or tag exists, and re-run without `brief` to see the full report.',
-        });
       }
     },
   );
@@ -4585,9 +3135,9 @@ export function registerTools(
             fillDefaults(doc.editor.sprite, command, op.params);
           }
 
-          // Dither is the one command whose misuse is invisible until the whole piece
-          // is judged, so say something at the moment it is issued rather than leaving
-          // it to `quality_report` - which can no longer tell a seam from a field.
+          // Dither is the one command whose misuse is invisible in a single edit, so
+          // say something at the moment it is issued rather than leaving it to be
+          // noticed later in a preview of the whole piece.
           if (op.command === 'dither_fill') {
             for (const message of ditherAdvisories(op.params)) {
               advisories.push({ index: i, command: op.command, message });

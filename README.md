@@ -34,7 +34,7 @@
     </td>
     <td width="33%" valign="top">
       <h3>Agent workspace</h3>
-      <p>A standalone MCP server gives agents real PNG previews, structured tools, visual quality reports, and safe batch edits.</p>
+      <p>A standalone MCP server gives agents real PNG previews, structured tools, exact text grids, and safe batch edits.</p>
     </td>
     <td width="33%" valign="top">
       <h3>One source of truth</h3>
@@ -203,6 +203,7 @@ The tool catalog is generated from the same Zod schemas used to validate command
 | Capability | Why it matters |
 | --- | --- |
 | `read_grid` | Returns the artwork as a character grid — silhouette, luminance, palette slot or colour name. Text, so it is exact, diffable and cheap; a repeated call reports which rows changed. Use it to verify a drawing. |
+| `get_selection` | The rectangle the user boxed on the canvas, with its layer and frame. `hint` (default) marks the subject and leaves the agent room to grow it; `enforce` confines every write to the box. |
 | `get_preview` | Returns an actual PNG for one frame or all frames, optionally cropped, zoomed, layer-isolated, or onion-skinned. Use it to approve a drawing. |
 | `preview_animation` | Renders a timeline or tag-expanded playback contact sheet with sequence-aware onion skin. |
 | `preview_pose` | Renders a rig pose/tween and resolves anchor and hitbox world geometry. |
@@ -215,7 +216,6 @@ The tool catalog is generated from the same Zod schemas used to validate command
 | `add_palette_ramp` | Builds hue-shifted material ramps instead of flat interpolation. |
 | `prune_palette` | Finds colours unused by all selected raw cels, with dry-run, semantic-role remapping and index mapping. |
 | `ensure_palette_role` / `replace_colors` | Maintains material roles and applies one recolour across document/frame/range/list targets. |
-| `quality_report` | Reports raster/landscape/tilemap quality, or character silhouette stability, palette flicker and intentional-detail exemptions. |
 | `finalize_document` | Saves the editable source and renders PNG/frame/sheet/GIF/pose/contact outputs plus an optional hashed, incremental manifest. |
 | `run_script` | Runs a time-limited JavaScript batch as a single undo step, with isolated dry-run and source-relative error diagnostics. |
 | `load_plugin` | Registers plugin commands as live MCP tools. |
@@ -225,7 +225,7 @@ A practical agent loop is deliberately short:
 ```text
 create_document → block silhouette → inspect PNG → shade in batches
       ↑                                                    ↓
-quality_report ← fix warnings ← preview each visual gate → finalize_document
+ fix what you can see ← preview each visual gate → finalize_document
 ```
 
 The standalone server runs over stdio and requires no desktop app. If the Electron app is already running, it can also attach over its loopback HTTP endpoint:

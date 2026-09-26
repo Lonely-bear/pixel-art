@@ -90,7 +90,6 @@ describe('tool surface', () => {
     expect(names).toContain('quantize_to_palette');
     expect(names).toContain('apply_ops');
     expect(names).toContain('get_preview');
-    expect(names).toContain('quality_report');
     expect(names).toContain('antialias');
     expect(names).toContain('despeckle');
     expect(names).toContain('add_palette_ramp');
@@ -855,7 +854,6 @@ describe('follow-up ergonomics', () => {
     expect(names).toContain('undo');
     expect(names).toContain('redo');
     expect(names).toContain('get_history');
-    expect(names).toContain('quality_report');
     expect(names).toContain('finalize_document');
   });
 });
@@ -1254,32 +1252,7 @@ describe('read_grid', () => {
   });
 });
 
-describe('quality and softness tools', () => {
-  it('reports isolated noise and returns actionable warnings', async () => {
-    await client.callTool({
-      name: 'create_document',
-      arguments: { width: 8, height: 8, name: 'Quality', layers: ['base'] },
-    });
-    await client.callTool({
-      name: 'draw_rect',
-      arguments: { layer: 'base', rect: { x: 0, y: 0, w: 8, h: 8 }, color: '#102040', fill: true },
-    });
-    await client.callTool({
-      name: 'draw_pixels',
-      arguments: { layer: 'base', pixels: [{ x: 4, y: 4, color: '#ffffff' }] },
-    });
-
-    const result = (await client.callTool({ name: 'quality_report', arguments: { grid: 2 } })) as ToolResult;
-    const body = payload(result);
-    expect(body.ok).toBe(true);
-    expect((body.noise as { outliers: number }).outliers).toBeGreaterThan(0);
-    expect(typeof body.defectScore).toBe('number');
-    expect(body.softnessScore).toBeUndefined();
-    expect((body.regions as unknown[]).length).toBe(4);
-    const warnings = body.warnings as Array<{ code: string }>;
-    expect(warnings.map((warning) => warning.code)).toContain('high_frequency_noise');
-  });
-
+describe('cleanup, palette and generative commands', () => {
   it('exposes antialias and despeckle as generated command tools', async () => {
     await client.callTool({
       name: 'create_document',
@@ -1376,68 +1349,6 @@ describe('quality and softness tools', () => {
     expect(firstText(invalid)).toMatch(/base64|validation/i);
   });
 
-  it('supports character animation diagnostics and intentional detail regions', async () => {
-    await client.callTool({ name: 'create_document', arguments: { width: 8, height: 8, layers: ['base'], frames: 3 } });
-    await client.callTool({ name: 'draw_pixels', arguments: { frame: 0, pixels: [{ x: 0, y: 0, color: '#ff0000' }] } });
-    await client.callTool({ name: 'draw_pixels', arguments: { frame: 1, pixels: [{ x: 3, y: 3, color: '#00ff00' }] } });
-    await client.callTool({ name: 'draw_pixels', arguments: { frame: 2, pixels: [{ x: 6, y: 6, color: '#0000ff' }] } });
-
-    const raw = payload((await client.callTool({ name: 'quality_report', arguments: {} })) as ToolResult);
-    expect((raw.noise as { isolated: number }).isolated).toBe(1);
-
-    const character = payload((await client.callTool({
-      name: 'quality_report',
-      arguments: {
-        assetType: 'character',
-        intentionalDetailRects: [{ x: 0, y: 0, w: 1, h: 1, kind: 'eye' }],
-      },
-    })) as ToolResult);
-    expect((character.noise as { isolated: number; intentionalPixels: number }).isolated).toBe(0);
-    expect((character.noise as { intentionalPixels: number }).intentionalPixels).toBe(1);
-    expect(character.assetType).toBe('character');
-    expect(character.assetTypeIsLabel).toBe(false);
-    expect((character.animation as { frameCount: number }).frameCount).toBe(3);
-    expect((character.animation as { transitions: unknown[] }).transitions).toHaveLength(2);
-    expect((character.warnings as Array<{ code: string }>).some((warning) => warning.code.startsWith('landscape_'))).toBe(false);
-  });
-
-  it('infers the asset type under auto and labels the non-analysing modes honestly', async () => {
-    await client.callTool({ name: 'create_document', arguments: { width: 8, height: 8, layers: ['base'] } });
-    await client.callTool({ name: 'draw_rect', arguments: { rect: { x: 1, y: 1, w: 4, h: 4 }, color: '#00ff00', fill: true } });
-
-    const singleFrame = payload((await client.callTool({ name: 'quality_report', arguments: { assetType: 'auto' } })) as ToolResult);
-    expect(singleFrame.assetType).toBe('raster');
-    expect(singleFrame.assetTypeRequested).toBe('auto');
-    expect(singleFrame.animation).toBeUndefined();
-
-    const labelled = payload((await client.callTool({ name: 'quality_report', arguments: { assetType: 'prop' } })) as ToolResult);
-    expect(labelled.assetType).toBe('prop');
-    // A label-only mode must say so instead of implying a different analysis ran.
-    expect(labelled.assetTypeIsLabel).toBe(true);
-    expect(labelled.animation).toBeUndefined();
-
-    await client.callTool({ name: 'duplicate_frame', arguments: { frame: 0 } });
-    const inferred = payload((await client.callTool({ name: 'quality_report', arguments: { assetType: 'auto' } })) as ToolResult);
-    expect(inferred.assetType).toBe('character');
-    expect((inferred.animation as { frameCount: number }).frameCount).toBe(2);
-  });
-
-  it('raises warnings for the cross-frame defects it measures', async () => {
-    await client.callTool({ name: 'create_document', arguments: { width: 8, height: 8, layers: ['base'], frames: 2 } });
-    // Frame 0 sits in the top-left corner, frame 1 in the bottom-right: a large
-    // centroid drift and a silhouette jump, plus a canvas-edge touch.
-    await client.callTool({ name: 'draw_pixels', arguments: { frame: 0, pixels: [{ x: 0, y: 0, color: '#ff0000' }] } });
-    await client.callTool({ name: 'draw_pixels', arguments: { frame: 1, pixels: [{ x: 7, y: 7, color: '#00ff00' }] } });
-
-    const report = payload((await client.callTool({
-      name: 'quality_report',
-      arguments: { assetType: 'character', maxCentroidDriftWarning: 3 },
-    })) as ToolResult);
-    const codes = (report.animation as { warnings: Array<{ code: string }> }).warnings.map((warning) => warning.code);
-    expect(codes).toContain('character_silhouette_jump');
-    expect(codes).toContain('character_centroid_drift');
-    expect(codes).toContain('character_canvas_clipping');
-  });
 });
 
 describe('resources and prompts', () => {
@@ -1905,12 +1816,6 @@ describe('character rig workflow', () => {
       arguments: { layer: 'arm', frame: 1 },
     })) as ToolResult);
     expect((measured.summary as { bounds: unknown }).bounds).toEqual({ x: 4, y: 5, w: 1, h: 1 });
-    const quality = payload((await client.callTool({
-      name: 'quality_report',
-      arguments: { assetType: 'character' },
-    })) as ToolResult);
-    expect((quality.rig as { partCount: number }).partCount).toBe(2);
-    expect((quality.palette as { documentUsage: { used: number } }).documentUsage.used).toBeGreaterThan(0);
   });
 });
 

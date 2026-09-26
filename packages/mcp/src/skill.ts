@@ -51,22 +51,24 @@ render. Break them and no amount of extra shading recovers the result.
    stripes are the default failure of environmentals. Many gentle steps are a gradient
    and are fine; a run of *unrelated, strong* steps is the problem. Break them with one
    vertical or diagonal element - a light path, a waterfall, a foreground silhouette.
-   \`quality_report\` reports \`structure.strongBands\` for exactly this.
 8. **If the preview contradicts your data, trust the data.** When an image looks wrong,
-   confirm with \`read_grid\` or \`quality_report\` before you start "fixing" it. Inline
-   previews can be stale. A grid never is: it is rendered from the same pixels the
-   commands report.
-9. **A clean defect report is not a finished piece.** \`quality_report\` has two halves and
-   you must read both. The defect half says what is *wrong*; the presence half
-   (\`presence.valueRange\`, \`darkShare\`, \`flatShare\`, \`planeSeparation\`) says whether the
-   piece still *has* light, depth and form. Driving \`defectScore\` to 100 sanded a lake
-   scene into a dark flat rectangle once already, because sparkle and grain score
-   identically to noise. After every cleanup pass, re-read the presence half.
+   confirm with \`read_grid\` before you start "fixing" it. Inline previews can be
+   stale. A grid never is: it is rendered from the same pixels the commands report.
+9. **A clean-up pass is not the same as finishing.** Removing every last speckle can
+   sand a scene flat: sparkle, grain and foliage read as noise to a cleanup rule and as
+   texture to an eye. After cleaning up, look again at whether the piece still has
+   light, depth and form - a lake that has lost both is finished, not improved.
 
 ## 1. Plan the canvas before drawing
 
-- Ask for the sprite size the game needs (16x16, 32x32, 48x48...). Do not invent a
-  huge canvas "for detail" - small canvases force readable shapes.
+- Ask for the sprite size the game needs, then build the size the user picked - do not
+  quietly substitute your own. A small canvas (16x16, 32x32) forces every shape to stay
+  readable; a large one (128x128, 256x256, 512x512) buys room for detail and interior
+  structure; a non-square canvas suits a sprite that is not square. Anything up to
+  4096x4096 is supported, so a big canvas is a real answer rather than one to argue the
+  user out of. Match the method to the size: on a large canvas work in \`rect\` regions,
+  batch with \`apply_ops\`/\`run_script\`, and crop-zoom \`get_preview\` rather than
+  inspecting the whole canvas on every pass.
 - Work on separate layers. A normal stack is: \`base\` (filled shapes) -> \`shade\`
   (light and shadow) -> \`outline\` (contour). Use \`add_layer\` and pass \`layer\` to
   every draw call.
@@ -104,9 +106,8 @@ render. Break them and no amount of extra shading recovers the result.
   becomes the nearest ramp step instead of inventing a new colour. Alpha is preserved,
   so a translucent cape still works. Note the scope: this snaps what a command *writes
   to a cel*. Compositing a translucent layer over another still blends two swatches, so
-  the final flattened image can hold colours that are not in the palette —
-  \`quality_report\` reports that as \`palette.outsideRatio\`. For a strictly on-palette
-  result, use opaque layers and \`quantize_to_palette\` at the end.
+  the final flattened image can hold colours that are not in the palette. For a
+  strictly on-palette result, use opaque layers and \`quantize_to_palette\` at the end.
 
 ## 4. Outlines
 
@@ -341,9 +342,9 @@ render. Break them and no amount of extra shading recovers the result.
   in isolation use \`read_grid\` with \`scope: "cel"\`, or a layer command.
   For "which colours does this actually contain", use \`histogram\`, which returns the
   count per colour in one call.
-- When an image and your expectations disagree, believe the data first: \`get_pixels\`
-  a suspicious block, or run \`quality_report\`. Inline previews can be stale, and
-  "fixing" a rendering artefact just damages the artwork.
+- When an image and your expectations disagree, believe the data first: read
+  \`read_grid\` over the suspicious block before you change anything. Inline previews
+  can be stale, and "fixing" a rendering artefact just damages the artwork.
 - \`measure_region\` tells you where the opaque pixels actually are, which is how
   you centre a sprite without guessing.
 - \`get_document\` nests the counts under \`document\` (\`document.layerCount\` /
@@ -368,53 +369,9 @@ render. Break them and no amount of extra shading recovers the result.
   both \`scale\` and \`upscale\`. \`export_png\` also takes \`rect\`, so a 1:1 crop can be
   written straight to disk - the dependable fallback when an inline preview looks wrong
   and you need a file you can open yourself.
-- Before finishing, run \`quality_report\`, and read **both** halves of it. The defect
-  half returns isolated-pixel ratio, colour outlier ratio, edge contrast, highlight
-  clipping, palette usage and a 0-100 \`defectScore\` — **higher is cleaner**, so 99 means
-  "almost nothing measurable is wrong", which is not the same as finished. The presence
-  half answers whether the piece still *has* light, depth and form, with these rough
-  readings: \`valueRange\` above 150 is healthy, below 90 means the shading has collapsed;
-  \`darkShare\` under about 40% is normal for a night scene, over 75% reads as
-  underexposed; \`flatShare\` under about 20% is fine, over 45% is a dead region;
-  \`planeSeparation\` above about 15 means the depth planes are actually told apart, below
-  6 means two of them have merged; \`lightConcentration\` near 1 means a real source.
-  Those are working thresholds, not laws — trust the warnings over the numbers.
-- It also reports \`palette.unusedIndices\` (the exact slot numbers, so you can inspect
-  them), \`palette.crowded\` (used pairs too close in distance to read as separate
-  tones), \`structure.strongBands\` (full-width tonal edges big enough to flatten a
-  composition — a smooth gradient has many gentler steps and is not flagged),
-  \`structure.rhythm\` (silhouette peak regularity), and
-  \`structure.landscape\` for full-bleed scenes. The landscape half locates internal
-  horizon/ridge/waterline candidates, reports each boundary's straightness/regularity,
-  and measures whether a bright or coherent vertical/diagonal guiding line crosses the
-  lower frame. It is evidence, not a beauty score: read
-  \`structure.landscape.conclusion\` and its warnings alongside the presence half. On a
-  frame that is not a scene the block collapses to
-  \`{measurable: false, scene, conclusion}\` — three fields, not a page of nulls. For
-  characters, pass
-  \`assetType: "character"\` to suppress irrelevant landscape/band findings and analyse
-  silhouette jumps, centroid drift, palette flicker and loop closure across frames.
-  Once you know which warning is firing, re-run with \`brief: true\` for the numbers and
-  warning codes alone; it is the same analysis with the scaffolding removed.
-  Declare eyes, teeth, hair, fabric and weapon highlights as
-  \`intentionalDetailRects\`, not as global texture that weakens real defect checks.
-  One trap to know: \`intentionalDetailRects\` exempts a region from the defect checks but
-  **not** from the light-source probe, and declaring a brightly lit area as "intentional
-  detail" still counts its pixels as scattered highlight, which is what collapses
-  \`lightConcentration\` and raises \`no_light_source\`. Keep the lantern flame itself out
-  of those rects. If the scatter is genuinely texture — glitter, grain, foliage — that is
-  what \`textureRects\` is for, and it does exclude the light-source check.
 - Before removing palette slots, use \`prune_palette {dryRun: true}\`; it scans every
   selected raw cel (including hidden layers), remaps semantic roles, and returns an
   old-to-new index map.
-- If a high-frequency region is deliberate texture — sparkle, grain, foliage, water
-  glitter — pass it as \`textureRects\`. Outliers inside are counted as
-  \`noise.texturedOutliers\` and stop raising the noise warning, **and** their bright
-  pixels are excluded from the light-source check, because scattered highlights are not
-  a light source. Do **not** lower \`noiseThreshold\` to silence it: that hides real
-  defects everywhere, whereas \`textureRects\` is scoped to the region you meant. A
-  sunset lake is the case that forces this — its glitter is a texture, and without the
-  declaration its sun can never read as a source.
 - At the end, \`finalize_document\` saves the \`.pixel\` source and writes one or more
   PNG exports in a single call. A usual static asset is a scale-1 original plus a
   scale-6/8 preview. Keep \`save_document\` plus repeated \`export_png\` calls only when
@@ -609,10 +566,11 @@ into a game engine.
   boundaries, indices, invalid cells and the mutation's changed area in the same response
   as a PNG. Pass \`underlay\` to render a ground/base tilemap first and judge alpha-masked
   bank/edge tiles over it. Do not bake merely to inspect a tile edit.
-- \`quality_report { tilemap, underlay? }\` analyses the grid before baking. It reports invalid
-  indices, variant dominance/entropy, same-tile adjacency and runs, connected terrain,
-  singleton cells and open edges. Pixel-noise and flat-band findings become informational
-  in tilemap mode because water ripples, crop rows and roads are intentional texture.
+- \`preview_tilemap\` also returns a \`structure\` block for the unbaked grid: invalid
+  indices, variant dominance and entropy, same-tile adjacency and runs, connected
+  terrain, singleton cells and open edges. Read it as evidence, not as a verdict — a
+  river or a road is *supposed* to contain long same-tile runs, and \`export_tiled\`
+  refuses to write a map whose indices or cell size are malformed.
 - Keep gameplay data out of the visual tile choice when the engine needs it:
   \`set_tile_properties\` stores walkability, collision, speed and similar JSON-safe values
   per tile index; \`add_map_object\`/\`update_map_object\` store spawns, triggers, bridges
@@ -635,12 +593,12 @@ export const SKILL_SUMMARY =
   'read_grid verifies, get_preview approves: keep the pictures to two or three gates. ' +
   'Judge the whole piece at 100% before zooming; keep dither to 3-5px seams only ' +
   '(cluster levels quantise to sixteenths); place shading inside the layer-visible band; ' +
-  'and break up repeated shapes. Run quality_report before finalising and read its ' +
-  'presence half as well as its defect half - a clean defectScore with a narrow ' +
-  'presence.valueRange means the piece was sanded flat, not finished. For animation, batch ' +
+  'and break up repeated shapes. Before finalising, look at the whole piece once more ' +
+  'at 100% and fix only what you can still see - a clean-up pass that sands a scene ' +
+  'flat has not improved it. For animation, batch ' +
   'durations/tags with set_frame_durations/upsert_tags. For reusable character parts, use ' +
-  'a persistent rig plus preview_pose and explicit-frame pose baking; quality_report ' +
-  'assetType:character checks silhouette stability across frames. Finish with one ' +
+  'a persistent rig plus preview_pose and explicit-frame pose baking; review silhouette ' +
+  'stability across frames with preview_animation and its onion skin. Finish with one ' +
   'finalize_document export plan. The tool list is small on purpose: list_commands is the ' +
   'catalogue, apply_ops runs any of it, and a command you look up or run is promoted to a ' +
   'direct tool. Read pixel://skill ' +
@@ -741,10 +699,6 @@ PNG exports in one call.
   loop is killed and reported as \`Script timed out after Nms\`. A script that generates
   a whole 256x256 scene is a few hundred command calls, so raise \`timeoutMs\` rather than
   splitting the work across scripts.
-- \`scatter\` and dithered \`dither_fill\` do not silently register a texture region in
-  the document. When calling \`quality_report\`, pass the actual sparkle/grain/foliage
-  rectangles as \`textureRects\`; only those regions are exempted from noise and
-  light-source checks.
 
 ## Undo
 

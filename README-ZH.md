@@ -203,6 +203,7 @@ pixel apply hero.pixel --ops ops.json
 | 能力 | 作用 |
 | --- | --- |
 | `read_grid` | 把画面以字符网格返回——剪影、亮度、调色板槽位或颜色名。是文本，所以精确、可 diff、便宜；重复调用会报告哪些行发生了变化。用来**验证**一幅画。 |
+| `get_selection` | 用户在画布上框选的矩形，附带它所在的图层和帧。`hint`（默认）只标记目标、允许 AI 略微改到框外；`enforce` 则把修改完全限制在框内。 |
 | `get_preview` | 返回单帧或全部帧的真实 PNG，可选择裁剪、缩放、隔离图层或洋葱皮显示。用来**终审**一幅画。 |
 | `preview_animation` | 按原始时间线或标签展开顺序生成动画联络表，并支持顺序感知的洋葱皮。 |
 | `preview_pose` | 渲染绑定姿态或补间，并解析锚点和攻击框的世界坐标。 |
@@ -215,7 +216,6 @@ pixel apply hero.pixel --ops ops.json
 | `add_palette_ramp` | 构建色相偏移的材质渐变，而不是简单的平面插值。 |
 | `prune_palette` | 查找选定原始 cel 中未使用的颜色，提供 dry-run、语义角色和索引重映射。 |
 | `ensure_palette_role` / `replace_colors` | 维护材质角色，并跨文档、帧、范围或列表统一改色。 |
-| `quality_report` | 报告光栅、场景或瓦片质量，或检查角色轮廓稳定性、调色板闪烁及有意细节豁免。 |
 | `finalize_document` | 保存可编辑源文件，并一次生成 PNG/逐帧/精灵图/GIF/姿态/联络表及可选增量哈希清单。 |
 | `run_script` | 将有时限的 JavaScript 批处理作为单个撤销步骤运行，并提供隔离 dry-run 和源码相对错误诊断。 |
 | `load_plugin` | 将插件命令注册为实时 MCP 工具。 |
@@ -225,7 +225,7 @@ pixel apply hero.pixel --ops ops.json
 ```text
 create_document → block silhouette → inspect PNG → shade in batches
       ↑                                                    ↓
-quality_report ← fix warnings ← preview each visual gate → finalize_document
+ fix what you can see ← preview each visual gate → finalize_document
 ```
 
 独立服务器通过 stdio 运行，不需要桌面应用。如果 Electron 应用已经运行，也可以连接到它的 loopback HTTP 端点：

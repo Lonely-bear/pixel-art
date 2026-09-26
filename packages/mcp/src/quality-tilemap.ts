@@ -1,14 +1,15 @@
 import { tileCount, type TilemapLayer, type Tileset } from '@pixel/core';
 
 /**
- * Tile-grid evidence for map-aware quality reports.
+ * Tile-grid evidence about a tilemap's structure.
  *
  * These numbers deliberately describe evidence instead of declaring a map broken.
  * A rice paddy, river or road is expected to contain long same-tile runs, and an
- * edge tile is expected to repeat its neighbour. The raster report remains useful
- * for colour/value problems; this block answers the separate questions of whether
- * indices are valid, whether terrain is connected, and whether one variant has
- * swallowed a region.
+ * edge tile is expected to repeat its neighbour. This block answers the separate
+ * questions of whether indices are valid, whether terrain is connected, and whether
+ * one variant has swallowed a region. `preview_tilemap` returns it alongside the
+ * image, and `export_tiled` refuses to write a map whose indices or cell size are
+ * malformed.
  */
 export interface TilemapQualityAnalysis {
   id: string;
@@ -132,7 +133,7 @@ function validIndex(index: number, available: number): boolean {
   return index >= 0 && index < available;
 }
 
-/** Analyse a tilemap without interpreting intentional texture as pixel noise. */
+/** Measure a tilemap's index validity, repetition and terrain connectivity. */
 export function analyzeTilemapQuality(
   tilemap: TilemapLayer,
   tileset: Tileset,
