@@ -12,12 +12,14 @@ import {
   animationSequence,
   buildSpritesheet,
   deserializeSprite,
+  isAseprite,
   encodeGIF,
   encodePNG,
   resolveTilemap,
   scaleAtlas,
   scaleNearest,
   serializeSprite,
+  spriteFromAseprite,
   spriteFromPng,
   toAsepriteJson,
   toTiledJson,
@@ -416,15 +418,18 @@ export function registerIpc(getMcpStatus: () => unknown): void {
   ipcMain.handle(CHANNELS.importImage, async () => {
     const picked = await dialog.showOpenDialog(focusedWindow()!, {
       title: text().importImage,
-      filters: [{ name: 'Images', extensions: ['png'] }],
+      filters: [
+        { name: 'Images', extensions: ['png', 'aseprite', 'ase'] },
+      ],
       properties: ['openFile'],
     });
     if (picked.canceled || picked.filePaths.length === 0) return null;
     const filePath = picked.filePaths[0];
     const bytes = new Uint8Array(await readFile(filePath));
-    const sprite = spriteFromPng(bytes, {
-      name: path.basename(filePath).replace(/\.png$/i, ''),
-    });
+    // PNGs and Aseprite files both arrive here; the header tells them apart. An
+    // Aseprite file brings its layers, frames, durations and tags with it.
+    const name = path.basename(filePath).replace(/\.(png|aseprite|ase)$/i, '');
+    const sprite = isAseprite(bytes) ? spriteFromAseprite(bytes, { name }) : spriteFromPng(bytes, { name });
     const doc = store.add(sprite, { select: true });
     return describeDocument(doc);
   });

@@ -27,6 +27,19 @@ All notable changes to dotloom-mcp are documented in this file.
   release with nothing it can install, which is the difference between "you are on the
   latest version" and "there is no update" - and only the first of those is true.
 
+### Fixed
+
+- **The desktop app can import `.aseprite` files again.** The file dialog accepted PNGs
+  only, so an Aseprite file could not be picked at all - the feature the MCP tool and the
+  `pixel import` command already supported. The dialog now offers `png`, `aseprite` and
+  `ase`, and the file is told apart by its header, exactly as the CLI does: an Aseprite
+  file arrives with its layers, frames, durations and tags intact.
+
+### Changed
+
+- The import menu entry is now labelled **Import PNG / .aseprite** in every language, so
+  it says what it actually accepts.
+
 ## [0.4.1] - 2026-09-26
 
 ### Added
