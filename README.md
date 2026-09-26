@@ -254,10 +254,17 @@ create_document → block silhouette → inspect PNG → shade in batches
  fix what you can see ← preview each visual gate → finalize_document
 ```
 
-The standalone server runs over stdio and requires no desktop app. If the Electron app is already running, it can also attach over its loopback HTTP endpoint:
+The standalone server runs over stdio and requires no desktop app, but it prefers one.
+Started with no arguments it discovers a running Electron app on its loopback endpoint
+and forwards to it, so the agent edits the same documents the window shows. If no app
+answers at startup it runs self-contained in memory and keeps watching: opening the app
+later reconnects automatically, and closing it falls back to memory. `--attach <url>`
+pins a specific endpoint and fails loudly instead of falling back, and `--standalone`
+skips discovery entirely.
 
 ```bash
-dotloom-mcp --attach http://127.0.0.1:7331/mcp
+dotloom-mcp                                        # prefer the app, keep looking
+dotloom-mcp --attach http://127.0.0.1:7331/mcp     # pin one endpoint
 ```
 
 The attached GUI and agent then share documents and undo history: an agent edit repaints the canvas, and a human edit is immediately visible to the agent.

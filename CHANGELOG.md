@@ -4,6 +4,27 @@ All notable changes to dotloom-mcp are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **A session no longer stays in memory just because the app was late.** Discovery used
+  to be a one-shot decision at startup: `dotloom-mcp` waited 1.5s for an app and, if none
+  answered, committed to a self-contained stdio server for the rest of its life. Opening
+  the editor a moment later was therefore missed permanently - and a client that keeps a
+  long-lived background service reused the headless connection across restarts, which
+  made it look like only the first session ever attached. The stdio server now stands up
+  the in-memory editor *and* relays to the app whenever one is found, re-running discovery
+  while detached and following the app both ways: an app that appears later attaches, and
+  one that quits falls back to memory and is watched for again. `--standalone` still forces
+  the in-memory editor.
+- **`get_connection_status` tells the agent which store is live.** The stdio server adds
+  one tool of its own reporting `mode` (`app` or `memory`), the endpoint it is attached to,
+  and whether live preview is on - the two modes are otherwise indistinguishable until the
+  user notices their window is not updating.
+- **The startup instructions are mode-aware.** Attached, they say live preview is on.
+  Detached, they tell the agent to tell the user the app was not detected and ask whether
+  they want to open it *before* any work, and spell out that nothing is written to disk
+  until a save.
+
 ## [0.4.0] - 2026-09-26
 
 ### Added

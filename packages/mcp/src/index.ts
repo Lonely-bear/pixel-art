@@ -12,3 +12,4 @@ export * from './resources.js';
 export * from './prompts.js';
 export * from './attach.js';
 export * from './discovery.js';
+export * from './link.js';

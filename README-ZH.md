@@ -253,10 +253,15 @@ create_document → block silhouette → inspect PNG → shade in batches
  fix what you can see ← preview each visual gate → finalize_document
 ```
 
-独立服务器通过 stdio 运行，不需要桌面应用。如果 Electron 应用已经运行，也可以连接到它的 loopback HTTP 端点：
+独立服务器通过 stdio 运行，不需要桌面应用，但会优先选择它。不带参数启动时，它会在
+loopback 端点上发现正在运行的 Electron 应用并转发过去，因此 Agent 编辑的正是窗口
+里显示的同一批文档。启动时没有应用应答，它就以内存模式自包含运行并持续探测：之后
+打开应用会自动重连，关闭应用则回退到内存。`--attach <url>` 固定到某个端点，连不上
+时会明确报错而不降级；`--standalone` 则完全跳过发现。
 
 ```bash
-dotloom-mcp --attach http://127.0.0.1:7331/mcp
+dotloom-mcp                                        # 优先应用，并持续探测
+dotloom-mcp --attach http://127.0.0.1:7331/mcp     # 固定一个端点
 ```
 
 连接后，GUI 和 Agent 会共享文档及撤销/重做历史：Agent 的编辑会重新绘制画布，人类的编辑也会立即对 Agent 可见。

@@ -2,19 +2,22 @@
 /**
  * `dotloom-mcp` - the stdio MCP server.
  *
- * With no arguments the tool looks for a running desktop app and, if it finds
- * one, forwards to it so the agent and the user's window share one document
- * store and one undo history - edits show up on screen as they are made. If no
- * app is running it falls back to a self-contained editor rather than failing,
- * because headless and CI use have no app and must keep working; the agent is
- * told this happened through the server's `instructions`.
+ * With no arguments the tool prefers a running desktop app: while one is found it
+ * forwards to it, so the agent and the user's window share one document store and
+ * one undo history - edits show up on screen as they are made. If no app answers at
+ * startup it falls back to a self-contained editor rather than failing, because
+ * headless and CI use have no app and must keep working, and it keeps watching for
+ * an app to appear. When the app comes or goes the link follows it. The agent is
+ * told which mode it is in through the server's `instructions` and
+ * `get_connection_status`.
  *
  * Nothing but JSON-RPC may go to stdout, so every log line goes to stderr.
  */
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { runAttachBridge } from './attach.js';
-import { discoverHost, hostFilePath, scanHostPorts, waitForHost } from './discovery.js';
-import { createPixelServer, SERVER_NAME, SERVER_VERSION } from './server.js';
+import { discoverHost, hostFilePath, scanHostPorts } from './discovery.js';
+import { createHostLink } from './link.js';
+import { createPixelServer, standaloneNote, SERVER_NAME, SERVER_VERSION } from './server.js';
 
 /** How long to keep looking for an app that is still starting up. */
 const HOST_WAIT_MS = 1500;
@@ -30,27 +33,6 @@ function attachUrl(args: string[]): string | null {
 }
 
 const log = (line: string) => process.stderr.write(`${line}\n`);
-
-/**
- * What the agent is told when no app was found.
- *
- * Written for the model, not the human: the failure it prevents is the agent
- * confidently reporting a finished sprite that no window ever displayed.
- */
-const OFFLINE_NOTE = [
-  '## The desktop app is not running',
-  '',
-  'This session did not find a running Pixel Art desktop client, so it owns a',
-  'private in-memory document store. Consequences worth stating up front:',
-  '',
-  '- Edits you make are real and undoable, but **no app window will show them**.',
-  '  There is no live rendering. Do not describe a sprite as "on screen".',
-  '- The user may already have the app open under a different endpoint; say that',
-  '  restarting this MCP session after launching the app is what enables live',
-  '  rendering, rather than assuming they have.',
-  '- Nothing is written to disk until `save_document` or `finalize_document`',
-  '  runs, so treat unsaved work as lost if the session ends.',
-].join('\n');
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
@@ -68,14 +50,15 @@ async function main(): Promise<void> {
         `      --attach <url>   Forward to a specific app endpoint. Fails if it\n` +
         `                       does not answer, rather than falling back.\n` +
         `      --standalone     Never look for an app; run self-contained.\n` +
-        `      --host-wait <ms> How long to wait for an app to appear (default ${HOST_WAIT_MS}).\n` +
+        `      --host-wait <ms> How long to wait for an app at startup (default ${HOST_WAIT_MS}).\n` +
         `      --json-status    Report app discovery as JSON and exit.\n\n` +
-        `With no options this looks for a running desktop app on the loopback\n` +
-        `interface and forwards to it when found, so the agent edits the same\n` +
-        `documents the user's window shows. With no app running it runs a\n` +
-        `self-contained editor over stdio and tells the agent that live rendering\n` +
-        `is unavailable. The endpoint is discovered, never configured, so an app\n` +
-        `that moved to another port is still found.\n` +
+        `With no options this prefers a running desktop app: it looks on the loopback\n` +
+        `interface and forwards to it when found, so the agent edits the same documents\n` +
+        `the user's window shows. If no app answers at startup it runs a self-contained\n` +
+        `editor over stdio and keeps watching, reconnecting automatically once the app\n` +
+        `appears; when the app goes away it falls back to memory and watches again. The\n` +
+        `endpoint is discovered, never configured, so an app that moved to another port\n` +
+        `is still found.\n` +
         `See pixel://skill for the pixel art craft guide.\n`,
     );
     return;
@@ -136,30 +119,29 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (!args.includes('--standalone')) {
-    const host = await waitForHost(waitMs, { log });
-    if (host) {
-      const bridge = await runAttachBridge(host.url);
-      close = bridge.close;
-      log(
-        `${SERVER_NAME} ${SERVER_VERSION} attached to the running app at ${bridge.url} ` +
-          `(found via ${host.source}${host.pid ? `, pid ${host.pid}` : ''}). Edits render live.`,
-      );
-      return;
-    }
-    log(
-      `No running Pixel Art app found (looked for ${hostFilePath()} and the default port range). ` +
-        `Running self-contained: edits will NOT appear in an app window. Launch the app and ` +
-        `restart this MCP session for live rendering.`,
-    );
+  if (args.includes('--standalone')) {
+    // An explicit request to run self-contained: never look, never reconnect.
+    const { server, store } = createPixelServer({ instructionsNote: standaloneNote() });
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    close = () => server.close();
+    log(`${SERVER_NAME} ${SERVER_VERSION} ready on stdio - ${store.list().length} document(s) open.`);
+    return;
   }
 
-  const { server, store } = createPixelServer({ instructionsNote: OFFLINE_NOTE });
+  // Default: prefer a running app, and keep looking if one appears later. The
+  // relay stands up the in-memory editor either way, so a missing app degrades
+  // instead of failing.
+  const link = await createHostLink({ hostWaitMs: waitMs, log });
   const transport = new StdioServerTransport();
-  await server.connect(transport);
-  close = () => server.close();
-
-  log(`${SERVER_NAME} ${SERVER_VERSION} ready on stdio - ${store.list().length} document(s) open.`);
+  await link.server.connect(transport);
+  await link.start();
+  close = link.close;
+  log(
+    link.mode() === 'app'
+      ? `${SERVER_NAME} ${SERVER_VERSION} ready on stdio, attached to ${link.url()}.`
+      : `${SERVER_NAME} ${SERVER_VERSION} ready on stdio in memory; watching for a desktop app.`,
+  );
 }
 
 main().catch((error: unknown) => {

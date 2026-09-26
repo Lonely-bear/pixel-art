@@ -162,6 +162,67 @@ on the message text, and follow \`remediation\` when it is there.
 Before drawing anything non-trivial, call \`read_skill\` or read \`pixel://skill\`.
 ${SKILL_SUMMARY}`;
 
+/**
+ * Appended to the instructions when the stdio server is bridged to a running app.
+ *
+ * Discovery is not a one-shot decision any more, so this note is chosen once at
+ * handshake time and states plainly that live preview is on.
+ */
+export function attachedNote(url: string): string {
+  return [
+    '## Desktop app: connected',
+    '',
+    `A running Pixel Art desktop client was found at ${url}, so this session edits that`,
+    "app's documents directly: agent edits appear in the window as they are made, and the",
+    'GUI and this agent share one document store and one undo history.',
+  ].join('\n');
+}
+
+/**
+ * Appended to the instructions when no app was found.
+ *
+ * Written for the model, not the human: the failure it prevents is the agent
+ * confidently editing a sprite no window ever displays. The first line makes the
+ * agent ask the user about the app *before* it starts work, which is the one moment
+ * the answer can still change what happens.
+ */
+export function offlineNote(): string {
+  return [
+    '## Desktop app: not connected',
+    '',
+    'No running Pixel Art desktop client was found, so this session is running',
+    'self-contained in memory. **Before doing any work, tell the user the app was not',
+    'detected and ask whether they want to open it**; then continue without waiting for',
+    'them.',
+    '',
+    'What "in memory" means:',
+    '- No app window shows these edits. There is no live preview.',
+    '- Nothing is written to disk until `save_document` or `finalize_document` runs, so',
+    '  unsaved work is lost when the session ends.',
+    '- If the app is opened later, this session reconnects automatically and later edits',
+    '  go to the app; documents created while disconnected stay in memory.',
+    '- `get_connection_status` reports the current mode at any time.',
+  ].join('\n');
+}
+
+/**
+ * Appended to the instructions when discovery was disabled on purpose.
+ *
+ * `--standalone` means the user asked for no app, so the offline note's "ask the user
+ * to open it" would be wrong; this states the fact without asking for something the
+ * mode forbids.
+ */
+export function standaloneNote(): string {
+  return [
+    '## Desktop app: disabled by request',
+    '',
+    'This server was started with `--standalone`, so it never looks for the desktop app',
+    'and always runs a self-contained in-memory editor. No app window will show these',
+    'edits, and nothing is written to disk until `save_document` or `finalize_document`',
+    'runs.',
+  ].join('\n');
+}
+
 export interface PixelServerOptions {
   name?: string;
   version?: string;

@@ -163,11 +163,16 @@ The server binds to loopback only, and each MCP client gets its own session tran
 `packages/mcp` exposes the same command bus over the Model Context Protocol, so an agent
 can drive the editor directly. It runs three ways:
 
-- **stdio** — the standalone server below, for any MCP client, no GUI required.
+- **stdio** — the default `dotloom-mcp` server. It prefers a running desktop app: it
+  discovers the app's loopback endpoint and forwards to it, so the agent shares the
+  window's documents and undo history. When no app answers it runs self-contained in
+  memory and keeps watching, reconnecting when the app appears and falling back to memory
+  when it goes away. `--standalone` skips discovery. The stdio server adds one tool of its
+  own, `get_connection_status`, which reports whether the session is attached or in memory.
 - **HTTP** — embedded in the Electron app (see above), for attaching to a live session.
 - **`--attach <url>`** — a transparent stdio→HTTP bridge, so a client that only speaks stdio
-  (Claude Desktop and friends) can drive a *running* app, sharing its document store and undo
-  history. It relays every request, notification and capability verbatim.
+  (Claude Desktop and friends) can drive a *running* app, pinning one endpoint and failing
+  rather than falling back. It relays every request, notification and capability verbatim.
 
 ```bash
 pnpm build
@@ -221,8 +226,9 @@ The equivalent CLI command is:
 opencode mcp add dotloom-mcp -- npx -y dotloom-mcp
 ```
 
-To connect to a running desktop app instead of the standalone server, append
-`--attach http://127.0.0.1:7331/mcp` to the command arguments.
+No `--attach` is needed: the server finds a running app on its own and reconnects if the
+app appears later. Append `--attach http://127.0.0.1:7331/mcp` only to pin one endpoint
+and fail loudly when it is not there.
 
 ### What it exposes
 
@@ -234,6 +240,8 @@ To connect to a running desktop app instead of the standalone server, append
   `set_selection`, `get_palette`, `get_history`, `undo`, `redo`, `apply_ops`, `export_png`,
   `export_sheet`, `export_tiled`, `export_gif`, `list_commands`, `describe_command`,
   `find_workflow`, `read_skill`, and the scripting tools `run_script`, `load_plugin`, `list_plugins`.
+  The stdio server adds `get_connection_status` on top (36), so the agent can tell whether
+  it is editing the app or an in-memory store.
 
   The ~90 core commands (`draw_rect`, `autotile`, `create_tileset`, `add_palette_ramp`, …) are **not**
   in that list up front: shipping all 127 cost ~55K tokens of tool definitions in the context of every
