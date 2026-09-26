@@ -112,6 +112,10 @@ const document = core.createSprite({ width: 32, height: 32 });
 console.log(VERSION, document.width, typeof mcp.createPixelServer, typeof script.ScriptRuntime);
 ```
 
+这三个命名空间就是完整的引擎，也是逃生舱而不是推荐的起点：要在构建脚本里
+生成资产，请改用同一个入口上任务形的函数 —— 完整接口面、确定性契约和版本
+策略见 [`docs/API-ZH.md`](docs/API-ZH.md)（[English](docs/API.md)）。
+
 无需全局安装，也可以直接临时运行：
 
 ```bash
@@ -433,6 +437,7 @@ electron-builder 读取。
 ## 文档
 
 - [English README](README.md) — 英文项目介绍与完整使用说明
+- [库 API](docs/API-ZH.md) — 构建期生成资产的任务形接口、确定性契约与版本策略（[English](docs/API.md)）
 - [技术参考](docs/REFERENCE.md) — 命令目录、MCP 内部机制、脚本、动画、瓦片地图和设计决策
 - [更新日志](CHANGELOG.md) — 发布历史和范围
 - [Model Context Protocol](https://modelcontextprotocol.io/)

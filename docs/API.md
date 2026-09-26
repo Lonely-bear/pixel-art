@@ -1,5 +1,12 @@
 # Library API
 
+<p align="center">
+  <a href="API.md">English</a> · <a href="API-ZH.md">中文</a>
+</p>
+
+> This document is the authority. `API-ZH.md` is its Chinese mirror: where the two
+> disagree, this one is correct and the Chinese one is the stale copy.
+
 `dotloom-mcp` is a game-asset pipeline. This is the API a game project uses to generate its
 sprites, tilesets and animations **at build time**, from code, as a `devDependency` — no GUI,
 no MCP client, no person in the loop.

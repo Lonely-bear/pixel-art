@@ -135,6 +135,7 @@ for (const file of exportAssets(slime, { sheet: true, source: true })) {
 Same seed, same bytes, every run — which is what makes committing generated assets viable.
 **[`docs/API.md`](docs/API.md) has the full surface, the determinism contract and the
 versioning policy**: what is stable, what is internal, and what changes in a major version.
+[中文版](docs/API-ZH.md) mirrors it.
 
 No global install is required for one-off use:
 
