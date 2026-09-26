@@ -8,14 +8,14 @@
 
 import packageJson from '../../../package.json' with { type: 'json' };
 import { parseArgs, UsageError } from './args.js';
-import { COMMANDS, findCommand } from './commands.js';
+import { commandList, findCommand } from './commands.js';
 
 const USAGE = `pixel — headless pixel art tooling
 
 Usage: pixel <command> [options]
 
 Commands:
-${COMMANDS.map((command) => `  ${command.name.padEnd(10)} ${command.summary}`).join('\n')}
+${commandList()}
 
 Run \`pixel <command> --help\` or \`pixel help <command>\` for details.
 All commands print JSON to stdout; errors print JSON to stderr and exit non-zero.

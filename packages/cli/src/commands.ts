@@ -27,6 +27,7 @@ import {
 } from '@pixel/core';
 import { ScriptRuntime } from '@pixel/script';
 import { boolFlag, intFlag, listFlag, repeatFlag, stringFlag, UsageError, type ParsedArgs } from './args.js';
+import { demoCommand } from './demo.js';
 import { loadSprite, printJson, readBytes, readText, saveSprite, writeBytes, writeText } from './io.js';
 
 export interface CommandContext {
@@ -626,6 +627,7 @@ const scriptCommand: CommandSpec = {
 };
 
 export const COMMANDS: CommandSpec[] = [
+  demoCommand,
   newCommand,
   infoCommand,
   exportCommand,
@@ -643,4 +645,15 @@ export const COMMANDS: CommandSpec[] = [
 
 export function findCommand(name: string): CommandSpec | undefined {
   return COMMANDS.find((command) => command.name === name);
+}
+
+/**
+ * The command list `pixel --help` renders.
+ *
+ * Exported rather than inlined in `index.ts` because that module runs `main()` on
+ * import, so a test cannot read the help text out of it. Keeping the rendering here
+ * means the test asserts on the same string a user sees.
+ */
+export function commandList(): string {
+  return COMMANDS.map((command) => `  ${command.name.padEnd(10)} ${command.summary}`).join('\n');
 }
