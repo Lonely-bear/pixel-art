@@ -61,11 +61,17 @@ jobs:
         run: |
           TARBALL="$(find .artifacts -maxdepth 1 -name '*.tgz' -print -quit)"
           CONSUMER="$(mktemp -d)"
+          # The version is read from the manifest rather than pinned here. What
+          # this gate actually checks is that the tarball matches the checkout;
+          # a hardcoded literal only adds a second place to forget to update,
+          # and it fails as a false alarm at the next bump.
+          EXPECTED_VERSION="$(node -p "require('$GITHUB_WORKSPACE/package.json').version")"
+          export EXPECTED_VERSION
           cd "$CONSUMER"
           npm init -y >/dev/null
           npm install "$GITHUB_WORKSPACE/$TARBALL"
           ./node_modules/.bin/pixel --version | tee version.json
-          node -e "const v=require('./version.json'); if (v.name !== 'dotloom-mcp' || v.version !== '0.3.1') process.exit(1)"
+          node -e 'const v=require("./version.json"); if (v.name !== "dotloom-mcp" || v.version !== process.env.EXPECTED_VERSION) { console.error(`expected ${process.env.EXPECTED_VERSION}, got ${v.name}@${v.version}`); process.exit(1) }'
           ./node_modules/.bin/pixel-mcp --version
           ./node_modules/.bin/pixel-art-mcp --version
           ./node_modules/.bin/dotloom-mcp --version
@@ -76,7 +82,7 @@ jobs:
           import { Client } from '@modelcontextprotocol/sdk/client/index.js';
           import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
           import { VERSION, core, mcp, script } from 'dotloom-mcp';
-          if (VERSION !== '0.3.1') throw new Error(`unexpected package version: ${VERSION}`);
+          if (VERSION !== process.env.EXPECTED_VERSION) throw new Error(`unexpected package version: ${VERSION}`);
           if (core.createSprite({ width: 2, height: 2 }).width !== 2) throw new Error('core API unavailable');
           if (typeof mcp.createPixelServer !== 'function') throw new Error('MCP API unavailable');
           if (typeof script.ScriptRuntime !== 'function') throw new Error('script API unavailable');

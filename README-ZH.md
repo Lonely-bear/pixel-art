@@ -435,7 +435,7 @@ electron-builder 读取。
 
 ## 项目状态
 
-`dotloom-mcp@0.3.1` 是当前可安装的 CLI/MCP 版本。
+`dotloom-mcp@0.4.0` 是当前版本 —— 也是第一个提供桌面安装程序的版本。
 
 - [x] 核心文档模型、光栅器、命令总线、历史记录和原生序列化
 - [x] PNG、精灵图、GIF、Aseprite 导入和 Tiled 导出

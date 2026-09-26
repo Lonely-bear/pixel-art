@@ -438,7 +438,8 @@ or config change is needed:
 
 ## Project status
 
-`dotloom-mcp@0.3.1` is the current installable CLI/MCP release.
+`dotloom-mcp@0.4.0` is the current release — the first one to ship desktop
+installers.
 
 - [x] Core document model, rasteriser, command bus, history, and native serialisation
 - [x] PNG, spritesheet, GIF, Aseprite import, and Tiled export

@@ -4,6 +4,8 @@ All notable changes to dotloom-mcp are documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-26
+
 ### Added
 
 - **The editor is downloadable.** Every release now ships installers for Windows, macOS,
