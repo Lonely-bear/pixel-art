@@ -92,6 +92,15 @@ dmg:
 
 linux:
   icon: build/icon.png
+  # Load-bearing, not cosmetic. Without it electron-builder falls back to the
+  # package name, and `@pixel/app` sanitises to `@pixelapp` — the `@` is illegal
+  # in an AppImage's internal paths, so the build dies with "executableName
+  # contains characters that cannot be safely used in file paths". Windows and
+  # macOS already pick this up from productName, which is why only Linux fails.
+  executableName: dotloom-mcp
+  # electron uses the .desktop file's name as the app_id / WM_CLASS, and the
+  # window only gets associated with the taskbar icon when the two agree.
+  syncDesktopName: true
   category: Graphics
   synopsis: Pixel-art editor with a built-in MCP server
   description: >-
