@@ -58,10 +58,36 @@
 
 `dotloom-mcp` is the canonical public package name. The internal workspace packages remain scoped as `@pixel/*`; those are implementation packages, not additional npm products.
 
+### Download the desktop app
+
+The editor ships as a signed-ready installer for every platform. Grab the latest
+from **[GitHub Releases](https://github.com/Lonely-bear/pixel-art/releases/latest)**:
+
+| Platform | File |
+| --- | --- |
+| Windows | `dotloom-mcp-<version>-x64-setup.exe` — installs to your user profile, no admin needed |
+| Windows, no install | `dotloom-mcp-<version>-x64-portable.exe` — run it from anywhere, including a USB stick |
+| macOS, Apple Silicon | `dotloom-mcp-<version>-arm64.dmg` |
+| macOS, Intel | `dotloom-mcp-<version>-x64.dmg` |
+| Linux | `dotloom-mcp-<version>-x64.AppImage` — run it, nothing to install; or the `.deb` on Debian/Ubuntu |
+
+The app is self-contained: the CLI and the MCP server are built into the same
+binary, so installing the editor is the whole installation. The embedded MCP
+server publishes itself on `127.0.0.1`, which is how a separately installed
+`dotloom-mcp` finds a running editor.
+
+> These builds are **not yet code-signed**. macOS blocks the first launch until
+> you right-click the app and choose **Open** (or run
+> `xattr -dr com.apple.quarantine /Applications/dotloom-mcp.app`), and Windows
+> SmartScreen warns once — **More info → Run anyway**. Certificates can be added
+> without changing the app.
+
 ### Requirements
 
-- Node.js **22.13 or newer**
-- npm, pnpm, or any MCP client capable of starting a local stdio server
+For the npm packages: Node.js **22.13 or newer**, plus npm, pnpm, or any MCP
+client capable of starting a local stdio server.
+
+The desktop app needs no runtime beyond the operating system.
 
 ### Install the CLI and MCP server
 
@@ -341,7 +367,60 @@ npm pack --dry-run
 
 The repository uses pnpm workspaces, strict TypeScript, Vitest, and a clean-build CI gate. The public package bundles the internal workspace code while keeping normal npm dependencies external.
 
-> **Distribution scope:** `dotloom-mcp@0.3.1` publishes the CLI, library entry, and standalone MCP server. The Electron application remains a source-based application in this release; desktop installers are not part of the npm tarball.
+> **Distribution scope:** the npm tarball publishes the CLI, library entry, and
+> standalone MCP server. The Electron editor is distributed separately, as
+> GitHub Release installers — it is not part of the tarball, and nothing in the
+> tarball needs one.
+
+### Packaging the desktop app
+
+Installers are built with [electron-builder](https://www.electron.build/). The
+main process is bundled by esbuild rather than emitted file-by-file, because
+pnpm links `@pixel/core` and `@pixel/mcp` as symlinks that a packaged app cannot
+follow — so the packaged output has no `node_modules` at all.
+
+```bash
+# Everything a release needs, for the platform you are on
+pnpm build
+pnpm --filter @pixel/app run dist:win     # or dist:mac / dist:linux
+
+# Just the unpacked app, no installer — the fastest way to check a change
+pnpm --filter @pixel/app run pack
+
+# Regenerate build/icon.png from assets/pixel-mark.svg's design
+pnpm --filter @pixel/app run icon
+```
+
+Output lands in `packages/app/release/`. Targets, artifact names, and the icon
+live in [`packages/app/electron-builder.yml`](packages/app/electron-builder.yml);
+the workflow only decides which runner builds which platform.
+
+### Cutting a release
+
+```bash
+# 1. Move the Unreleased changelog notes under a dated heading, then bump:
+#    package.json -> version, CHANGELOG.md -> ## [X.Y.Z] - 2026-09-26
+# 2. Commit, then tag and push. The tag must match package.json exactly.
+git commit -am "chore(release): prepare dotloom-mcp 0.4.0"
+git tag v0.4.0
+git push origin main --follow-tags
+```
+
+`.github/workflows/release.yml` then builds Windows, macOS, and Linux in
+parallel, and publishes everything to one GitHub Release. It refuses to build if
+the tag and `package.json` disagree, or if the changelog has no dated section for
+the version — both checked by `scripts/prepare-release.mjs`, which also copies the
+version into the app package where electron-builder reads it from.
+
+To add code signing later, set repository secrets and push a new tag; no workflow
+or config change is needed:
+
+| Secret | Purpose |
+| --- | --- |
+| `CSC_LINK` | base64 of a P12: Authenticode on Windows, Developer ID on macOS |
+| `CSC_KEY_PASSWORD` | password for that P12 |
+| `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | macOS notarisation |
+| `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD` | an alternate way to pass the same P12 |
 
 ## Security and local trust
 
@@ -366,7 +445,8 @@ The repository uses pnpm workspaces, strict TypeScript, Vitest, and a clean-buil
 - [x] Electron editor, animation, palettes, onion skinning, and tilemaps
 - [x] Standalone MCP server, visual resources, prompts, diagnostics, and scripts/plugins
 - [x] Public npm package and CI quality gates
-- [ ] Signed cross-platform Electron installers
+- [x] Cross-platform desktop installers on every GitHub Release
+- [ ] Code signing and macOS notarisation
 
 ## License
 

@@ -6,6 +6,27 @@ All notable changes to dotloom-mcp are documented in this file.
 
 ### Added
 
+- **The editor is downloadable.** Every release now ships installers for Windows, macOS,
+  and Linux, built by electron-builder and published to the project's GitHub Releases:
+  an NSIS installer and a no-install portable `.exe` on Windows, `.dmg` and `.zip` for
+  both Intel and Apple Silicon on macOS, and an AppImage plus a `.deb` on Linux. Pushing
+  a `vX.Y.Z` tag builds all three in parallel and collects them into one Release; the
+  download table and per-version notes come from `.github/release-notes.md` and the
+  changelog, so the two cannot drift.
+  The app is self-contained — the CLI and the MCP server are built into the same binary
+  as the window, so installing the editor is the whole installation. Code signing is
+  wired but not configured: set `CSC_LINK` and the `APPLE_*` secrets and a new tag
+  produces signed, notarised builds with no change to the app or the workflow.
+- **A real application icon.** The mark from `assets/pixel-mark.svg` is now rasterised
+  into a 1024×1024 `packages/app/build/icon.png` by `scripts/make-icon.mjs`, from which
+  electron-builder derives the Windows `.ico` and the macOS `.icns`. It is drawn from
+  signed distance fields at 2× supersample, so the rounded corners and the diagonal
+  gradient stay clean, and it is regenerated with `pnpm --filter @pixel/app run icon`.
+- **A release that refuses to ship the wrong version.** `scripts/prepare-release.mjs`
+  checks the tag against the root `package.json` and requires a dated changelog section
+  for that version before a single runner starts, and copies the version into the app
+  package where electron-builder reads it from. A mistyped tag fails in seconds instead
+  of producing a Release labelled one version and installers built from another.
 - **The user can box a region on the canvas and tell the agent about it.** A new select
   tool (the marquee icon, `M`) drags a rectangle; the canvas then dims everything outside
   it and tints what is inside, with a readout in the bottom-right showing the size, the
@@ -47,6 +68,14 @@ All notable changes to dotloom-mcp are documented in this file.
 
 ### Changed
 
+- **The Electron main process is bundled instead of emitted file-by-file.** pnpm links
+  `@pixel/core` and `@pixel/mcp` as symlinks, and a packaged app cannot follow them, so
+  `scripts/build-main.mjs` inlines the workspace packages and their npm dependencies into
+  a single `main.js` — the approach `scripts/build-npm-package.mjs` already took for the
+  published CLI. The packaged app now carries no `node_modules` at all, which is both
+  smaller and no longer dependent on how pnpm happened to lay out the store.
+  `pnpm typecheck` still runs `tsc --noEmit` over the same sources, so nothing is lost by
+  emitting with esbuild, and the dev launcher builds through the same script.
 - **The agent now settles two things with the user before its first edit.** Both are cheap to
   ask and expensive to guess, and each changes what it does next. For a new file with no
   stated size, it offers a few options and waits rather than quietly taking the 32x32
@@ -108,6 +137,14 @@ All notable changes to dotloom-mcp are documented in this file.
 
 ### Fixed
 
+- **electron-builder could not package anything under pnpm.** `app-builder-lib` calls
+  `@electron/get`'s `ElectronDownloadCacheMode` but declares the dependency as `^3.0.0`,
+  and 3.0.0 does not export it, so every packaging run died with `Cannot read properties
+  of undefined (reading 'ReadWrite')`. pnpm's strict isolation is what exposed it, by
+  handing `app-builder-lib` exactly the version it asked for; npm's flat layout happened to
+  paper over it. A workspace-scoped override pins it to 3.1.0, the first 3.x with that
+  export. The scope matters: `electron` itself wants `@electron/get@5`, and a blanket
+  override would drag it back to 3.x.
 - **The canvas stopped fitting when the window changed size.** It only ever fitted once per
   document, so shrinking the window left the artboard cropped and the user had to reload the
   file to get it back. It now re-fits on resize — until you zoom or pan yourself, at which

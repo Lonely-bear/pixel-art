@@ -64,10 +64,14 @@ function shutdown(code = 0) {
 process.on('SIGINT', () => shutdown(0));
 process.on('SIGTERM', () => shutdown(0));
 
-// 1. Compile the main process and preload script.
+// 1. Compile the main process and preload script. Wait for it to finish: Electron
+// reads dist/electron/main.js the moment it starts, and a half-written bundle
+// fails several lines later in a much less obvious place.
 await new Promise((resolve, reject) => {
-  const tsc = run(node, [path.join(root, '..', '..', 'node_modules', 'typescript', 'bin', 'tsc'), '-p', 'tsconfig.json']);
-  tsc.once('exit', (code) => (code === 0 ? resolve() : reject(new Error(`tsc exited with ${code}`))));
+  const bundle = run(node, [path.join(here, 'build-main.mjs')]);
+  bundle.once('exit', (code) =>
+    code === 0 ? resolve() : reject(new Error(`build-main.mjs exited with ${code}`)),
+  );
 });
 
 // 2. Start Vite — but first make sure the port is actually free. A stale dev

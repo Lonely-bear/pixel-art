@@ -48,6 +48,7 @@
     "build:app": "pnpm --filter @pixel/app build",
     "build": "pnpm run build:libs && pnpm run build:app",
     "build:npm": "node scripts/build-npm-package.mjs",
+    "prepare-release": "node scripts/prepare-release.mjs",
     "typecheck": "pnpm run build:libs && pnpm -r run typecheck",
     "test": "pnpm run build:libs && pnpm -r run test",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && pnpm -r exec node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",

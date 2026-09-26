@@ -58,10 +58,35 @@
 
 `dotloom-mcp` 是公开 npm 包的规范名称。内部 workspace 包仍使用 `@pixel/*` 作用域；这些是实现包，不是额外的 npm 产品。
 
+### 下载桌面版
+
+编辑器为每个平台都提供可直接安装的构建产物。从
+**[GitHub Releases](https://github.com/Lonely-bear/pixel-art/releases/latest)**
+下载最新版本：
+
+| 平台 | 文件 |
+| --- | --- |
+| Windows | `dotloom-mcp-<version>-x64-setup.exe` — 安装到当前用户目录，无需管理员权限 |
+| Windows 免安装 | `dotloom-mcp-<version>-x64-portable.exe` — 放到哪里都能直接运行，包括 U 盘 |
+| macOS（Apple 芯片） | `dotloom-mcp-<version>-arm64.dmg` |
+| macOS（Intel） | `dotloom-mcp-<version>-x64.dmg` |
+| Linux | `dotloom-mcp-<version>-x64.AppImage` — 直接运行，无需安装；Debian/Ubuntu 也可用 `.deb` |
+
+应用是自包含的：CLI 和 MCP 服务器都构建在同一个二进制里，装好编辑器就算
+安装完成。内嵌的 MCP 服务器会在 `127.0.0.1` 上发布自己，这正是单独安装的
+`dotloom-mcp` 找到正在运行的编辑器的方式。
+
+> 这些构建**尚未做代码签名**。macOS 首次启动会拦截，需要右键应用选择
+> **打开**（或执行 `xattr -dr com.apple.quarantine /Applications/dotloom-mcp.app`）；
+> Windows 的 SmartScreen 会警告一次，选择**更多信息 → 仍要运行**。后续补上证书
+> 不需要改动应用本身。
+
 ### 环境要求
 
-- Node.js **22.13 或更高版本**
-- npm、pnpm，或任何能够启动本地 stdio 服务器的 MCP 客户端
+npm 包需要 Node.js **22.13 或更高版本**，以及 npm、pnpm，或任何能够启动本地
+stdio 服务器的 MCP 客户端。
+
+桌面版除操作系统外不需要任何运行时环境。
 
 ### 安装 CLI 和 MCP 服务器
 
@@ -341,7 +366,57 @@ npm pack --dry-run
 
 仓库使用 pnpm workspace、严格 TypeScript、Vitest 和干净构建 CI 检查。公开 npm 包会将内部 workspace 代码打包进去，同时将普通 npm 依赖保留为外部依赖。
 
-> **分发范围：** `dotloom-mcp@0.3.1` 发布 CLI、库入口和独立 MCP 服务器。本版本中的 Electron 应用仍以源代码形式提供；桌面安装程序不属于 npm tarball 的一部分。
+> **分发范围：** npm tarball 发布 CLI、库入口和独立 MCP 服务器。Electron 编辑器单独分发，作为 GitHub Release 的安装程序提供 —— 它不属于 tarball，tarball 也不需要它。
+
+### 打包桌面版
+
+安装程序使用 [electron-builder](https://www.electron.build/) 构建。主进程由
+esbuild 打包，而不是逐文件编译 —— 因为 pnpm 把 `@pixel/core` 和 `@pixel/mcp`
+链接为符号链接，打包后的应用无法跟随这些链接。因此最终的产物里完全没有
+`node_modules`。
+
+```bash
+# 发布所需的全部构建，按当前所在平台
+pnpm build
+pnpm --filter @pixel/app run dist:win     # 或 dist:mac / dist:linux
+
+# 只生成未打包的应用目录，不做安装器 —— 验证改动最快的方式
+pnpm --filter @pixel/app run pack
+
+# 按 assets/pixel-mark.svg 的设计重新生成 build/icon.png
+pnpm --filter @pixel/app run icon
+```
+
+产物在 `packages/app/release/`。构建目标、产物命名和图标都写在
+[`packages/app/electron-builder.yml`](packages/app/electron-builder.yml) 里；
+workflow 只负责决定哪个 runner 构建哪个平台。
+
+### 发布流程
+
+```bash
+# 1. 把 Unreleased 的更新日志条目移到带日期的标题下，然后提升版本号：
+#    package.json -> version，CHANGELOG.md -> ## [X.Y.Z] - 2026-09-26
+# 2. 提交后打 tag 并推送。tag 必须与 package.json 完全一致。
+git commit -am "chore(release): prepare dotloom-mcp 0.4.0"
+git tag v0.4.0
+git push origin main --follow-tags
+```
+
+随后 `.github/workflows/release.yml` 会并行构建 Windows、macOS 和 Linux，并把
+所有产物发布到同一个 GitHub Release。如果 tag 与 `package.json` 不一致，或更新
+日志里没有该版本的带日期小节，workflow 会直接拒绝构建 —— 两项检查都在
+`scripts/prepare-release.mjs` 里，它同时会把版本号同步到 app 包，供
+electron-builder 读取。
+
+以后要加代码签名，只需配置仓库 secrets 再推一个新 tag，无需改动 workflow 或
+任何配置：
+
+| Secret | 用途 |
+| --- | --- |
+| `CSC_LINK` | P12 的 base64：Windows 的 Authenticode、macOS 的 Developer ID |
+| `CSC_KEY_PASSWORD` | 该 P12 的密码 |
+| `APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID` | macOS 公证 |
+| `APPLE_CERTIFICATE`、`APPLE_CERTIFICATE_PASSWORD` | 传入同一个 P12 的另一种方式 |
 
 ## 安全与本地信任
 
@@ -367,7 +442,8 @@ npm pack --dry-run
 - [x] Electron 编辑器、动画、调色板、洋葱皮和瓦片地图
 - [x] 独立 MCP 服务器、视觉资源、提示、诊断以及脚本/插件
 - [x] 公开 npm 包和 CI 质量门禁
-- [ ] 已签名的跨平台 Electron 安装程序
+- [x] 每个 GitHub Release 都提供跨平台桌面安装程序
+- [ ] 代码签名和 macOS 公证
 
 ## 许可证
 

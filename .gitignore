@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# electron-builder output (installers, unpacked apps, build logs)
+packages/app/release/
 coverage/
 .artifacts/
 *.tgz

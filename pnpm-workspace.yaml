@@ -1,6 +1,24 @@
 packages:
   - "packages/*"
+
 allowBuilds:
   esbuild: true
+  # electron-builder pulls in electron-winstaller, whose postinstall resolves its
+  # own toolchain. pnpm blocks it by default, which fails the whole install.
+  electron-winstaller: true
+
+overrides:
+  # electron-builder 26.x calls `@electron/get`'s `ElectronDownloadCacheMode`,
+  # but declares the dependency as `^3.0.0` and 3.0.0 does not export it, so
+  # packaging dies with "Cannot read properties of undefined (reading
+  # 'ReadWrite')". 3.1.0 is the first 3.x that exports the enum, so this stays
+  # inside the range electron-builder asked for.
+  #
+  # Scoped to `app-builder-lib` on purpose: `electron` itself depends on
+  # `@electron/get@5`, and a blanket override would drag it back to 3.x.
+  # Drop this once electron-builder bumps its own declared range.
+  app-builder-lib>@electron/get: 3.1.0
+
 minimumReleaseAgeExclude:
   - electron@44.4.5
+  - electron-builder@26.15.3
