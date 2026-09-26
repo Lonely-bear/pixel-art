@@ -1,0 +1,134 @@
+# electron-builder configuration for the dotloom-mcp desktop app.
+#
+# Consumed by `pnpm --filter @pixel/app dist`, which produces the installers
+# attached to each GitHub Release. Keep the target lists here rather than in the
+# workflow: the release job runs the same commands on three runners, and the
+# workflow should only decide *where* to build, not *what* to build.
+
+appId: com.lonelybear.dotloom
+productName: dotloom-mcp
+copyright: Copyright © 2026 Lonely-bear
+
+directories:
+  output: release
+  buildResources: build
+
+# scripts/build-main.mjs inlines the workspace packages and their npm
+# dependencies, and Vite emits the renderer, so `dist/` is the entire
+# application.
+#
+# The `!node_modules` exclusion is load-bearing: electron-builder otherwise
+# collects the production dependencies listed in package.json on top of the
+# bundle, which doubles the payload with code that is already inlined.
+# Source maps are dropped for the same reason — they belong to the unbundled
+# dev tree, and shipping them adds another few megabytes.
+files:
+  - dist/**/*
+  - '!dist/**/*.map'
+  - '!node_modules/**/*'
+
+asar: true
+
+# --- Windows -----------------------------------------------------------------
+
+win:
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  artifactName: dotloom-mcp-${version}-${arch}.${ext}
+
+nsis:
+  # An assisted installer rather than a one-click one: a pixel-art editor keeps
+  # its projects in a user folder, so picking that folder is the one decision
+  # worth asking about.
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: dotloom-mcp
+  deleteAppDataOnUninstall: false
+  # No spaces: the default `dotloom-mcp Setup 0.4.0.exe` is awkward in URLs,
+  # shell scripts, and download managers.
+  artifactName: dotloom-mcp-${version}-${arch}-setup.${ext}
+
+portable:
+  artifactName: dotloom-mcp-${version}-${arch}-portable.${ext}
+
+# --- macOS -------------------------------------------------------------------
+
+mac:
+  icon: build/icon.png
+  category: public.app-category.graphics-design
+  darkModeSupport: false
+  extendInfo:
+    # The canvas is drawn in a <canvas>, so a Retina display has to be given the
+    # backing store it needs rather than being handed a 1x buffer to scale.
+    NSHighResolutionCapable: true
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+    - target: zip
+      arch: [x64, arm64]
+  artifactName: dotloom-mcp-${version}-${arch}.${ext}
+
+dmg:
+  # A plain drag-to-Applications disk image. `contents` is what makes the
+  # arrow-and-application layout appear.
+  title: dotloom-mcp ${version}
+  contents:
+    - x: 140
+      y: 190
+      type: file
+    - x: 400
+      y: 190
+      type: link
+      path: /Applications
+
+# --- Linux -------------------------------------------------------------------
+
+linux:
+  icon: build/icon.png
+  category: Graphics
+  synopsis: Pixel-art editor with a built-in MCP server
+  description: >-
+    dotloom-mcp is a pixel-art editor whose document model is also reachable
+    over the Model Context Protocol, so an AI agent can draw into the same
+    canvas, and the same undo history, as the user.
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  artifactName: dotloom-mcp-${version}-${arch}.${ext}
+
+deb:
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0
+
+# --- Code signing ------------------------------------------------------------
+#
+# Nothing is configured here on purpose. electron-builder picks these up from the
+# environment, so the release workflow can offer certificates without this file
+# changing:
+#
+#   CSC_LINK / CSC_KEY_PASSWORD       Authenticode (Windows) and Developer ID
+#                                     (macOS), as a base64 P12 or a path to one
+#   APPLE_ID                          Apple ID for notarisation
+#   APPLE_APP_SPECIFIC_PASSWORD       App-specific password for that Apple ID
+#   APPLE_TEAM_ID                     Developer team for notarisation
+#
+# With none of them set, Windows builds are unsigned (SmartScreen warns once) and
+# macOS builds are ad-hoc signed: the app still runs, but Gatekeeper requires a
+# right-click -> Open the first time.

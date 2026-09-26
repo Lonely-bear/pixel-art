@@ -1,0 +1,253 @@
+name: Release
+
+# Pushing a `vX.Y.Z` tag builds installers for all three platforms and publishes
+# them as one GitHub Release. Each platform is built on its own runner — NSIS
+# will not run on Linux, and a macOS .app cannot be assembled on Windows — and a
+# final job collects the results into a single Release.
+#
+# A manual run is a build-only check: it uploads installers as workflow
+# artifacts but never publishes a Release. To re-run a real release, dispatch
+# this workflow *on the tag* rather than on a branch.
+#
+# See the release checklist in README.md before tagging.
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '22.13.0'
+  PNPM_VERSION: '11.6.0'
+
+jobs:
+  verify:
+    name: Verify release inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # Worth doing before three runners spin up: confirm the tag and the
+      # manifest agree. Each build job re-runs the same check on its own
+      # runner, since that is the copy that actually gates the build.
+      - name: Check the tag against the changelog
+        if: ${{ github.ref_type == 'tag' }}
+        run: node scripts/prepare-release.mjs ${{ github.ref_name }}
+
+      - name: Read the version
+        id: check
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          if [ "${{ github.ref_type }}" = "tag" ] && [ "${{ github.ref_name }}" != "v$VERSION" ]; then
+            echo "::error::Tag ${{ github.ref_name }} does not match package.json version $VERSION."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "dotloom-mcp v$VERSION from ${{ github.ref_name }}"
+
+  build:
+    name: ${{ matrix.name }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            # NSIS installer plus the no-install portable build.
+            args: --win
+          - name: macOS
+            os: macos-latest
+            # dmg and zip, for Intel and Apple Silicon.
+            args: --mac
+          - name: Linux
+            os: ubuntu-latest
+            # AppImage and deb.
+            args: --linux
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Copies the root version into packages/app/package.json, which is where
+      # electron-builder reads the installer version from.
+      - name: Sync the app version
+        if: ${{ github.ref_type == 'tag' }}
+        run: node scripts/prepare-release.mjs ${{ github.ref_name }}
+
+      - name: Build workspace libraries
+        run: pnpm build:libs
+
+      - name: Build the app
+        run: pnpm --filter @pixel/app run build
+
+      # Signing is opt-in and entirely environment driven, so adding
+      # certificates later needs no change to this file:
+      #
+      #   CSC_LINK / CSC_KEY_PASSWORD              Authenticode (Windows) and
+      #                                             Developer ID (macOS)
+      #   APPLE_CERTIFICATE / ..._PASSWORD         an alternate way to supply
+      #                                             the same P12
+      #   APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD /
+      #   APPLE_TEAM_ID                           macOS notarisation
+      #
+      # With none of them set the build still succeeds: Windows ships unsigned
+      # and macOS falls back to an ad-hoc signature.
+      - name: Import signing certificates
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          # Step-level `env` is not inherited by later steps, so anything
+          # electron-builder needs has to be re-exported through $GITHUB_ENV.
+          if [ -n "${CSC_LINK:-}" ]; then
+            # Always a base64-encoded P12; GitHub's secret editor will happily
+            # store one pasted straight from `base64 -w0 keystore.pfx`.
+            mkdir -p "$RUNNER_TEMP/certs"
+            echo "$CSC_LINK" | base64 -d > "$RUNNER_TEMP/certs/keystore.p12"
+            {
+              echo "CSC_LINK=$RUNNER_TEMP/certs/keystore.p12"
+              echo "CSC_KEY_PASSWORD=${CSC_KEY_PASSWORD:-}"
+            } >> "$GITHUB_ENV"
+          fi
+
+          if [ -n "${APPLE_CERTIFICATE:-}" ]; then
+            mkdir -p "$RUNNER_TEMP/certs"
+            echo "$APPLE_CERTIFICATE" | base64 -d > "$RUNNER_TEMP/certs/Apple.p12"
+            {
+              echo "APPLE_CERTIFICATE=$RUNNER_TEMP/certs/Apple.p12"
+              echo "APPLE_CERTIFICATE_PASSWORD=${APPLE_CERTIFICATE_PASSWORD:-}"
+            } >> "$GITHUB_ENV"
+          fi
+
+          # Passed straight through: electron-builder reads them from the
+          # environment when it notarises. An `if` rather than `test && echo`,
+          # because under `set -e` a false test as the last command in a loop
+          # body would take the whole step down — and empty secrets are the
+          # normal case, not the exception.
+          for name in APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -n "${!name:-}" ]; then
+              echo "$name=${!name}" >> "$GITHUB_ENV"
+            fi
+          done
+
+          if [ -z "${CSC_LINK:-}${APPLE_CERTIFICATE:-}${APPLE_ID:-}" ]; then
+            echo "No signing certificates configured; building unsigned."
+          fi
+
+      - name: Package
+        # --publish never keeps electron-builder from touching npm or a GitHub
+        # release itself; the release job below does that in one place.
+        run: pnpm --filter @pixel/app exec electron-builder ${{ matrix.args }} --publish never
+
+      - name: Collect installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.os }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            packages/app/release/*.exe
+            packages/app/release/*.dmg
+            packages/app/release/*.zip
+            packages/app/release/*.AppImage
+            packages/app/release/*.deb
+
+  release:
+    name: Publish GitHub Release
+    needs: [verify, build]
+    # A manual run on a branch is a build check, not a release. Dispatch on the
+    # tag to publish.
+    if: ${{ github.ref_type == 'tag' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # Needed for .github/release-notes.md; the installers come from the
+      # artifacts below, not from a build on this runner.
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List what will be published
+        run: ls -lh artifacts
+
+      - name: Create the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          shopt -s nullglob
+          installers=(artifacts/*.exe artifacts/*.dmg artifacts/*.zip artifacts/*.AppImage artifacts/*.deb)
+          if [ ${#installers[@]} -eq 0 ]; then
+            echo "::error::No installer artifacts were produced."
+            exit 1
+          fi
+
+          # --notes is prepended to the notes gh derives from the commits since
+          # the previous tag, so the page carries the download table and the
+          # change list together. The prose lives in a real file rather than a
+          # heredoc so it can be edited without touching this workflow.
+          gh release create "$TAG" \
+            --title "dotloom-mcp $TAG" \
+            --notes-file .github/release-notes.md \
+            --generate-notes \
+            --verify-tag \
+            "${installers[@]}"
+
+          echo "Published $TAG"
