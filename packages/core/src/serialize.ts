@@ -13,14 +13,53 @@ import { decodePNG, encodePNG } from './png.js';
  * to read. Nothing here is clever, and that is the point.
  *
  * Layout:
- *   manifest.json          structure, palette, tags
- *   cels/<n>_<layerId>.png one PNG per non-empty cel
- *   tileset.png            optional
- *   tilemaps/<id>.json     optional, flat tile-index arrays
+ *   manifest.json              structure, palette, tags, and every id in the file
+ *   cels/<frame>_<layer>.png   one PNG per non-empty cel, numbered by position
+ *   tileset.png                optional
+ *   tilemaps/<n>.json          optional, flat tile-index arrays
+ *
+ * ## Entry names are positions, never ids
+ *
+ * An earlier layout put the layer id in the cel filename (`cels/0_layer_1j2k3m.png`) and
+ * the tilemap id in the tilemap filename. It bought nothing: a cel map is keyed by layer
+ * id and holds at most one cel per layer, so the frame index *and* the layer's position
+ * in `sprite.layers` are already unique, and the manifest records which id each path
+ * belongs to. It cost the one thing this format needs most — a `.pixel` file is the
+ * editable source that `finalize_document` writes next to the rendered PNGs, so "the
+ * source did not change" has to be a checkable claim and not a hopeful one. Ids come
+ * from `makeId`, which mixes the clock with real entropy (see `ids.ts`), so two runs of
+ * the same ops produced two archives that differed from the first entry name onwards.
+ *
+ * `manifest.cels[].path` is the only place a path is written down, and the reader has
+ * always gone through the manifest rather than parsing a name. That is what makes this
+ * a non-breaking change in both directions: 0.4.1 files keep loading because their
+ * manifest still names `cels/0_layer_1j2k3m.png` and the reader looks up exactly that,
+ * and a 0.4.1 reader opens a new file for the same reason. The container version is
+ * deliberately *not* bumped — entry names were never part of the format contract, and
+ * claiming a new version would suggest they were.
+ *
+ * ## Reproducibility is a property of the whole archive, not just the names
+ *
+ * fflate stamps every entry with the current time unless told otherwise, so the default
+ * `{level: 6}` wrote a different DOS timestamp into every local header and central
+ * directory record on every save — the archive was unstable even with a fully
+ * deterministic document. {@link ZIP_MTIME} pins it. It is built from the *local*
+ * calendar constructor on purpose: fflate reads the fields back with `getFullYear()`,
+ * `getMonth()`, `getHours()` and friends, so a local date round-trips to the same DOS
+ * words on every machine, whereas an epoch-millis instant would encode that machine's
+ * UTC offset and make the bytes depend on the timezone. 1980-01-01 is the oldest date
+ * the DOS format can express; fflate rejects anything earlier.
  */
 
 export const PIXEL_FORMAT = 'pixel-art/sprite';
 export const PIXEL_FORMAT_VERSION = 2;
+
+/**
+ * The modification time stamped into every zip entry, as a local-midnight `Date`.
+ *
+ * Exported so a test can assert the constant rather than trust the comment above.
+ */
+export const ZIP_MTIME = new Date(1980, 0, 1);
 
 export interface CelIndexEntry {
   layerId: string;
@@ -68,12 +107,19 @@ export interface SpriteManifest {
 export function serializeSprite(sprite: Sprite): Uint8Array {
   const files: Record<string, Uint8Array> = {};
   const cels: CelIndexEntry[] = [];
+  const numbered = celNumbers(sprite);
 
   sprite.frames.forEach((frame, frameIndex) => {
-    for (const [layerId, buffer] of frame.cels) {
+    // Walk the numbered layers rather than `frame.cels`, so the number in the path is
+    // total by construction — there is no lookup that can miss and no fallback that
+    // could write two cels to one name. It also fixes the `cels[]` order to frame then
+    // layer position, which used to depend on the order the cels were painted in.
+    for (const [layerId, layerNumber] of numbered) {
+      const buffer = frame.cels.get(layerId);
+      if (!buffer) continue;
       // Empty cels carry no information; a missing entry already means "nothing here".
       if (buffer.isEmpty()) continue;
-      const path = `cels/${frameIndex}_${layerId}.png`;
+      const path = `cels/${frameIndex}_${layerNumber}.png`;
       files[path] = encodePNG(buffer);
       cels.push({ layerId, frameId: frame.id, path });
     }
@@ -121,8 +167,9 @@ export function serializeSprite(sprite: Sprite): Uint8Array {
   }
 
   if (sprite.tilemaps?.length) {
-    manifest.tilemaps = sprite.tilemaps.map((tilemap) => {
-      const path = `tilemaps/${tilemap.id}.json`;
+    manifest.tilemaps = sprite.tilemaps.map((tilemap, index) => {
+      // Same rule as the cels: a position in the path, the id in the manifest.
+      const path = `tilemaps/${index}.json`;
       files[path] = strToU8(JSON.stringify(Array.from(tilemap.data)));
       return {
         id: tilemap.id,
@@ -137,7 +184,33 @@ export function serializeSprite(sprite: Sprite): Uint8Array {
   }
 
   files['manifest.json'] = strToU8(JSON.stringify(manifest, null, 2));
-  return zipSync(files, { level: 6 });
+  return zipSync(files, { level: 6, mtime: ZIP_MTIME });
+}
+
+/**
+ * The number each cel-owning layer carries in its `cels/<frame>_<number>.png` path.
+ *
+ * Layers in `sprite.layers` order, so the number reads as "the nth layer of the
+ * document" and matches the order of `manifest.sprite.layers`. Then anything left —
+ * a cel whose layer id is not in `sprite.layers`, which the command bus cannot produce
+ * because `remove_layer` purges a layer's cels, but a hand-built `Sprite` can carry —
+ * numbered in id order after the real layers. Silently dropping those pixels would be
+ * worse than an unnameable path, and sorting them keeps the archive a pure function of
+ * the document either way.
+ */
+function celNumbers(sprite: Sprite): Map<string, number> {
+  const numbers = new Map<string, number>();
+  for (const [index, layer] of sprite.layers.entries()) {
+    if (!numbers.has(layer.id)) numbers.set(layer.id, index);
+  }
+  const orphans = new Set<string>();
+  for (const frame of sprite.frames) {
+    for (const layerId of frame.cels.keys()) {
+      if (!numbers.has(layerId)) orphans.add(layerId);
+    }
+  }
+  [...orphans].sort().forEach((layerId, index) => numbers.set(layerId, sprite.layers.length + index));
+  return numbers;
 }
 
 export function deserializeSprite(bytes: Uint8Array): Sprite {

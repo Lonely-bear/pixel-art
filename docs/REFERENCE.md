@@ -461,6 +461,38 @@ and fail loudly when it is not there.
   palette roles and an optional rig in one call. It creates no artwork or art-direction
   decisions beyond the supplied structure.
 
+#### The `.pixel` container layout
+
+A `.pixel` file is a plain zip: inspectable with any zip tool, diffable in git, and
+survivable under partial corruption.
+
+```
+manifest.json              structure, palette, tags, rig, map objects — and every id in the file
+cels/<frameIndex>_<layerIndex>.png    one PNG per non-empty cel
+tileset.png                optional, the tile sheet
+tilemaps/<index>.json      optional, a flat tile-index array per tilemap
+```
+
+**Entry names are positions, never ids.** A cel map is keyed by layer id and holds at most
+one cel per layer, so the frame index plus the layer's position in `sprite.layers` is
+already unique — an id in the filename bought nothing and cost reproducibility. An earlier
+layout wrote `cels/<frameIndex>_<layerId>.png` and `tilemaps/<tilemapId>.json`; both still
+load, because `manifest.cels[].path` and `manifest.tilemaps[].data` are the only places a
+path is written down and the reader has always gone through the manifest rather than
+parsing a name. That makes the rename safe in both directions — a 0.4.1 file opens in a
+current build, and a 0.4.1 build opens a current file — so the container version is
+deliberately **not** bumped; entry names were never part of the format contract.
+
+**Reproducibility.** For a document built under `deterministicIdFactory`, `serializeSprite`
+is byte-reproducible: same ops, same seed, same bytes. The entry timestamp is pinned to
+1980-01-01 local, so the archive does not move when the wall clock does, and the encoding
+of that date is local on purpose so the bytes do not depend on the machine's timezone.
+Under the default `makeId` the guarantee does not hold, and cannot: every id in the
+document lives in `manifest.json`, which is itself an archive entry, and `makeId` is
+clock+entropy based on purpose. Reordering layers renumbers the cel paths — the number
+means "the nth layer of the document", and the manifest is what maps a number back to an
+id. See `ids.ts` for which id factory to install and why.
+
 ### Tilemaps and auto-tiling
 
 A tilemap is a grid of tile indices, kept alongside the pixel layers. It is the right
