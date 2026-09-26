@@ -31,6 +31,9 @@ import type {
   TilesetInfo,
   TilemapInfo,
   UndoResult,
+  UpdateEvent,
+  UpdateSettings,
+  UpdateSnapshot,
 } from '../shared/types.js';
 
 const invoke = <T,>(channel: string, ...args: unknown[]): Promise<T> =>
@@ -76,6 +79,22 @@ const api = {
     invoke<AnimationSequenceInfo>('pixel:animation-sequence', id, tag),
   importImage: () => invoke<DocumentDetail | null>('pixel:import-image'),
   mcpStatus: () => invoke<McpStatus>('pixel:mcp-status'),
+
+  // Updates. Every call returns the resulting snapshot where there is one, so
+  // the renderer can paint the answer without waiting for the pushed event.
+  updateSnapshot: () => invoke<UpdateSnapshot>('pixel:update-snapshot'),
+  saveUpdateSettings: (patch: Partial<UpdateSettings>) =>
+    invoke<UpdateSnapshot>('pixel:update-save-settings', patch),
+  checkForUpdates: (automatic?: boolean) => invoke<void>('pixel:update-check', automatic),
+  downloadUpdate: () => invoke<void>('pixel:update-download'),
+  installUpdate: () => invoke<void>('pixel:update-install'),
+  skipVersion: (version: string | null) => invoke<void>('pixel:update-skip', version),
+  openReleasePage: () => invoke<void>('pixel:update-open-release'),
+  onUpdateEvent: (handler: (event: UpdateEvent) => void) => {
+    const listener = (_event: unknown, payload: UpdateEvent) => handler(payload);
+    ipcRenderer.on('pixel:update-event', listener);
+    return () => ipcRenderer.removeListener('pixel:update-event', listener);
+  },
   setLocale: (locale: AppLocale) => {
     // The native file dialogs subscribe to this broadcast so their titles and
     // button labels follow the UI. Intentionally fire-and-forget.

@@ -194,12 +194,19 @@ jobs:
           name: installers-${{ matrix.os }}
           if-no-files-found: error
           retention-days: 7
+          # The `latest*.yml` files and the `.blockmap` sidecars are the update
+          # metadata electron-updater reads; they only exist because
+          # electron-builder.yml declares a `publish` target. They have to travel
+          # with the installers or the in-app updater sees a release with no
+          # update and never says a word.
           path: |
             packages/app/release/*.exe
             packages/app/release/*.dmg
             packages/app/release/*.zip
             packages/app/release/*.AppImage
             packages/app/release/*.deb
+            packages/app/release/latest*.yml
+            packages/app/release/*.blockmap
 
   release:
     name: Publish GitHub Release
@@ -233,7 +240,19 @@ jobs:
           set -euo pipefail
 
           shopt -s nullglob
-          installers=(artifacts/*.exe artifacts/*.dmg artifacts/*.zip artifacts/*.AppImage artifacts/*.deb)
+          # The metadata files are what an installed app looks for, so they are
+          # published as first-class assets rather than left in the artifacts.
+          # A missing `latest.yml` is the difference between "you are on the
+          # latest version" and "there is no update", and only the first is true.
+          installers=(
+            artifacts/*.exe
+            artifacts/*.dmg
+            artifacts/*.zip
+            artifacts/*.AppImage
+            artifacts/*.deb
+            artifacts/latest*.yml
+            artifacts/*.blockmap
+          )
           if [ ${#installers[@]} -eq 0 ]; then
             echo "::error::No installer artifacts were produced."
             exit 1

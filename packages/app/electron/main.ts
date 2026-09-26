@@ -7,6 +7,7 @@ import { CHANNELS } from '../shared/types.js';
 import { DEFAULT_MCP_PORT, startMcpHost, type McpHost } from './mcp-host.js';
 import { registerIpc } from './ipc.js';
 import { store } from './host.js';
+import { initUpdater, scheduleUpdateChecks } from './updater.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const devServer = process.env.PIXEL_DEV_SERVER;
@@ -173,7 +174,12 @@ async function start(): Promise<void> {
   }
 
   registerIpc(() => mcpStatus);
+  // Before the window, because the schedule has to be running by the time the
+  // user reaches the settings panel, and because this is where the stored
+  // preferences are read.
+  initUpdater();
   window = createWindow();
+  scheduleUpdateChecks();
 
   try {
     mcp = await startMcpHost(Number(process.env.PIXEL_MCP_PORT ?? DEFAULT_MCP_PORT));

@@ -22,7 +22,7 @@ import {
   toAsepriteJson,
   toTiledJson,
 } from '@pixel/core';
-import { CHANNELS, isAppLocale, type AppLocale, type DocumentSummary, type PreviewRequest } from '../shared/types.js';
+import { CHANNELS, isAppLocale, type AppLocale, type DocumentSummary, type PreviewRequest, type UpdateSettings } from '../shared/types.js';
 import {
   describeDocument,
   execute,
@@ -34,6 +34,16 @@ import {
   store,
   undo,
 } from './host.js';
+import {
+  checkForUpdates,
+  downloadUpdate,
+  installUpdate,
+  openReleasePage,
+  saveUpdateSettings,
+  setUpdaterLocale,
+  skipVersion,
+  snapshot,
+} from './updater.js';
 
 /**
  * `store.list()` hands back live `PixelDocument`s, which contain the editor and
@@ -108,7 +118,12 @@ export function registerIpc(getMcpStatus: () => unknown): void {
   store.onChange(broadcast);
 
   ipcMain.on(CHANNELS.setLocale, (_event, locale: AppLocale) => {
-    if (isAppLocale(locale)) appLocale = locale;
+    if (isAppLocale(locale)) {
+      appLocale = locale;
+      // The updater keeps its own table for the one native dialog it can raise,
+      // so the two follow the same five locales.
+      setUpdaterLocale(locale);
+    }
   });
   ipcMain.handle(CHANNELS.listDocuments, () => summaries());
 
@@ -415,4 +430,22 @@ export function registerIpc(getMcpStatus: () => unknown): void {
   });
 
   ipcMain.handle(CHANNELS.mcpStatus, () => getMcpStatus());
+
+  // Updates. Five thin handlers: the state machine is in `updater.ts` and the
+  // renderer gets a snapshot back from each one, so a window that is opened
+  // late — or a second window — never has to reconstruct anything.
+  ipcMain.handle(CHANNELS.updateSnapshot, () => snapshot());
+  ipcMain.handle(CHANNELS.updateSaveSettings, async (_event, patch: UpdateSettings) => {
+    await saveUpdateSettings(patch);
+    return snapshot();
+  });
+  ipcMain.handle(CHANNELS.updateCheck, async (_event, automatic?: boolean) => {
+    await checkForUpdates(automatic === true);
+  });
+  ipcMain.handle(CHANNELS.updateDownload, () => downloadUpdate());
+  ipcMain.handle(CHANNELS.updateInstall, () => installUpdate());
+  ipcMain.handle(CHANNELS.updateSkip, async (_event, version: string | null) => {
+    await skipVersion(typeof version === 'string' && version ? version : null);
+  });
+  ipcMain.handle(CHANNELS.updateOpenRelease, () => openReleasePage());
 }

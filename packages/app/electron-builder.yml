@@ -29,6 +29,26 @@ files:
 
 asar: true
 
+# --- Updates -----------------------------------------------------------------
+#
+# Not used to publish: the release workflow still creates the Release itself with
+# `gh release create`, so the tag and the changelog stay in charge of when a build
+# becomes public. What this section buys is the *metadata* — with a `publish`
+# target configured, electron-builder writes `latest.yml`, `latest-mac.yml`,
+# `latest-mac-arm64.yml`, `latest-linux.yml` and the `.blockmap` sidecars next to
+# the installers, and `electron-updater` will not look at a release without them.
+#
+# The workflow therefore uploads those files as artifacts and attaches them to
+# the Release alongside the installers. Keep the two in step: an installer
+# without its `.yml` is invisible to in-app updates.
+publish:
+  - provider: github
+    owner: Lonely-bear
+    repo: pixel-art
+    # `latest` is the channel an installed app polls, so a release has to be a
+    # full release. Prereleases are deliberately not part of the flow.
+    releaseType: release
+
 # --- Windows -----------------------------------------------------------------
 
 win:
@@ -56,6 +76,10 @@ nsis:
   artifactName: dotloom-mcp-${version}-${arch}-setup.${ext}
 
 portable:
+  # Deliberately not updatable: a portable build is a single file the user moves
+  # around, and there is nothing installed for an updater to replace. The app
+  # detects it through `PORTABLE_EXECUTABLE_DIR` and says so rather than
+  # pretending. Users who want updates take the nsis installer instead.
   artifactName: dotloom-mcp-${version}-${arch}-portable.${ext}
 
 # --- macOS -------------------------------------------------------------------
@@ -115,6 +139,11 @@ linux:
   artifactName: dotloom-mcp-${version}-${arch}.${ext}
 
 deb:
+  # Also not updatable in place: a .deb belongs to the system package manager,
+  # and the updater's Linux path only replaces an AppImage. The app notices it is
+  # running from a package install (no `APPIMAGE` in the environment) and points
+  # at the package manager instead of downloading a second copy of itself.
+  #
   # Required. fpm has no fallback for this, and a Debian package without a
   # maintainer is not installable on a normal desktop, so it is set here rather
   # than left to be inferred from package.json.

@@ -169,6 +169,83 @@ export interface AppStatus {
   filePath?: string;
 }
 
+/**
+ * Why an installed build cannot update itself.
+ *
+ * Not a failure state: every one of these is a deliberate outcome, and the UI
+ * has something useful to say about each (open the releases page, use your
+ * package manager, install it properly). They are separate cases rather than one
+ * "unsupported" flag because the advice differs.
+ */
+export type UpdateUnavailableReason = 'dev' | 'portable' | 'package-manager' | 'unsigned-mac';
+
+/** What the user chose about checking for updates. Persisted in userData. */
+export interface UpdateSettings {
+  /** Check in the background and announce, never download unasked. */
+  autoCheck: boolean;
+  /** A version the user said to stop asking about. */
+  skippedVersion?: string;
+  /** Epoch ms of the last check that got as far as talking to GitHub. */
+  lastCheckedAt?: number;
+  /**
+   * Release notes fetched once and kept, so re-opening the banner (or switching
+   * language) does not spend another request.
+   */
+  notesVersion?: string;
+  notesBody?: string;
+}
+
+/**
+ * The updater, as one serialisable snapshot.
+ *
+ * The main process owns the state machine; the renderer only renders whatever
+ * this says and sends intents back. Every variant carries what the UI needs to
+ * draw itself, so the renderer never has to guess a percentage or a next step.
+ */
+export type UpdateState =
+  /** Nothing has happened yet, or something finished and reset. */
+  | { status: 'idle' }
+  | { status: 'checking' }
+  /** A version the user has been told about and is already on. */
+  | { status: 'up-to-date'; version: string }
+  /** Found, but the user asked to stop hearing about this one. */
+  | { status: 'ignored'; version: string }
+  | {
+      status: 'available';
+      version: string;
+      /** ISO date of the release, when the feed carried one. */
+      date?: string;
+      /** Installer size in bytes, for a decision about waiting. */
+      bytes?: number;
+      notes?: string;
+    }
+  /** Bytes, not a percentage: a mac update is several files and the ratio jumps. */
+  | { status: 'downloading'; transferred: number; total: number; bytesPerSecond: number }
+  | { status: 'ready'; version: string }
+  | { status: 'error'; message: string; retryable: boolean }
+  | { status: 'unsupported'; reason: UpdateUnavailableReason };
+
+/** Everything the renderer needs to draw the update UI, in one object. */
+export interface UpdateSnapshot {
+  /** `app.getVersion()` — the build that is running, not the one wanted. */
+  currentVersion: string;
+  /**
+   * Whether this build was signed. Only a hint for the UI; it decides nothing.
+   * See `resolveUpdateSupport` for where it actually matters.
+   */
+  codeSigned: boolean;
+  settings: UpdateSettings;
+  state: UpdateState;
+  /** Where "get it yourself" goes for the builds that cannot self-update. */
+  releasePage: string;
+}
+
+/** Pushed to every window whenever settings or state change. */
+export interface UpdateEvent {
+  settings: UpdateSettings;
+  state: UpdateState;
+}
+
 /** Channel names, in one place so main and preload cannot drift apart. */
 export const CHANNELS = {
   listDocuments: 'pixel:list-documents',
@@ -197,6 +274,18 @@ export const CHANNELS = {
   importImage: 'pixel:import-image',
   mcpStatus: 'pixel:mcp-status',
   setLocale: 'pixel:set-locale',
+  /** The whole updater snapshot, so a window that opens late is never blank. */
+  updateSnapshot: 'pixel:update-snapshot',
+  updateSaveSettings: 'pixel:update-save-settings',
+  updateCheck: 'pixel:update-check',
+  updateDownload: 'pixel:update-download',
+  /** Guarded by the main process: it is the only side that knows about files. */
+  updateInstall: 'pixel:update-install',
+  /** Pass a version to skip it, or null to start asking about every version. */
+  updateSkip: 'pixel:update-skip',
+  updateOpenRelease: 'pixel:update-open-release',
+  /** Pushed whenever the updater's state or settings change. */
+  updateEvent: 'pixel:update-event',
   status: 'pixel:status',
   changed: 'pixel:changed',
   /** Frameless-window buttons: minimize / maximize / unmaximize / close. */
@@ -318,6 +407,16 @@ export interface PixelApi {
   importImage(): Promise<DocumentDetail | null>;
   mcpStatus(): Promise<McpStatus>;
   setLocale(locale: AppLocale): Promise<void>;
+  updateSnapshot(): Promise<UpdateSnapshot>;
+  /** Staged by the settings dialog, written the moment a checkbox moves. */
+  saveUpdateSettings(patch: Partial<UpdateSettings>): Promise<UpdateSnapshot>;
+  /** `automatic` only tells the main process whether a failure should be quiet. */
+  checkForUpdates(automatic?: boolean): Promise<void>;
+  downloadUpdate(): Promise<void>;
+  installUpdate(): Promise<void>;
+  skipVersion(version: string | null): Promise<void>;
+  openReleasePage(): Promise<void>;
+  onUpdateEvent(handler: (event: UpdateEvent) => void): () => void;
   /** Drive the frameless window's own buttons. */
   windowCommand(action: 'minimize' | 'maximize' | 'unmaximize' | 'close'): Promise<void>;
   onChanged(handler: (payload: ChangedPayload) => void): () => void;

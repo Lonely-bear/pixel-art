@@ -1,5 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useEditor } from '../editor-context.js';
+import { api } from '../api.js';
+import { megabytes, useUpdateSnapshot } from '../update.js';
 import {
   DEFAULT_FONT_SIZE,
   FONT_SIZE_STOPS,
@@ -9,13 +11,16 @@ import {
   type ThemeMode,
 } from '../prefs.js';
 import { LOCALES, useI18n, type TranslationKey } from '../i18n.js';
+import type { UpdateState, UpdateUnavailableReason } from '../../shared/types.js';
 import { Icon, type IconName } from './Icon.js';
+import { ReleaseNotes } from './ReleaseNotes.js';
 
-type SectionId = 'appearance' | 'language' | 'shortcuts' | 'about';
+type SectionId = 'appearance' | 'language' | 'updates' | 'shortcuts' | 'about';
 
 const SECTIONS: { id: SectionId; icon: IconName; title: TranslationKey }[] = [
   { id: 'appearance', icon: 'contrast', title: 'settings.appearance' },
   { id: 'language', icon: 'globe', title: 'settings.language' },
+  { id: 'updates', icon: 'arrowDown', title: 'update.section' },
   { id: 'shortcuts', icon: 'keyboard', title: 'settings.shortcuts' },
   { id: 'about', icon: 'info', title: 'settings.about' },
 ];
@@ -159,6 +164,7 @@ export function SettingsDialog({ onClose }: { onClose(): void }): React.ReactNod
             />
           )}
           {section === 'language' && <LanguageSection />}
+          {section === 'updates' && <UpdatesSection />}
           {section === 'shortcuts' && <ShortcutsSection />}
           {section === 'about' && <AboutSection />}
         </div>
@@ -436,6 +442,199 @@ function LanguageSection(): React.ReactNode {
     </>
   );
 }
+
+/**
+ * The updates section.
+ *
+ * The main process owns the state; this only asks it things and renders the
+ * answer. That is why the checkbox writes straight through instead of being
+ * staged like the appearance settings: an update preference is not a look, and
+ * making the user press Save to enable a background check would be odd. Turning
+ * it *off* still takes effect immediately, which is the direction that matters.
+ */
+function UpdatesSection(): React.ReactNode {
+  const { t, locale } = useI18n();
+  const snapshot = useUpdateSnapshot();
+  const state: UpdateState = snapshot?.state ?? { status: 'idle' };
+  const checked = state.status === 'checking' || state.status === 'downloading';
+  const lastCheckedAt = snapshot?.settings.lastCheckedAt;
+  const notes = state.status === 'available' ? state.notes : undefined;
+
+  return (
+    <>
+      <header className="settings-section-head">
+        <h3>{t('update.section')}</h3>
+        <p>{t('update.sectionHint')}</p>
+      </header>
+      <div className="settings-body">
+        <dl className="about-list">
+          <div className="about-row">
+            <dt>{t('update.installed')}</dt>
+            <dd className="mono">v{snapshot?.currentVersion ?? '—'}</dd>
+          </div>
+          <div className="about-row">
+            <dt>{t('update.lastCheck')}</dt>
+            <dd className="mono">
+              {lastCheckedAt ? new Date(lastCheckedAt).toLocaleString(locale) : t('update.never')}
+            </dd>
+          </div>
+        </dl>
+
+        {/* One row of buttons, and one line that says where things stand. The
+            line is the only place a state is described in words, so the blocks
+            below it carry actions and nothing else — a version printed twice
+            reads as two versions. */}
+        <div className="setting">
+          <div className="update-buttons">
+            <button
+              type="button"
+              className="text-button is-primary"
+              disabled={checked}
+              onClick={() => void api.checkForUpdates()}
+            >
+              <Icon name="arrowDown" size={15} />
+              {checked ? t('update.checking') : t('update.check')}
+            </button>
+            {state.status === 'available' && (
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => void api.downloadUpdate()}
+              >
+                {t('update.download')}
+              </button>
+            )}
+            {state.status === 'ready' && (
+              <button
+                type="button"
+                className="text-button is-primary"
+                onClick={() => void api.installUpdate()}
+              >
+                <Icon name="check" size={15} />
+                {t('update.restart')}
+              </button>
+            )}
+            {state.status === 'error' && (
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => void api.checkForUpdates()}
+              >
+                {t('update.retry')}
+              </button>
+            )}
+            {/* Always offered: it is the only way forward for a portable build,
+                a .deb install, or an unsigned macOS one. */}
+            <button type="button" className="text-button" onClick={() => void api.openReleasePage()}>
+              {t('update.openPage')}
+            </button>
+          </div>
+          <p className="setting-hint">{updateStatusLine(state, t)}</p>
+        </div>
+
+        {state.status === 'available' && (
+          <div className="setting">
+            <div className="update-extra">
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => void api.skipVersion(state.version)}
+              >
+                {t('update.skip')}
+              </button>
+              {notes && <ReleaseNotes body={notes} label={t('update.notes')} />}
+            </div>
+          </div>
+        )}
+
+        {state.status === 'ignored' && (
+          <div className="setting">
+            <div className="update-extra">
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => void api.skipVersion(null)}
+              >
+                {t('update.unskip')}
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="setting">
+          <label className="switch-row">
+            <input
+              type="checkbox"
+              checked={snapshot?.settings.autoCheck ?? true}
+              onChange={(event) => void api.saveUpdateSettings({ autoCheck: event.target.checked })}
+            />
+            <span className="switch" />
+            <span>{t('update.autoCheck')}</span>
+          </label>
+          <p className="setting-hint">{t('update.autoCheckHint')}</p>
+        </div>
+
+        {snapshot && !snapshot.codeSigned && state.status !== 'unsupported' && (
+          <p className="setting-hint">{t('update.unsignedNote')}</p>
+        )}
+      </div>
+    </>
+  );
+}
+
+type Translate = (key: TranslationKey, values?: Record<string, string | number>) => string;
+
+/**
+ * One line describing where the update stands, for every state the machine can
+ * be in. Deliberately a function of the whole state rather than a field on it:
+ * a bare `status` string would have to be translated once here and again beside
+ * the buttons, and the two would drift.
+ */
+function updateStatusLine(state: UpdateState, t: Translate): string {
+  switch (state.status) {
+    case 'checking':
+      return t('update.checking');
+    case 'up-to-date':
+      return t('update.upToDate');
+    case 'ignored':
+      return t('update.skipped', { version: state.version });
+    case 'available': {
+      const size = megabytes(state.bytes);
+      const date = state.date?.slice(0, 10);
+      const extra = [size && t('update.size', { size }), date && t('update.date', { date: date })]
+        .filter(Boolean)
+        .join(' · ');
+      return [t('update.available', { version: state.version }), extra].filter(Boolean).join(' ');
+    }
+    case 'downloading':
+      return t('update.downloading', {
+        done: megabytes(state.transferred) ?? '0',
+        total: megabytes(state.total) ?? '0',
+      });
+    case 'ready':
+      return `${t('update.ready')} v${state.version}`;
+    case 'error':
+      return t('update.failed', { error: state.message });
+    case 'unsupported':
+      return UNAVAILABLE[state.reason](t);
+    case 'idle':
+      return t('update.sectionHint');
+  }
+}
+
+/**
+ * The four reasons a build cannot self-update, each with the one sentence that
+ * actually helps. A single "updates are unavailable" would leave a portable
+ * user and a `.deb` user with nothing to act on.
+ */
+const UNAVAILABLE: Record<UpdateUnavailableReason, (t: Translate) => string> = {
+  dev: (t) => t('update.noDev'),
+  portable: (t) => t('update.noPortable'),
+  'package-manager': (t) => t('update.noPackageManager'),
+  'unsigned-mac': (t) => t('update.noUnsignedMac'),
+};
+
+/** Release notes are Markdown, so they are shown as preformatted text. */
 
 function ShortcutsSection(): React.ReactNode {
   const { t } = useI18n();

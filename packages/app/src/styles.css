@@ -2781,3 +2781,146 @@ input[type='checkbox'] {
     display: none;
   }
 }
+
+/* ---- update banner and panel ----------------------------------------------
+   The banner is a fixed overlay rather than a row in the shell grid: adding a
+   row would resize the artboard every time a release was found, which is the
+   one thing a drawing tool should never do to a drawing tool. It sits below
+   the title bar and above the canvas, and the notes pop out of it.
+   -------------------------------------------------------------------------- */
+
+.update-banner {
+  position: fixed;
+  top: calc(var(--titlebar-h) + 10px);
+  left: 50%;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(76vw, 680px);
+  padding: 7px 10px 7px 12px;
+  transform: translateX(-50%);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-toast);
+  color: var(--ink-2);
+  font-size: calc(11px * var(--ui-scale));
+  animation: update-drop 200ms ease-out both;
+}
+
+@keyframes update-drop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.update-banner > svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.update-text {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.update-text b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.update-meta {
+  color: var(--ink-3);
+}
+
+.update-banner .text-button {
+  flex: 0 0 auto;
+  min-height: 24px;
+  padding: 0 9px;
+  font-size: calc(11px * var(--ui-scale));
+}
+
+/* Bytes rather than a percentage: a macOS update is several files, and a ratio
+   of the lot jumps backwards between them. */
+.update-bar {
+  position: relative;
+  display: block;
+  width: 130px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--bg-active);
+}
+
+.update-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 180ms linear;
+}
+
+/* ---- release notes --------------------------------------------------------
+   The body is the maintainer's Markdown, shown as preformatted text. No
+   renderer, no HTML: nothing a release page contains is interpreted here.
+   -------------------------------------------------------------------------- */
+
+.update-notes {
+  position: relative;
+  min-width: 0;
+}
+
+.update-notes summary {
+  color: var(--accent);
+  font-size: calc(11px * var(--ui-scale));
+  cursor: pointer;
+  user-select: none;
+}
+
+.update-notes-body {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 61;
+  width: min(70vw, 460px);
+  max-height: 320px;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-popover);
+  color: var(--ink-2);
+  font-family: var(--ui-font);
+  font-size: calc(11px * var(--ui-scale));
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ---- updates section ------------------------------------------------------ */
+
+.update-buttons,
+.update-extra {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.update-buttons .text-button {
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: calc(12px * var(--ui-scale));
+}

@@ -4,6 +4,29 @@ All notable changes to dotloom-mcp are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **The app can update itself from the Releases it was downloaded from.** A background
+  check runs a few times a day while the editor is open, and when a newer version exists
+  a banner offers to download it, show its release notes, and restart into it. The same
+  check is available on demand from **Settings ▸ Updates**, along with the installed
+  version, the time of the last check, and a switch to turn the background check off.
+  Three things are deliberately *not* automatic. Nothing is downloaded without being asked
+  for, a finished download waits for a person before the app restarts, and a version that
+  has been dismissed stays dismissed - so the editor never spends bandwidth or throws away
+  unsaved work on its own. Restarting also asks first when a sprite has never been written
+  to a file, since the main process is the only side that knows.
+  Builds that genuinely cannot replace themselves say so rather than pretending: the
+  portable `.exe` and the `.deb` point at the release page and at your package manager,
+  and an unsigned macOS build does the same, because macOS will not verify a signature
+  that is re-derived on every build. Signing the releases turns macOS self-updating on
+  with no code change - the app is told at build time whether it was signed.
+- **Updates are published as real release assets.** The release workflow now collects the
+  `latest*.yml` metadata and the `.blockmap` files electron-builder writes beside the
+  installers, and attaches them to the Release. Without them an installed app sees a
+  release with nothing it can install, which is the difference between "you are on the
+  latest version" and "there is no update" - and only the first of those is true.
+
 ## [0.4.1] - 2026-09-26
 
 ### Added

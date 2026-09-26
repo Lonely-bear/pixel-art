@@ -9,6 +9,7 @@ import { Timeline } from './components/Timeline.js';
 import { Sidebar } from './components/Sidebar.js';
 import { StatusBar } from './components/StatusBar.js';
 import { SettingsDialog } from './components/SettingsDialog.js';
+import { UpdateBanner } from './components/UpdateBanner.js';
 
 const TOOL_KEYS: Record<string, string> = {
   b: 'pencil',
@@ -150,6 +151,11 @@ export function App(): React.ReactNode {
       </div>
 
       <StatusBar />
+
+      {/* Fixed, not a grid row: the shell's three rows are a layout contract
+          with the frameless title bar and the status bar, and a new release
+          must not be able to change the height of the artboard. */}
+      <UpdateBanner />
 
       {notice && (
         <div className={`toast${notice.kind === 'error' ? ' is-error' : ''}`} role="status">
