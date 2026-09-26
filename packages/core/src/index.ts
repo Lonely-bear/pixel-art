@@ -43,5 +43,12 @@ export * from './atlas.js';
 export * from './gif.js';
 export * from './import.js';
 
+// The quality pipeline: the aggregator, the dimensions that exist, and the contract they
+// share. Re-exporting the dimensions is deliberate — `evaluate` is the product's entry
+// point into the pipeline, and a caller that cannot reach the analyzer it is aggregating
+// cannot calibrate one. It also means the public namespace now carries the ~90 commands and
+// the quality pipeline together, which is one namespace instead of two ways in.
+export * from './quality/index.js';
+
 // Brings in the command bus (`Editor`, `applyCommand`, `undo`, ...) transitively.
 export * from './commands/index.js';

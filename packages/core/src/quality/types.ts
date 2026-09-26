@@ -134,10 +134,48 @@ export interface QualityDimension {
  *
  * A closed enum, not a string and not free text: an agent has to be able to tell "this
  * sprite has no animation, so motion does not apply" from "the motion analyzer crashed
- * and left a hole" without pattern-matching prose. Both current reasons describe a
- * document that cannot be measured, which is exactly what "not applicable" means.
+ * and left a hole" without pattern-matching prose.
+ *
+ * **These strings are an API.** An agent branches on them, so adding a member is
+ * additive and safe, renaming or repurposing one is a breaking change, and the
+ * wording is chosen to be self-explanatory without the surrounding prose — a member
+ * that only makes sense next to a comment does not belong in here.
+ *
+ * Every member answers the same question: *why is there no number for this dimension?*
+ * They are ordered by what they describe, and the two kinds are not the same claim:
+ *
+ *   - `'single-frame'`, `'no-motion-content'`, `'no-subject'` describe **the document**:
+ *     there is nothing there to measure, so the dimension cannot apply to it. Produced by
+ *     the aggregator from the target itself, never by the analyzer — the analyzer's honest
+ *     measurement of a degenerate input is its *best* possible score, and handing out a
+ *     perfect mark for an absence is the failure this mechanism exists to prevent.
+ *   - `'not-implemented'` describes **this build**: the dimension has no analyzer yet, so
+ *     no number exists and none is claimed. It is the honest reason for the five
+ *     dimensions that do not exist while they do not, and it is transitional by
+ *     construction — the dimension's own producer replaces it the moment the analyzer
+ *     lands, because a dimension with an analyzer can only be excluded for one of the
+ *     three reasons above.
+ *
+ * The per-dimension preconditions are the aggregator's, in `quality/index.ts`, which is
+ * also the only module that writes an entry here. `evaluate` owns applicability because it
+ * owns `excluded`; a dimension that declared its own unfitness would be the analyzer
+ * deciding whether its own answer counts, and there is no version of that which is not a
+ * way to grade one's own homework.
  */
-export type ExcludedReason = 'single-frame' | 'no-motion-content';
+export type ExcludedReason =
+  /** `motion` only: the evaluated sequence is a single frame, so there is no motion. */
+  | 'single-frame'
+  /** `motion` only: >= 2 frames, and every composite is byte-identical to the first. */
+  | 'no-motion-content'
+  /**
+   * The ink is full-bleed on every inked frame — it comes within a pixel of all four
+   * canvas edges — so there is no subject reading against a background. `silhouette` and
+   * `outline` cannot measure a shape whose boundary is the frame; `value`, `palette` and
+   * `noise` can, and are unaffected.
+   */
+  | 'no-subject'
+  /** No analyzer is registered for this dimension, so no number was produced. */
+  | 'not-implemented';
 
 /** The whole assessment: the applicable dimensions, one weighted score, one gate decision. */
 export interface QualityReport {
