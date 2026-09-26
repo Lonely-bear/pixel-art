@@ -1,0 +1,85 @@
+---
+name: Agent usability
+about: The AI agent driving dotloom-mcp made a wrong decision, or could not recover from one
+title: ''
+labels: agent-usability
+assignees: ''
+---
+
+<!-- This project is designed to be operated through an MCP client. When the agent picks
+     the wrong tool, guesses a parameter, or paints in the wrong order, that is a product
+     defect with an owner — not a user error. This template is the fastest way we have of
+     finding out which of our descriptions, guides, remediations or error codes are
+     responsible. -->
+
+This is not a "the model was dumb" report. It is: **at this point the agent had this
+information, and it still made this choice.** Tell us what it knew and what it did, and
+whether the tool surface gave it a way out.
+
+## Setup
+
+- **MCP client and version:** (e.g. opencode 2.x, Claude Desktop, Cursor, …)
+- **Server mode** — output of `get_connection_status`:
+  ```
+  ```
+  (attached to a running desktop app, or in memory — the two behave differently)
+- **Server version:** `dotloom-mcp --version` →
+- **Model** (if you are willing to share it) and how it was configured:
+- **Skill loaded?** Did the client read `pixel://skill` / `read_skill` at the start?
+
+## The exact call sequence
+
+One entry per call, in order, with the arguments as sent. This is the core of the report —
+a transcript is worth more than any description of the behaviour.
+
+| # | tool | arguments (verbatim) | ok? |
+| --- | --- | --- | --- |
+| 1 | | | |
+| 2 | | | |
+
+Or paste the transcript:
+
+```
+```
+
+## Where the agent went wrong
+
+- **The decision point:** which call was the wrong one, and what it was trying to achieve.
+- **What it should have done instead:** the correct tool, parameter, or ordering.
+- **What the agent had already read at that point:** the tool list, the `description` of
+  the tool it used, any `guide` (`pixel://guide/{command}`), any `warning` or `remediation`
+  in an earlier response.
+- **Why it did not recover:** did it retry the same way, give up, ask you, or invent a
+  workaround with `apply_ops` / `run_script`? Paste what it said if you have it.
+
+## Was the surface to blame?
+
+This is the question we actually want answered. Any of these is a useful answer:
+
+- [ ] A tool that would have told it, but which is not in the advertised list and it had
+      no way to know existed
+- [ ] A command it never found — `list_commands {filter: …}` / `find_workflow` /
+      `describe_command` did not surface it
+- [ ] A parameter description that was ambiguous, wrong, or silent about the thing it got
+      wrong
+- [ ] A `guide` that explains the trap but is only readable *after* the mistake
+- [ ] A `remediation` that pointed at the wrong tool (or at a name that is not in the
+      catalogue, so it could never be found)
+- [ ] An error `code` it could not branch on, or one that did not distinguish the two
+      possible causes
+- [ ] An error message that was truncated, or prose instead of something actionable
+- [ ] Nothing was wrong with the surface — the model was the problem
+
+Paste the exact text of the description, guide, error or remediation you are pointing at.
+
+## What would have fixed it
+
+One sentence is enough: the parameter description that was missing, the error that should
+have carried a `code`, the tool that should have been in the list. If you can, say what the
+agent would have needed to see **at that moment** rather than in hindsight.
+
+## Extra
+
+Anything else — the `read_grid` output at the moment the drawing went wrong, a preview, the
+document if you can share it. This is the highest-signal issue type we get, so please be
+specific; a vague version of it cannot be reproduced.

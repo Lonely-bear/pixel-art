@@ -1,0 +1,17 @@
+# Issue templates for dotloom-mcp.
+#
+# Blank issues are enabled on purpose: this project is used through an MCP client, and
+# the shape of a good report is not obvious to someone who has not written one yet. Pick
+# the closest template rather than writing the first issue you ever filed from a blank
+# page.
+blank_issues_enabled: true
+contact_links:
+  - name: Contributing guide
+    url: https://github.com/Lonely-bear/pixel-art/blob/main/CONTRIBUTING.md
+    about: Setup, the build-order trap, and the conventions a review will hold you to.
+  - name: Technical reference
+    url: https://github.com/Lonely-bear/pixel-art/blob/main/docs/REFERENCE.md
+    about: Command catalogue, MCP internals, scripting, tilemaps, and the design decisions behind them.
+  - name: Security report
+    url: https://github.com/Lonely-bear/pixel-art/blob/main/CONTRIBUTING.md#security
+    about: Do not open a public issue for a security problem - see the guide for a private route.
