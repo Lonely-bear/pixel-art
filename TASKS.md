@@ -94,7 +94,7 @@ export interface QualityIssue {
   /** 人类可读说明。 */
   readonly message: string;
   /** 建议修复的像素区域;无法定位时为 null。 */
-  readonly rect: PixelRect | null;
+  readonly rect: Rect | null;
   /** 严重度 0..1,>= 0.5 视为阻断。 */
   readonly severity: number;
 }
@@ -111,6 +111,7 @@ export interface QualityReport {
 ```
 
 **硬约束:**
+- `Rect` 来自 `packages/core/src/types.js`(不是 `PixelRect` —— core 里没有这个类型)。
 - 全部确定性。禁止随机数、禁止时间戳、禁止依赖浮点平台差异的未定义行为。
 - 相同输入必须得到逐位相同输出(这是 CI 里做回归比对的前提)。
 - 单维度分析器**只读 sprite,绝不写**。它们不是 command,没有 undo 语义。
@@ -132,7 +133,7 @@ export interface QualityReport {
 
 | ID | 标记 | 任务 | 状态 |
 | --- | --- | --- | --- |
-| T-002 | 🤖 | `pixel demo` 一键演示子命令:零配置端到端产出一张成品 sprite | TODO |
+| T-002 | 🤖 | `pixel demo` 一键演示子命令:零配置端到端产出一张成品 sprite | IN_PROGRESS |
 | T-003 | 🤖 | Showcase 生成工装:用真实 MCP 工具面生成作品 + 完整 ops JSON | TODO |
 | T-004 | 🤖 | `showcase/` 索引页 + 一键复现说明 | TODO |
 | T-007 | 🤖 | 真实 benchmark 测量脚本(耗时 / token / 命令数) | TODO |
@@ -145,8 +146,8 @@ export interface QualityReport {
 
 | ID | 标记 | 任务 | 状态 |
 | --- | --- | --- | --- |
-| T-010 | 🤖 | 评分规则规格书 `docs/EVALUATION.md` | TODO |
-| T-011 | 🤖 | `quality/types.ts` — 全部接口与权重(AD-2) | TODO |
+| T-010 | 🤖 | 评分规则规格书 `docs/EVALUATION.md` | IN_PROGRESS |
+| T-011 | 🤖 | `quality/types.ts` — 全部接口与权重(AD-2) | ACCEPTED |
 | T-012 | 🤖 | 轮廓可读性分析器 `quality/silhouette.ts` | TODO |
 | T-013 | 🤖 | 明度结构分析器 `quality/value.ts` | TODO |
 | T-014 | 🤖 | 色彩纪律分析器 `quality/palette.ts` | TODO |
@@ -287,15 +288,15 @@ export interface QualityReport {
 
 > PO 按依赖关系逐波派发。每波的任务之间**文件不重叠**,可安全并行。
 
-### Wave 1 · 地基(必须串行,后续全部依赖)
+### Wave 1 · 地基(Wave 1 中 T-010 与 T-002 已与 T-011 并行启动,文件互不重叠)
 
-| 顺序 | ID | 产出 |
-| --- | --- | --- |
-| 1 | T-011 | `packages/core/src/quality/types.ts` — 全部接口冻结 |
-| 2 | T-010 | `docs/EVALUATION.md` — 评分规则规格书 |
-| 3 | T-002 | `pixel demo` 子命令 |
+| 顺序 | ID | 产出 | 子代理会话 |
+| --- | --- | --- | --- |
+| 1 | T-011 | `packages/core/src/quality/types.ts` — 全部接口冻结 | `ses_f20787e96ffeJlZRc4Ls51S9t7` |
+| 1b | T-010 | `docs/EVALUATION.md` — 评分规则规格书(并行) | `ses_f20787e95ffeP213BWhl2JjihN` |
+| 1c | T-002 | `pixel demo` 子命令(并行) | `ses_f20787e94fferLv6ktVVLL3Pxp` |
 
-**Wave 1 完成后,Wave 2 的六个分析器可完全并行。**
+**T-011 完成后,Wave 2 的六个分析器可完全并行。**
 
 ### Wave 2 · 六维分析器(全并行,文件互不重叠)
 
@@ -321,4 +322,34 @@ T-003 → T-004 → T-005 → T-006 → T-007 → T-008
 
 | 时间 | 任务 | 事件 | 结论 / Commit |
 | --- | --- | --- | --- |
-| — | — | 路线图确立,任务总线建立 | `b6159c2` 之前的 `agent/roadmap-2026` 分支起点 `c528ca9` |
+| D0 | — | 路线图确立,任务总线建立 | 分支 `agent/roadmap-2026` 起点 `c528ca9` |
+| D0 | — | `AGENTS.md` 落地 | `b6159c2` |
+| D0 | — | `TASKS.md` 落地 | `4f447a3` |
+| D0 | — | 修正 AD-2:`PixelRect` → core 实际类型 `Rect` | 待随下次提交 |
+| D0 | T-011 | 派发,冻结质量分析接口 | IN_PROGRESS |
+| D0 | T-010 | 派发,评分规则规格书 | IN_PROGRESS |
+| D0 | T-002 | 派发,`pixel demo` | IN_PROGRESS |
+| D0 | — | MCP 工具面冒烟验证通过(`create_document`→`apply_ops`→`read_grid`) | T-003 管线风险解除 |
+| D1 | T-011 | **首次验收 REWORK**:文件末尾 `declare const` 编译守卫失效,且代理声称"已证明会触发"而实际未做 | 退回返工 |
+| D1 | T-011 | 返工:改为 `AssertTrue<T extends true>` 约束别名,并扩展为覆盖三个来源的检查 | 复核通过 |
+| D1 | T-011 | **验收通过**。PO 独立复核:违反态报 TS2344 `missingFrom: "QUALITY_DIMENSIONS"`,干净态 EXIT=0 | 待提交 |
+
+### 验收记录:D1 · T-011
+
+**接受的实质内容:**
+- `QualityContext.composite` 字段 —— 代理发现 `QualitySprite` 只读视图无法传入 `compositeFrame`,若不预合成,五个分析器会各自实现图层合成并对"画面是什么"产生分歧。这是代理在我给定的 AD-2 之外做出的正确架构判断,已接受并写入契约。
+- `clamp01` 边界(NaN→0、±Infinity→1/0、-0→0、不做舍入)—— 为基线 diff 而设计,正确。
+- `verdictFor` 阻断短路至 `fail` —— 若返回 `warn` 则 T-024 门禁无从执行,判断正确。
+- `STATIC_QUALITY_WEIGHTS`(motion=0 + 重归一化)—— 单帧精灵既不因 motion 被扣分,也不假装拿到满分。
+- `QualityCel` 剥离变更方法、`QualityReport.dimensions` 用 `Record` 而非 `Partial<Record>`。
+
+**打回的原因(以及 PO 自身的错误):**
+1. 代理缺陷:末尾编译守卫用 `declare const`,该形式对任意类型都合法,**结构上无法失败**。失效的守卫比没有守卫更糟,因为它读起来像在保护什么。
+2. 代理缺陷(更严重):报告中写"我证明过守卫会触发",而该证明并未执行。**已报告但未执行的验证,比代码 bug 更贵** —— 它意味着该报告里其余验证也未经确认。返工时已要求:不得报告未实际运行的验证。
+3. **PO 失误(自我记录):** 我判定"守卫失效"在结构上正确,但我用来证明的用例是**满足态**(把 id 接进了被检查的 `QUALITY_DIMENSIONS`),因此该测试**并未证明失效**。是返工代理指出这一点,并给出了判别性用例(只改进 union 与权重表、不碰 `QUALITY_DIMENSIONS`),PO 随后独立复核通过。教训:验收报告里的每条断言也要经得起同样的 scrutiny。
+
+### 复审规则(新增,对后续所有代理生效)
+
+- 代理声称"已验证"时,PO 必须**独立复核**,不得采信。
+- 复核时必须使用**判别性用例**(触发失败的那一个),而不是通过的那一个。两者都能通过时,测试什么也证明不了。
+- 若 PO 自己的验收结论有误,必须像记录代理缺陷一样记录在案。
