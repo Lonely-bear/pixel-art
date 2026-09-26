@@ -113,6 +113,29 @@ const document = core.createSprite({ width: 32, height: 32 });
 console.log(VERSION, document.width, typeof mcp.createPixelServer, typeof script.ScriptRuntime);
 ```
 
+Those three namespaces are the full engine, and they are the escape hatch rather than the
+recommended starting point: to generate assets from a build script, use the task-shaped
+functions on the same entry point instead.
+
+```js
+import { buildSprite, exportAssets } from 'dotloom-mcp';
+
+const slime = buildSprite({
+  seed: 20260927, width: 16, height: 16, name: 'slime',
+  layers: ['base', 'shade'],
+  palette: ['#0f380f', '#306230', '#8bac0f', '#9bbc0f'],
+  ops: [{ command: 'draw_ellipse', params: { rect: { x: 2, y: 5, w: 12, h: 9 }, color: '#8bac0f' } }],
+});
+
+for (const file of exportAssets(slime, { sheet: true, source: true })) {
+  console.log(file.path, file.bytes.length, file.mediaType);
+}
+```
+
+Same seed, same bytes, every run — which is what makes committing generated assets viable.
+**[`docs/API.md`](docs/API.md) has the full surface, the determinism contract and the
+versioning policy**: what is stable, what is internal, and what changes in a major version.
+
 No global install is required for one-off use:
 
 ```bash
