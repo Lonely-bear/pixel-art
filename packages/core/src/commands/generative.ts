@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { buildHueRamp } from '../ramp.js';
 import { clipRect } from '../geometry.js';
 import { drawLine, drawPixels, drawRect, fillShape, putPixels, type PixelSpec } from '../raster.js';
+import { hashSpatial } from '../rng.js';
 import type { Sprite } from '../document.js';
 import type { Color, ColorInput, Point, Rect } from '../types.js';
 import {
@@ -54,19 +55,13 @@ function clampByte(value: number): number {
   return value < 0 ? 0 : value > 255 ? 255 : Math.round(value);
 }
 
-function hash2D(x: number, y: number, seed: number): number {
-  let n = Math.imul((x | 0) ^ 0x9e3779b9, 0x85ebca6b);
-  n ^= Math.imul((y | 0) ^ 0xc2b2ae35, 0x27d4eb2f);
-  // Mix both 32-bit halves so safe integer seeds do not alias after `| 0`.
-  const seedLow = seed >>> 0;
-  const seedHigh = Math.floor(seed / 0x100000000) >>> 0;
-  n ^= Math.imul(seedLow ^ seedHigh, 0x165667b1);
-  n ^= Math.imul(seedHigh, 0x9e3779b9);
-  n = Math.imul(n ^ (n >>> 15), 0x85ebca6b);
-  n ^= n >>> 13;
-  return (n >>> 0) / 0x100000000;
-}
-
+/**
+ * 2-D value noise in `[0, 1)`, smoothstep-interpolated between lattice points.
+ *
+ * Pure in `(x, y, seed)`: no state, no clock, no accumulation. The four corners are
+ * looked up by coordinate rather than drawn from a stream, so a field is identical
+ * whether it is evaluated row-major, column-major or one pixel at a time.
+ */
 function valueNoise(x: number, y: number, seed: number): number {
   const ix = Math.floor(x);
   const iy = Math.floor(y);
@@ -74,19 +69,30 @@ function valueNoise(x: number, y: number, seed: number): number {
   const fy = y - iy;
   const sx = fx * fx * (3 - 2 * fx);
   const sy = fy * fy * (3 - 2 * fy);
-  const a = hash2D(ix, iy, seed);
-  const b = hash2D(ix + 1, iy, seed);
-  const c = hash2D(ix, iy + 1, seed);
-  const d = hash2D(ix + 1, iy + 1, seed);
+  const a = hashSpatial(ix, iy, seed);
+  const b = hashSpatial(ix + 1, iy, seed);
+  const c = hashSpatial(ix, iy + 1, seed);
+  const d = hashSpatial(ix + 1, iy + 1, seed);
   return (a + (b - a) * sx) * (1 - sy) + (c + (d - c) * sx) * sy;
 }
 
+/**
+ * Fractional Brownian motion: several octaves of value noise, each at twice the
+ * frequency and a configurable fraction of the amplitude of the last.
+ *
+ * The octave loop accumulates in a fixed ascending order and `total` is summed the same
+ * way, which is what makes the result bit-identical rather than merely close — floating
+ * point addition is not associative, so a loop that visited octaves in a different order
+ * would produce a different field on the same input.
+ */
 function fbm(x: number, y: number, seed: number, octaves: number, lacunarity: number, gain: number): number {
   let value = 0;
   let amplitude = 0.5;
   let total = 0;
   let frequency = 1;
   for (let octave = 0; octave < octaves; octave++) {
+    // A per-octave seed offset rather than a reused seed: two octaves sampling the same
+    // lattice would otherwise be correlated and the fBm would look like one octave.
     value += valueNoise(x * frequency, y * frequency, seed + octave * 1013) * amplitude;
     total += amplitude;
     amplitude *= gain;
@@ -201,8 +207,13 @@ function directionValue(x: number, y: number, rect: Rect, direction: 'vertical' 
   if (direction === 'radial') {
     const cx = w / 2;
     const cy = h / 2;
-    const max = Math.hypot(cx, cy);
-    return max <= 0 ? 0 : Math.hypot(x - cx, y - cy) / max;
+    // sqrt, not Math.hypot: hypot is *implementation-approximated* in the language
+    // spec, so two conforming engines may disagree in the last bit, and a field that
+    // lands one ULP either side of a band boundary picks a different colour. sqrt is
+    // correctly rounded by IEEE-754, so the byte is the same everywhere. Pixel
+    // coordinates are far too small for the intermediate to overflow.
+    const max = Math.sqrt(cx * cx + cy * cy);
+    return max <= 0 ? 0 : Math.sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy)) / max;
   }
   return h <= 0 ? 0 : y / h;
 }
@@ -221,7 +232,7 @@ function gradientRgba(
     const localY = outputRect.y + y - rect.y;
     for (let x = 0; x < outputRect.w; x++) {
       const localX = outputRect.x + x - rect.x;
-      const jitterValue = (hash2D(localX, localY, seed) - 0.5) * 2 * jitter;
+      const jitterValue = (hashSpatial(localX, localY, seed) - 0.5) * 2 * jitter;
       const t = clamp01(directionValue(localX, localY, rect, direction) + jitterValue);
       const color = colorAt(ramp, t, banded);
       const i = (y * outputRect.w + x) * 4;
@@ -278,7 +289,10 @@ function addDisc(
   const r = Math.max(0, Math.round(radius));
   for (let dy = -r; dy <= r; dy++) {
     for (let dx = -r; dx <= r; dx++) {
-      const distance = Math.hypot(dx, dy);
+      // See the note in `directionValue`: sqrt rather than Math.hypot, because hypot is
+      // implementation-approximated and `distance` feeds a comparison and a `Math.round`
+      // below. `dx`/`dy` are bounded by `radius`, so the square cannot overflow.
+      const distance = Math.sqrt(dx * dx + dy * dy);
       if (distance > r) continue;
       const x = centerX + dx;
       const y = centerY + dy;
@@ -311,18 +325,30 @@ function scatterPixels(
 ): PixelSpec[] {
   const pixels: PixelSpec[] = [];
   const seen = new Set<number>();
+  // One channel constant per decision, and each one is passed in the *y* slot while the
+  // caller's seed goes in the seed slot. Putting the seed in a coordinate slot instead
+  // looks harmless and is not: coordinates are truncated with `| 0`, so seeds differing
+  // by 2^32 collapsed onto the same scatter. The other three seeded commands already
+  // pass the seed correctly, and this is what brings scatter in line with them.
+  const CH_X = 11;
+  const CH_Y = 29;
+  const CH_RADIUS = 47;
+  const CH_COLOR = 71;
+  const CH_CLUSTER = 101;
+  const CH_CLUSTER_DX = 109;
+  const CH_CLUSTER_DY = 113;
   for (let i = 0; i < count; i++) {
-    const x = rect.x + Math.floor(hash2D(i, seed, 11) * rect.w);
-    const y = rect.y + Math.floor(hash2D(i, seed, 29) * rect.h);
+    const x = rect.x + Math.floor(hashSpatial(i, CH_X, seed) * rect.w);
+    const y = rect.y + Math.floor(hashSpatial(i, CH_Y, seed) * rect.h);
     const r = Math.min(
       radius,
-      Math.max(0, Math.round(radius * (0.65 + hash2D(i, seed, 47) * 0.35))),
+      Math.max(0, Math.round(radius * (0.65 + hashSpatial(i, CH_RADIUS, seed) * 0.35))),
     );
-    const color = colors[Math.min(colors.length - 1, Math.floor(hash2D(i, seed, 71) * colors.length))];
+    const color = colors[Math.min(colors.length - 1, Math.floor(hashSpatial(i, CH_COLOR, seed) * colors.length))];
     addDisc(pixels, x, y, r, color, falloff, rect, seen);
-    if (cluster > 0 && hash2D(i, seed, 101) < cluster) {
-      const ox = Math.round((hash2D(i, seed, 109) - 0.5) * radius * 2);
-      const oy = Math.round((hash2D(i, seed, 113) - 0.5) * radius * 2);
+    if (cluster > 0 && hashSpatial(i, CH_CLUSTER, seed) < cluster) {
+      const ox = Math.round((hashSpatial(i, CH_CLUSTER_DX, seed) - 0.5) * radius * 2);
+      const oy = Math.round((hashSpatial(i, CH_CLUSTER_DY, seed) - 0.5) * radius * 2);
       addDisc(pixels, x + ox, y + oy, Math.max(0, r - 1), color, falloff, rect, seen);
     }
   }
@@ -627,7 +653,11 @@ export const scatterCommand = defineCommand({
     validateGeneratedRect(p.rect, 'scatter', visible.w * visible.h);
     const count = p.count ?? 32;
     const radius = p.radius ?? 1;
-    const estimated = count * Math.pow(radius * 2 + 1, 2) * (1 + (p.cluster ?? 0));
+    // A literal square rather than Math.pow(_, 2): pow is implementation-approximated and
+    // multiplication is not. The estimate only gates a limit, but a limit that trips on
+    // one engine and not another is a reproducibility bug wearing a disguise.
+    const span = radius * 2 + 1;
+    const estimated = count * span * span * (1 + (p.cluster ?? 0));
     if (estimated > 2_000_000) {
       throw new Error(`scatter estimate ${Math.round(estimated)} pixels exceeds the 2,000,000 safety limit; reduce count or radius`);
     }

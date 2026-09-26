@@ -3,6 +3,7 @@ import { PixelBuffer } from '../buffer.js';
 import { getFrame } from '../document.js';
 import { clearRegion } from '../raster.js';
 import { compositeFrame } from '../render.js';
+import { hashLinear } from '../rng.js';
 import { remapRigGeometry, rigCrop, rigFlip, rigRotate, rigScale, rigTranslate } from '../rig.js';
 import {
   crop,
@@ -85,20 +86,20 @@ export const flipCommand = defineCommand({
   },
 });
 
-/** Deterministic, smooth one-dimensional noise used for reflection displacement. */
-function reflectionNoise(value: number, seed: number): number {
+/**
+ * Deterministic, smooth one-dimensional noise used for reflection displacement.
+ *
+ * Uses the engine's shared field hash rather than a local mixer: a second mixer would be
+ * a second set of bits to keep pinned, and this noise has to replay from a seed exactly
+ * as much as terrain and scatter do — an agent iterating on a lake reflection needs the
+ * same wobble back on the next run.
+ */
+function reflectionNoise(value: number, seed: number, salt: number): number {
   const cell = Math.floor(value);
   const fraction = value - cell;
   const smooth = fraction * fraction * (3 - 2 * fraction);
-  const sample = (index: number): number => {
-    let n = Math.imul((index | 0) ^ seed, 0x9e3779b9);
-    n ^= n >>> 16;
-    n = Math.imul(n, 0x85ebca6b);
-    n ^= n >>> 13;
-    return (n >>> 0) / 0x100000000;
-  };
-  const a = sample(cell);
-  const b = sample(cell + 1);
+  const a = hashLinear(cell, seed, salt);
+  const b = hashLinear(cell + 1, seed, salt);
   return a + (b - a) * smooth;
 }
 
@@ -112,8 +113,8 @@ function reflectionOffset(
   if (amount <= 0 || depth <= 0) return 0;
   // Most of the displacement is coherent along rows; a small, block-stable term keeps
   // a reflection from looking like a single perfectly sheared copy.
-  const row = reflectionNoise(sourceY * 0.075 + seed * 0.013, seed ^ 0x51ed270b);
-  const block = reflectionNoise(Math.floor(x / 8) * 0.19 + sourceY * 0.011, seed ^ 0x1b873593);
+  const row = reflectionNoise(sourceY * 0.075 + seed * 0.013, seed, 0x51a3);
+  const block = reflectionNoise(Math.floor(x / 8) * 0.19 + sourceY * 0.011, seed, 0x2f1b);
   const signed = (row * 0.72 + block * 0.28 - 0.5) * 2;
   return Math.round(signed * amount * depth);
 }

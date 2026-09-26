@@ -113,7 +113,14 @@ export function applyEasing(value: number, easing: RigTween['easing']): number {
   if (easing === 'step') return t < 1 ? 0 : 1;
   if (easing === 'ease-in') return t * t;
   if (easing === 'ease-out') return 1 - (1 - t) * (1 - t);
-  if (easing === 'ease-in-out') return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+  // A literal square, not Math.pow(_, 2): pow is implementation-approximated in the
+  // language spec, multiplication is not, and this feeds a pose transform that a rig
+  // test compares against. The other branch is already written this way.
+  if (easing === 'ease-in-out') {
+    if (t < 0.5) return 2 * t * t;
+    const s = -2 * t + 2;
+    return 1 - (s * s) / 2;
+  }
   return t;
 }
 

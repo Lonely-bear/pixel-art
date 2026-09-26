@@ -1,6 +1,7 @@
 import { blendInto } from './blend.js';
 import { PixelBuffer } from './buffer.js';
 import { clipRect, fullRect } from './geometry.js';
+import { hashSpatial } from './rng.js';
 import type { MapObject, MapPropertyValue, TilemapLayer, Tileset } from './document.js';
 import type { Color, Point, Rect } from './types.js';
 
@@ -550,20 +551,6 @@ interface WeightedTile {
   weight: number;
 }
 
-/** Deterministic 0..1 hash of a cell and a purpose, so a seed always replays. */
-function hashCell(x: number, y: number, seed: number, salt: number): number {
-  let n = Math.imul((x | 0) ^ 0x9e3779b9, 0x85ebca6b);
-  n ^= Math.imul((y | 0) ^ 0xc2b2ae35, 0x27d4eb2f);
-  n = Math.imul(n ^ salt, 0x165667b1);
-  const seedLow = seed >>> 0;
-  const seedHigh = Math.floor(seed / 0x100000000) >>> 0;
-  n ^= Math.imul(seedLow ^ seedHigh, 0x165667b1);
-  n ^= Math.imul(seedHigh, 0x9e3779b9);
-  n = Math.imul(n ^ (n >>> 15), 0x85ebca6b);
-  n ^= n >>> 13;
-  return (n >>> 0) / 0x100000000;
-}
-
 /** Smoothed value noise in -1..1: neighbours get similar values, so jitter wiggles. */
 function smoothField(x: number, y: number, seed: number): number {
   const ix = Math.floor(x);
@@ -572,10 +559,10 @@ function smoothField(x: number, y: number, seed: number): number {
   const fy = y - iy;
   const sx = fx * fx * (3 - 2 * fx);
   const sy = fy * fy * (3 - 2 * fy);
-  const a = hashCell(ix, iy, seed, 0x51a3);
-  const b = hashCell(ix + 1, iy, seed, 0x51a3);
-  const c = hashCell(ix, iy + 1, seed, 0x51a3);
-  const d = hashCell(ix + 1, iy + 1, seed, 0x51a3);
+  const a = hashSpatial(ix, iy, seed, 0x51a3);
+  const b = hashSpatial(ix + 1, iy, seed, 0x51a3);
+  const c = hashSpatial(ix, iy + 1, seed, 0x51a3);
+  const d = hashSpatial(ix + 1, iy + 1, seed, 0x51a3);
   return ((a + (b - a) * sx) * (1 - sy) + (c + (d - c) * sx) * sy) * 2 - 1;
 }
 
@@ -600,7 +587,7 @@ function pickWeighted(
   for (const variant of variants) total += variant.weight;
   let acc = 0;
   let chosen = variants[variants.length - 1].tile;
-  const roll = hashCell(x, y, seed, salt);
+  const roll = hashSpatial(x, y, seed, salt);
   for (const variant of variants) {
     acc += variant.weight;
     if (roll * total < acc) {
@@ -610,7 +597,7 @@ function pickWeighted(
   }
   if (!avoid || avoid.size === 0 || !avoid.has(chosen)) return chosen;
   const count = variants.length;
-  const start = Math.min(count - 1, Math.floor(hashCell(x, y, seed, salt ^ 0x2f1b) * count));
+  const start = Math.min(count - 1, Math.floor(hashSpatial(x, y, seed, salt ^ 0x2f1b) * count));
   for (let i = 0; i < count; i++) {
     const candidate = variants[(start + i) % count].tile;
     if (!avoid.has(candidate)) return candidate;
@@ -972,7 +959,13 @@ function lerpAt(a: number, b: number, ta: number, tb: number, t: number): number
  */
 function catmullRomPoint(p0: Point, p1: Point, p2: Point, p3: Point, u: number): Point {
   const knot = (a: Point, b: Point): number => {
-    const d = Math.hypot(b.x - a.x, b.y - a.y);
+    // sqrt, not Math.hypot: hypot is implementation-approximated in the language spec,
+    // so two conforming engines can disagree in the last bit and land a control point a
+    // fraction of a cell apart. sqrt is correctly rounded by IEEE-754. Map coordinates
+    // are far too small for the intermediate to overflow.
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const d = Math.sqrt(dx * dx + dy * dy);
     return Math.sqrt(Math.max(1e-4, d));
   };
   const t0 = 0;
@@ -1002,7 +995,10 @@ function strokePath(points: readonly Point[], smoothing: StrokeSmoothing): Point
   for (let i = 0; i < count - 1; i++) {
     const p1 = at(i);
     const p2 = at(i + 1);
-    const length = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+    const ex = p2.x - p1.x;
+    const ey = p2.y - p1.y;
+    // sqrt, not Math.hypot — see the note in `catmullRomPoint`.
+    const length = Math.sqrt(ex * ex + ey * ey);
     const steps = Math.max(1, Math.min(MAX_STROKE_SAMPLES, Math.ceil(length * 2)));
     for (let s = 0; s < steps; s++) {
       out.push(catmullRomPoint(at(i - 1), p1, p2, at(i + 2), s / steps));
@@ -1103,8 +1099,10 @@ export function strokeTilemap(
         const ox = x - (ax + dx * t);
         const oy = y - (ay + dy * t);
         // `square` is Chebyshev: the stamp stays axis-aligned, so a diagonal path still
-        // leaves a blocky band instead of a staircase of round caps.
-        const d = brush === 'square' ? Math.max(Math.abs(ox), Math.abs(oy)) : Math.hypot(ox, oy);
+        // leaves a blocky band instead of a staircase of round caps. The round brush uses
+        // sqrt rather than Math.hypot, which is implementation-approximated and could put
+        // a cell on the other side of `d <= local` on a different engine.
+        const d = brush === 'square' ? Math.max(Math.abs(ox), Math.abs(oy)) : Math.sqrt(ox * ox + oy * oy);
         const local = radius * (1 + jitter * smoothField(x, y, seed ^ 0x2f1b));
         if (d <= local) covered.add(at);
       }
@@ -1124,7 +1122,7 @@ export function strokeTilemap(
     for (let x = area.x; x < area.x + area.w; x++) {
       const at = row + x;
       if (!covered.has(at)) continue;
-      if (density < 1 && hashCell(x, y, seed, 0x2c1f) >= density) {
+      if (density < 1 && hashSpatial(x, y, seed, 0x2c1f) >= density) {
         skipped++;
         continue;
       }
