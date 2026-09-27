@@ -10,6 +10,38 @@ All notable changes to dotloom-mcp are documented in this file.
 
 ### Fixed
 
+- **Whether a straight cut was caught depended on where it had been drawn.** The previous entry gave §4.2's
+  curvature gate a second reference and stopped it being blind on a full-bleed document. It did not stop it
+  being a coin toss. The gate asks whether the local form is round, and the second reference read a tone
+  region's curvature over its **whole** boundary — which contains the plane being judged. A straight band
+  drawn across a curved dome therefore read `curvedQ` **260** at one row and **248** at the next, against a
+  gate of 250: the defect was reported where the band crossed a wide part of the dome and excused where it
+  crossed a narrow part, because the band's own straight cut contributed boundary pixels and no corners to
+  the very ratio meant to describe the arc it was cutting. Nobody can act on "your defect was drawn in the
+  wrong place".
+  A new §3.3 quantity, `planeCurvedQ`, reads a region's curvature with **the plane's own boundary removed** —
+  the form the plane cuts, without the plane — and the gate takes the maximum of all three references. The
+  same band now reads 333 and 420, both clear of the gate, and `value/straight-band-over-terrain-64` is in
+  the corpus reporting `plane-crosses-form`. Two properties survive the change, and they are the test of
+  whether the reasoning that refused two shortcuts was sound: a region whose **only** boundary is the plane
+  is left with nothing and reads 0, still "cannot measure"; and a straight-edged box reads 93 before and
+  after, because excluding the band between two straight bands leaves straight runs on both sides.
+  It is per region **pair** and not per terminator, so it is one pass over the canvas rather than one
+  full-boundary rescan per plane — the largest committed scene has 1008 terminators.
+  What it costs, measured: `gated` moved on 8 rows and `curvedQ max` on 4, and **no score moved anywhere**.
+  Nine more planes on the committed artwork became judged and every one came back clean. That is the reason
+  improving rather than the number, and it is a weaker claim than it looks — it means nothing in the corpus
+  got worse, not that the artwork has no defects.
+- **Two bugs in the new curvature reference, both caught by the corpus on their first run.** The exclusion
+  counters were keyed by the *unordered* region pair, so both sides of a pair subtracted the same total and
+  a density came out as **7385** — impossible, since a density cannot exceed 1000. And a pixel with two
+  neighbours in the same region was counted twice, so the excluded boundary could exceed the boundary and
+  the density divided by zero, reading `NaN` on the largest committed scene. Both are recorded next to the
+  quantity rather than in a changelog, because the second is the kind of defect that only shows up on the
+  one document in the corpus with a one-pixel neck in it.
+
+
+
 - **§4.2's curvature gate can now read curvature that does not come from the silhouette.** This is the
   coverage half of the entry below: the previous change made the form term *honest* about a full-bleed
   scene, and this one makes it *able to judge* one. The gate asked whether the local form is round and

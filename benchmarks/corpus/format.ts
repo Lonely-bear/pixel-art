@@ -705,7 +705,7 @@ export const DECLARED_QUANTITIES: readonly QuantityDeclaration[] = [
     name: 'regionCurvedQ',
     status: 'implemented',
     adopted:
-      'Per tone region, the density of convex-staircase corners on that region\'s OWN boundary: rhu(corners * 1000, boundary + 1). §4.2\'s `curvedQ` is then the MAX of this and the silhouette reading, so nothing with a readable outline changes by a single unit. The region being judged is deliberately left inside its own boundary count: a region\'s boundary always contains the terminator, so including it can only dilute the ratio and never manufacture curvature, which keeps the gate failing toward "cannot measure" — the direction every §4.2 gate is built to fail in — and keeps the quantity to one pass over the canvas.',
+      'Per tone region, the density of convex-staircase corners on that region\'s WHOLE boundary: rhu(corners * 1000, boundary + 1). Still measured and still printed, because it is the honest standalone question — "how curved is this tone region" — and because the corpus shows what taking the plane out changes. It is NOT what §4.2\'s gate reads: T-101 added `planeCurvedQ` below, and the gate takes the max of the silhouette reading, this, and that.',
     specText:
       'Not in §3.3. T-100 added it as the curvature reference §4.2\'s gate needs and cannot get from the silhouette, which is the "a new §3.3 quantity rather than a patch" that `convexCorner`\'s record above was waiting for. The predicate is `convexStaircaseCornerAt` with membership taken as `regionId[q] === r` rather than as a mask, so there is one definition of the staircase and two call shapes into it.',
     neededBy: ['value'],
@@ -721,10 +721,43 @@ export const DECLARED_QUANTITIES: readonly QuantityDeclaration[] = [
     // be a false positive on correctly shaded work — which is the more expensive of the two.
     discriminatorValues: [
       ['value/hard-surface-terminator-32 — the box: gate must stay CLOSED (§4.2 spares it)', 93],
-      ['value/terrain-following-terminator-64 — the dome, form-following: judged, bendQ 1000', 422],
-      ['value/straight-band-over-terrain-64 — the same dome, straight band: judged, bendQ 0', 260],
+      ['value/terrain-following-terminator-64 — the dome, form-following: judged, bendQ 1000', 426],
+      ['value/straight-band-over-terrain-64 — the same dome, straight band: judged, bendQ 0', 420],
       ['artwork/autumn-dusk-lake-256.pixel — a real 256x256 landscape', 833],
       ['artwork/sunset-lighthouse-512.pixel — a real 512x512 landscape', 857],
+    ],
+  },
+  {
+    // **T-101's quantity, and the one §4.2's gate actually reads.** `regionCurvedQ` above was
+    // supposed to be it, and it was close: it made the gate able to judge a full-bleed scene at all
+    // (the ten committed scenes went from 0..77 to 667..880), but it let the plane being judged sit
+    // in the denominator of its own region's reading. A straight band across a dome then read 260
+    // at y=34 and 248 at y=40, against a gate of 250 — caught at one row, excused at the other, for
+    // no reason a person could act on. **Whether a defect was reported depended on where it had been
+    // drawn, which is not a gate.** The cause is mechanical: the band's own region is a perfect
+    // rectangle and reads 0, and the dome region it cuts has corners only along its arc, so the cut
+    // contributed boundary pixels and no corners to the very ratio meant to describe the arc.
+    name: 'planeCurvedQ',
+    status: 'implemented',
+    adopted:
+      "Per ORDERED region pair: one region's curvature with every boundary pixel of it that has a 4-neighbour in the other region removed, as rhu(cornersLeft * 1000, boundaryLeft + 1). §4.2's `curvedQ` is the max of this, `regionCurvedQ`, and the silhouette reading. **The counters are keyed by the ORDERED pair and that is the whole correctness of the function**: how much of a region's boundary is against one neighbour and how much of that neighbour's boundary is against it are different numbers, and keying one Map per unordered pair double-counts — measured as a density of 7385, an impossibility since a density cannot exceed 1000, caught by the corpus assertion on its first run. A pixel with two neighbours in the SAME region must also be counted once, or the cut exceeds the boundary and the density divides by zero (NaN on artwork/sunset-lighthouse-512.pixel). Transparent and off-canvas neighbours are NOT excluded: a region's edge against the background is the form's own outline, which is the thing being asked about.",
+    specText:
+      "Not in §3.3. T-101 added it because `regionCurvedQ` left the terminator inside the ratio, and §3.3 records the measurement that reversed that decision. It is per region PAIR and not per terminator, so it is one pass over the canvas rather than one full-boundary rescan per plane — artwork/sunset-lighthouse-512.pixel has 1008 terminators and the per-plane reading of this would be quadratic in the thing being measured.",
+    neededBy: ['value'],
+    discriminator:
+      'The same pair that separated T-100, now separated by position rather than straddling a threshold. A straight-edged box is a stack of horizontal bands, so excluding the band between two of them leaves straight runs on both sides and there is nothing to recover: value/hard-surface-terminator-32 reads 93 before AND after, which is the check that the exclusion did not manufacture confidence where there was none. A dome is nested ellipses: the same band reads 333 at y=34 and 420 at y=40, both clear of 250, where the whole-boundary reading gave 260 and 248. The gap that motivated the task was 12 per-mille ACROSS a threshold; the reading now depends on the form rather than on where the band was drawn.',
+    // **Two halves, kept apart because conflating them is T-099's lesson.** The gate decides whether to
+    // look; `bendQ` and `splitQ` decide what it found. On the straight-band case `crossesQ` is EXACTLY
+    // `splitQ` — `bendQ` is 0 and nothing else damps it — so whether that case is *reported* is a
+    // question about §4.2's multiplier, not about this gate. Asserting a code here would assert a
+    // different quantity's behaviour, which is how the first version of that test came to demand a
+    // report the specification does not promise.
+    discriminatorValues: [
+      ['value/hard-surface-terminator-32 — the box: unchanged by the exclusion, gate stays CLOSED', 93],
+      ['value/terrain-following-terminator-64 — the dome, no band: judged clean, bendQ 1000', 426],
+      ['value/straight-band-over-terrain-64 — the same dome, band at y=40: judged, bendQ 0, splitQ 676', 420],
+      ['the same band at y=34 — judged, formQ 550, and NO code, because splitQ is 501', 333],
+      ['artwork/autumn-dusk-lake-256.pixel — a real 256x256 landscape', 833],
     ],
   },
 ];

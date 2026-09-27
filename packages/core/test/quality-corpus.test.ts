@@ -1241,35 +1241,23 @@ describe("this repository's own artwork, which is real and unlabelled", () => {
     }
   });
 
-  it('records the straight band it does not catch, with the two numbers that explain why', () => {
-    // **A full-bleed scene with a straight shadow band across a curved dome, and the reason this is
-    // a test rather than a corpus case.** The corpus cannot hold it: the loader rejects a case that
-    // declares a defect the analyzer is not expected to report, so a case for a defect that is
-    // *almost* caught has nowhere to live. That is the correct product position — the corpus will
-    // not pretend a detection exists — and it leaves the measurement with no committed home, which
-    // is the one thing `TASKS.md` says not to do. So the numbers are pinned here instead.
+  it('catches a straight band across a curved dome, and the position it is drawn no longer decides', () => {
+    // **This test was written to record a gap and it recorded one, which is why it is here rather
+    // than in the corpus.** T-100 gave the curvature gate a second reference and the same straight
+    // band over the same dome read `curvedQ` 260 at y=34 and **248** at y=40, against a gate of 250:
+    // caught at one row, excused at the other, for no reason a person could act on. The corpus could
+    // not hold the case, because the loader rejects a case that declares a defect the analyzer is
+    // not expected to report, and at the time it did not report it. So the numbers were pinned here
+    // with the reason, and the comment said what would happen if the gap closed: "both of these move
+    // and this test fails — which is the point of writing it down."
     //
-    // **What is fixed and what is not.** T-100's job was to stop the gate being *blind* on a
-    // full-bleed document, and that is done and asserted above. This is the second half and it is
-    // NOT done: whether a straight cut is *caught* depends on which tone region it happens to cross.
-    // The same band, the same dome, the same five swatches, moved from y=34 to y=40:
-    //
-    //     band at y=34   curvedQ 260   gate opens   crossesQ 501   formQ 550   plane-crosses-form
-    //     band at y=40   curvedQ 248   gate closes  crossesQ  -     formQ null  unmeasured
-    //
-    // Two per-mille either side of a gate of 250. `regionCurvedQ` is a **per-region density**, and
-    // the band is a perfect rectangle whose own boundary contributes boundary pixels and no corners,
-    // while the dome region it cuts contributes corners along the arc and none along the straight
-    // cut. Where the band crosses a wide part of the dome the arc dominates and the reading clears;
-    // where it crosses a narrow part near the frame the straight cut dominates and it does not.
-    //
-    // **The direction of the fix is stated so the next session does not start by moving the gate.**
-    // Lowering `CURVATURE_GATE` to catch 248 is exactly the move `TASKS.md` forbids: it would also
-    // admit `value/hard-surface-terminator-32` at 93 by a different route and re-open the question
-    // T-021 settled. The measurement, not the threshold, is what is wrong — most likely the plane's
-    // own boundary should be excluded from the ratio rather than left to dilute it, at the cost of
-    // making the quantity per-terminator instead of per-region. That is a design change with its own
-    // measurements, so it is not made here.
+    // **T-101 closed it, and the failure is the second half of the plan.** The cause was that
+    // `regionCurvedQ` counted a region's WHOLE boundary, so the band's own straight cut sat in the
+    // denominator of the arc it crossed, and where the band crossed a narrow part of the dome the
+    // cut outnumbered the arc. `planeCurvedQ` excludes the boundary against the neighbour being
+    // judged, so the arc is read without the cut in it. Both rows now clear the gate, and the value
+    // stops depending on where the band was drawn — which is the property the 260/248 pair was
+    // measuring in the first place.
     const dome = {
       canvas: { w: 64, h: 64 },
       layers: ['Base'],
@@ -1282,36 +1270,56 @@ describe("this repository's own artwork, which is real and unlabelled", () => {
       { op: 'ellipse', layer: 'Base', rect: [0, 14, 64, 80], color: 'pal:1', fill: true },
     ] as const;
     const sky = { op: 'rect', layer: 'Base', rect: [0, 0, 64, 64], color: 'pal:0', fill: true } as const;
-    const curvedQFor = (y: number) => {
-      const sprite = buildFromRecipe(`gap/band-${y}`, {
-        ...dome,
-        ops: [
-          sky,
-          ...ellipses,
-          { op: 'rect', layer: 'Base', rect: [0, y, 64, 10], color: 'pal:0', fill: true },
-        ],
-      } as never);
-      const context = createQualityContext(sprite);
-      const frame = measureValue(context)[0];
+    const read = (bandY: number | null) => {
+      const ops = bandY === null ? [sky, ...ellipses] : [sky, ...ellipses, { op: 'rect', layer: 'Base', rect: [0, bandY, 64, 10], color: 'pal:0', fill: true }];
+      const sprite = buildFromRecipe(`gap/${bandY ?? 'none'}`, { ...dome, ops } as never);
+      const frame = measureValue(createQualityContext(sprite))[0];
       return {
         curvedQ: Math.max(...frame.terminators.map((t) => t.curvedQ)),
         formQ: frame.formQ,
         crossesQ: frame.worst === null ? null : frame.worst.crossesQ,
+        splitQ: frame.worst === null ? null : frame.worst.splitQ,
+        bendQ: frame.worst === null ? null : frame.worst.bendQ,
+        codes: frame.issues.map((i) => i.code),
       };
     };
-    // The assertion is on the side that documents the gap: both readings are below the gate that
-    // T-100's own regression test asserts is cleared on all ten real scenes, and the difference
-    // between them is the whole finding. If a future revision of the quantity closes the gap, both
-    // of these move and this test fails — which is the point of writing it down.
-    expect(curvedQFor(40).curvedQ).toBeLessThan(250);
-    expect(curvedQFor(40).formQ).toBeNull();
-    // And the control half: with no band at all, the same dome is judged clean, so the dome's
-    // curvature IS being read and the band is what loses it. Without this, "the gate is closed"
-    // would be consistent with the reference being inert again.
-    const unbanded = buildFromRecipe('gap/unbanded', { ...dome, ops: [sky, ...ellipses] } as never);
-    const cleanFrame = measureValue(createQualityContext(unbanded))[0];
-    expect(Math.max(...cleanFrame.terminators.map((t) => t.curvedQ))).toBeGreaterThanOrEqual(250);
-    expect(cleanFrame.formQ).toBe(1000);
+    // **The control half first**, because without it "the gate is open" would be consistent with the
+    // reference being indiscriminately permissive: the same dome with no band is judged CLEAN. The
+    // gate decides whether to look; `bendQ` decides what it found. Conflating those two is the
+    // distortion T-099 paid for.
+    const unbanded = read(null);
+    expect(unbanded.curvedQ).toBeGreaterThanOrEqual(250);
+    expect(unbanded.formQ).toBe(1000);
+    expect(unbanded.codes).toEqual([]);
+    // **And the defect, at both rows.** Two rows rather than one, because "caught at y=40" alone
+    // would pass on the old quantity too — it was caught at y=34. What T-101 bought is that the GATE
+    // no longer depends on the row, so both are asserted and the two readings are compared. Under
+    // T-100 this pair read 260 and 248: twelve apart, straddling the threshold, which is the failure.
+    const at34 = read(34);
+    const at40 = read(40);
+    for (const band of [at34, at40]) {
+      expect(band.curvedQ, 'the gate must open on a straight cut through a curved form').toBeGreaterThanOrEqual(250);
+      expect(band.formQ, 'the form half must be measured, not excused as unmeasurable').not.toBeNull();
+      expect(band.bendQ, 'a straight cut does not turn').toBe(0);
+    }
+    expect(Math.abs(at34.curvedQ - at40.curvedQ)).toBeLessThan(250);
+    //
+    // **The code fires at y=40 and not at y=34, and that difference is `splitQ` doing its job — not a
+    // hole, so it is asserted rather than wished away.** `crossesQ` is `splitQ` here exactly, because
+    // `bendQ` is 0, so the only thing standing between a straight cut and a reported defect is §4.2's
+    // "is this plane a cut through the form or a sliver against it". At y=40 the band has the dome
+    // roughly 700px above and 810 below against its own 640, and it reads `splitQ` 676 — past §4.2's
+    // 600 floor, so `formQ` 350 and `plane-crosses-form` at 0.30. At y=34 two thirds of the dome is
+    // below the band, `splitQ` is 501, and §4.2's table puts that in the `<= 600` band at `formQ` 550
+    // with no issue: a milder cut, scored as a milder cut. **T-101 is about the gate and this is about
+    // the multiplier, and conflating them is how the first version of this test came to assert a code
+    // that the specification does not promise.**
+    expect(at40.codes).toContain('plane-crosses-form');
+    expect(at40.formQ).toBe(350);
+    expect(at40.splitQ).toBeGreaterThan(600);
+    expect(at34.codes).toEqual([]);
+    expect(at34.formQ).toBe(550);
+    expect(at34.splitQ!).toBeLessThanOrEqual(600);
   });
 
   it('keeps the two real subjects measurable, and records them as a drift baseline', () => {

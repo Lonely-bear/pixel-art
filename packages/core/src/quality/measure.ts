@@ -415,6 +415,35 @@ export function staircaseCornerWhere(
  * depend on how many boundary pixels a region happens to have, which is a property of its size
  * rather than of its shape. A 3px band on 32x32 and the same band on 4096x4096 are both straight,
  * and both read 0.
+ *
+ * ## T-101: the plane's own boundary is excluded, and this is the measurement that forced it
+ *
+ * The first version counted a region's WHOLE boundary, and the terminator being judged was inside it.
+ * That is conservative — including the plane can only dilute the ratio, never manufacture curvature —
+ * and it fails toward "cannot measure", which is the right direction. It is also, measured, **not
+ * enough**, and the way it failed is worth recording because a reader would not predict it.
+ *
+ * A straight band across a dome reads `curvedQ` 260 at y=34 and **248** at y=40, against a gate of
+ * 250. The dome does not change; the band moves. The reason is that the band's own region is a
+ * perfect rectangle and reads 0, while the dome region it cuts has a boundary made of an arc *plus*
+ * the straight cut, and the corners all come from the arc. Where the band crosses a **wide** part of
+ * the dome the arc outnumbers the cut and the reading clears; where it crosses a **narrow** part near
+ * the frame the cut outnumbers the arc and it does not. So whether a straight cut is *caught* came
+ * to depend on where it happened to land — which is not a gate, it is a coin toss.
+ *
+ * **The fix is to stop asking about the region and start asking about the region MINUS this
+ * neighbour.** {@link planeCurvedQ} excludes, from region `a`'s boundary, exactly the pixels whose
+ * outward 4-neighbour is region `b`, and returns the density of what is left: the form the plane
+ * cuts, without the plane. Three consequences, and the first is why it is worth doing at all:
+ *
+ *   - The straight cut no longer dilutes the arc, so a wide part and a narrow part of the same dome
+ *     read alike and the answer stops depending on where the band was drawn.
+ *   - A region whose ONLY boundary is the plane — a single band in a two-tone gradient — has nothing
+ *     left and reads **0**, which is still "cannot measure" and still fails toward it. Removing the
+ *     dilution did not invent a way to be confident.
+ *   - It is **per region pair, not per plane**, so it is one pass over the canvas rather than one
+ *     full-boundary rescan per terminator. `artwork/sunset-lighthouse-512.pixel` has 1008 terminators;
+ *     the per-plane reading of this would be quadratic in the thing being measured.
  */
 export function regionCurvedQ(
   regionId: Int32Array,
@@ -451,6 +480,136 @@ export function regionCurvedQ(
   }
   for (let r = 0; r < regionCount; r++) curved[r] = rhu(corners[r] * 1000, boundary[r] + 1);
   return curved;
+}
+
+/**
+ * The key a region pair is stored under, and the one place that packing is defined.
+ *
+ * §3.3's rule is that a quantity has one definition, and the pair key is part of
+ * {@link planeCurvedQ}'s definition: if `value.ts` packed a pair its own way and the two ever
+ * disagreed, every plane would read a neighbour's curvature and nothing would look wrong. The
+ * arithmetic is `lo * regionCount + hi` with `lo < hi`, so the map is iterated in a property of the
+ * scan rather than of a hash table (§3.2 rule 4), exactly as `findTerminators` already requires of
+ * its own contacts.
+ */
+export function regionPairKey(regionCount: number, a: number, b: number): number {
+  return a < b ? a * regionCount + b : b * regionCount + a;
+}
+
+/** One side's reading for one pair: the region's boundary with this neighbour taken out. */
+export interface PlaneSideCurvature {
+  /** `rhu(cornersLeft * 1000, boundaryLeft + 1)` over the boundary that is left. */
+  readonly curvedQ: number;
+  /** Boundary pixels excluded, i.e. the ones against this neighbour — the plane itself. */
+  readonly excluded: number;
+  /** How many of the excluded were staircase corners, which a straight cut contributes none of. */
+  readonly excludedCorners: number;
+}
+
+/** Both sides of one pair, keyed by {@link regionPairKey}. */
+export type PlaneCurvatureTable = ReadonlyMap<number, readonly [PlaneSideCurvature, PlaneSideCurvature]>;
+
+/**
+ * §4.2's curvature reference with **this plane's own boundary removed**, per region pair.
+ *
+ * This is what the gate reads. {@link regionCurvedQ} is the whole-boundary reading and is kept
+ * because it is the honest standalone number — "how curved is this tone region" — and because the
+ * corpus prints both, so the effect of the exclusion is visible in a committed file rather than
+ * asserted here. The two are different quantities with different definitions, not two names for one
+ * thing, which is the same distinction `convexCorner` already draws in `DECLARED_QUANTITIES`.
+ *
+ * **A pixel is excluded from side `a` exactly when one of its four orthogonal neighbours is in `b`.**
+ * Transparent neighbours and off-canvas neighbours are NOT excluded: a region's edge against the
+ * background is the form's own outline, which is the thing being asked about. A pixel with two
+ * different outside neighbours is counted once in each pair, which is correct — it is on the boundary
+ * of both planes, and removing it from one does not remove it from the other.
+ *
+ * **Deterministic and one pass**, as §3.3 requires: integer arithmetic, no floating point, no
+ * iteration over a hash table for anything that reaches output, and the totals per region are
+ * accumulated before the division so that every pair is answered with the same integer rounding.
+ */
+export function planeCurvedQ(
+  regionId: Int32Array,
+  regionCount: number,
+  width: number,
+  height: number,
+): PlaneCurvatureTable {
+  const boundary = new Int32Array(regionCount);
+  const corners = new Int32Array(regionCount);
+  // **The counters are keyed by the ORDERED pair**, and that is the whole correctness of this
+  // function. "How much of `a`'s boundary is against `b`" and "how much of `b`'s boundary is against
+  // `a`" are different numbers, so a single counter per unordered pair double-counts and a side can
+  // end up subtracting more boundary than it has — which produced a density of 7385 on a
+  // hand-built dome, an impossibility the corpus assertion caught on its first run. The first
+  // version of this code carried a comment saying exactly that and then keyed an unordered Map.
+  const cut = new Map<number, number>();
+  const cutCorners = new Map<number, number>();
+
+  let current = -1;
+  const member = (q: number) => regionId[q] === current;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const p = y * width + x;
+      const r = regionId[p];
+      if (r < 0) continue;
+      const isEdge = x === 0 || x === width - 1 || y === 0 || y === height - 1;
+      const left = x > 0 ? regionId[p - 1] : -1;
+      const right = x < width - 1 ? regionId[p + 1] : -1;
+      const up = y > 0 ? regionId[p - width] : -1;
+      const down = y < height - 1 ? regionId[p + width] : -1;
+      const isBoundary = isEdge || left !== r || right !== r || up !== r || down !== r;
+      if (!isBoundary) continue;
+      boundary[r]++;
+      current = r;
+      const isCorner = staircaseCornerWhere(member, width, height, x, y);
+      if (isCorner) corners[r]++;
+      // Every **distinct** region this pixel touches from the outside, so a pixel on the boundary of
+      // two planes is excluded from both rather than only from the first one found — and, equally
+      // importantly, a pixel with two neighbours in the *same* region is counted once. Without the
+      // dedupe below, a one-pixel-wide neck between two lobes of the same neighbour is counted
+      // twice, `cut` exceeds `boundary`, and the density divides by zero: measured as `NaN` on
+      // `artwork/sunset-lighthouse-512.pixel` before the set was introduced.
+      for (let i = 0; i < 4; i++) {
+        const n = i === 0 ? left : i === 1 ? right : i === 2 ? up : down;
+        if (n < 0 || n === r) continue;
+        if (i > 0 && (n === left || n === right || n === up)) continue;
+        const ordered = r * regionCount + n;
+        cut.set(ordered, (cut.get(ordered) ?? 0) + 1);
+        if (isCorner) cutCorners.set(ordered, (cutCorners.get(ordered) ?? 0) + 1);
+      }
+    }
+  }
+
+  // Read out per unordered pair, because that is what a plane is keyed by: one entry carrying both
+  // sides, so the two directions cannot be confused at the call site either.
+  const seen = new Set<number>();
+  const table = new Map<number, readonly [PlaneSideCurvature, PlaneSideCurvature]>();
+  for (const ordered of [...cut.keys()].sort((a, b) => a - b)) {
+    const r = Math.floor(ordered / regionCount);
+    const n = ordered - r * regionCount;
+    const key = regionPairKey(regionCount, r, n);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const lo = Math.min(r, n);
+    const hi = Math.max(r, n);
+    const loCut = cut.get(lo * regionCount + hi) ?? 0;
+    const hiCut = cut.get(hi * regionCount + lo) ?? 0;
+    const loCutCorners = cutCorners.get(lo * regionCount + hi) ?? 0;
+    const hiCutCorners = cutCorners.get(hi * regionCount + lo) ?? 0;
+    table.set(key, [
+      {
+        curvedQ: rhu((corners[lo] - loCutCorners) * 1000, boundary[lo] - loCut + 1),
+        excluded: loCut,
+        excludedCorners: loCutCorners,
+      },
+      {
+        curvedQ: rhu((corners[hi] - hiCutCorners) * 1000, boundary[hi] - hiCut + 1),
+        excluded: hiCut,
+        excludedCorners: hiCutCorners,
+      },
+    ]);
+  }
+  return table;
 }
 
 

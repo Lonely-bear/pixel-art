@@ -196,7 +196,8 @@ name appears here, no dimension may define its own version of it.
 | `dist(p)` | For a solid `p`, the Chebyshev distance to the nearest non-solid pixel or to the canvas edge. `0` on an `edgePixel`. |
 | `Dmax` | `max` of `dist` over all solid pixels — the subject's half-thickness. |
 | `convexCorner(p)` | `p` is solid, exactly 2 of its 4 orthogonal neighbours are solid, those 2 are **adjacent** (one horizontal, one vertical), and the diagonal pixel between them is transparent. |
-| `regionCurvedQ(r)` | For a tone region `r`: `rhu(stairCorners(r) * 1000, boundary(r) + 1)`, where `boundary(r)` counts the pixels of `r` with at least one 4-neighbour outside `r` — a different region, transparent, or off the canvas — and `stairCorners(r)` is how many of those are a **convex staircase corner of `r`**. See below. |
+| `regionCurvedQ(r)` | For a tone region `r`: `rhu(stairCorners(r) * 1000, boundary(r) + 1)`, where `boundary(r)` counts the pixels of `r` with at least one 4-neighbour outside `r` — a different region, transparent, or off the canvas — and `stairCorners(r)` is how many of those are a **convex staircase corner of `r`**. The whole boundary, including whatever the region happens to be touching. See below. |
+| `planeCurvedQ(a,b)` | The same density for region `a` with **region `b` taken out**: `rhu(corners(a\b) * 1000, boundary(a\b) + 1)`, where `boundary(a\b)` is the boundary of `a` minus every pixel of it that has a 4-neighbour in `b`. This is what §4.2's gate reads. See below. |
 | `toneEdge(p)` | `p` is solid and at least one solid 4-neighbour `n` has a different `LqBucket` (§3.4). |
 | `ditherMask` | Per-pixel flag: `p` is in a region of high-frequency alternation between two adjacent tone buckets. See below. |
 
@@ -247,13 +248,42 @@ band on 4096² are both straight, and both read 0. **A density is also what make
 safe to take as a maximum**: it is bounded by 1000 like the reading it is combined with, so it can
 raise a gate and never invert one.
 
-**The plane being judged is left inside its own region's boundary count.** Subtracting it would be
-more precise and is not done, because a region's boundary always *contains* the terminator, so
-including it can only dilute the ratio and can never manufacture curvature the form does not have.
-The gate therefore keeps failing toward "cannot measure" — the direction every gate in this document
-is built to fail in — and a region whose only boundary is the plane reads 0 rather than a confident
-non-zero. It is also what keeps the quantity to one pass over the canvas: excluding the plane makes
-the ratio per-terminator, and a 512² scene in this repository carries 1008 terminators.
+**The first version left the plane inside its own region's boundary count, and T-101 reversed that
+decision on a measurement.** The reasoning was sound and is worth keeping as the shape of the
+argument: a region's boundary always *contains* the terminator, so including it can only dilute the
+ratio and can never manufacture curvature the form does not have, which keeps the gate failing
+toward "cannot measure" — the direction every gate in this document is built to fail in — and it
+keeps the quantity to one pass over the canvas rather than one per terminator, and a 512² scene in
+this repository carries 1008 terminators.
+
+**It was not enough, and the way it failed is not something the argument above predicts.** A straight
+band drawn across a curved dome read `curvedQ` **260** at y=34 and **248** at y=40, against a gate
+of 250. The dome did not change; the band moved. The band's own region is a perfect rectangle and
+reads 0, while the dome region it cuts has a boundary made of an arc *plus* the straight cut, and
+all of the corners come from the arc — so the cut sits in the denominator diluting the thing being
+asked about. Where the band crossed a **wide** part of the dome the arc outnumbered the cut and the
+reading cleared; where it crossed a **narrow** part near the frame the cut outnumbered the arc and it
+did not. **Whether a straight cut was caught came to depend on where it had been drawn, which is not
+a gate, it is a coin toss.**
+
+**So `planeCurvedQ` asks about the region MINUS this neighbour** — the form the plane cuts, without
+the plane — and the direction of the two refusals above survives the change, which is the test of
+whether they were sound. It still cannot manufacture confidence: a region whose **only** boundary is
+the plane is left with nothing and reads **0**, which is still "cannot measure". And it is still one
+pass over the canvas, because the exclusion is per region **pair** and not per terminator: a 512²
+scene's 1008 terminators read it in O(1) each out of a table built in one scan.
+
+**The counters are keyed by the ordered pair, and that is the whole correctness of the function.**
+"How much of `a`'s boundary is against `b`" and "how much of `b`'s boundary is against `a`" are
+different numbers. The first implementation keyed a single `Map` per *unordered* pair and both sides
+subtracted the same total, which double-counted and produced a density of **7385** on a hand-built
+dome — an impossibility, since a density cannot exceed 1000, caught by the corpus assertion on its
+first run. Two further details are load-bearing and were also found by measurement rather than by
+reading: a pixel with two neighbours in the **same** region must be counted once or `cut` exceeds
+`boundary` and the density divides by zero (`NaN` on `artwork/sunset-lighthouse-512.pixel`); and a
+pixel is excluded from a side only when the neighbour is a real region — **not** when it is
+transparent or off-canvas, because a region's edge against the background is the form's own outline,
+which is the thing being asked about.
 
 **The staircase predicate has one definition and two call shapes.** `regionCurvedQ` asks
 "is this neighbour in *this* region", which is a labelled subset of the canvas rather than a mask, so
@@ -264,22 +294,26 @@ differs by one quadrant.
 **What it discriminates, measured.** A straight-edged box is a stack of horizontal bands, so every
 band's boundary is two straight runs and the density is low — `value/hard-surface-terminator-32`
 reads **93** against a gate of 250 and keeps §4.2's exemption for "a straight plane across a
-straight-edged form is correct, not wrong". A dome is nested ellipses, so every crescent's boundary
-is an arc — `value/terrain-following-terminator-64` reads **422** and is judged. On the same two
-documents the silhouette reading is 65 and 0, which is the measurement that says the new reference is
-what moved. The ten real scenes now read **667..880**.
+straight-edged form is correct, not wrong", and **T-101 did not move it by a single unit**, which is
+the check that matters: excluding the band between two bands of a box leaves straight runs on both
+sides, so there was nothing there to recover. A dome is nested ellipses, so every crescent's boundary
+is an arc — `value/terrain-following-terminator-64` reads **426** and is judged, and comes back clean
+at `crossesQ` 0. On the same two documents the silhouette reading is 65 and 0, which is the
+measurement that says the new reference is what moved. The ten real scenes read **667..880**.
 
-**A recorded limitation, because a corpus case cannot hold it.** Whether a straight cut is *caught*
-turns out to depend on which tone region it happens to cross. The same band, the same dome, the same
-five swatches, moved from y=34 to y=40: `curvedQ` **260** at one and **248** at the other, against a
-gate of 250. The band is a perfect rectangle whose own boundary contributes boundary pixels and no
-corners, while the dome region it cuts contributes corners along the arc and none along the straight
-cut; where the band crosses a wide part of the dome the arc dominates and the reading clears, and
-where it crosses a narrow part near the frame the straight cut dominates and it does not. The fix
-direction is to exclude the plane's own boundary from the ratio rather than leave it to dilute, at the
-cost of making the quantity per-termin instead of per-region; that is a design change with its own
-measurements, and **lowering the gate is not it** — that would admit `value/hard-surface-terminator-32`
-at 93 by another route and re-open the question §6 settled.
+**And the pair that separated 260 from 248 now reads 333 and 420**, both clear of the gate, which is
+the property T-101 bought. See §4.2 for what that does and does not fix.
+
+**What is still not fixed, and it is a different quantity.** With the gate no longer position-
+dependent, `value/straight-band-over-terrain-64` is caught — and `crossesQ` there is *exactly* `splitQ`,
+because `bendQ` is 0 and `bendQ` is the only thing that could have damped it. So whether a straight
+cut is **reported** now depends on §4.2's multiplier rather than on this gate: the same band at y=40
+reads `splitQ` 676 and fires `plane-crosses-form`, and at y=34 it reads 501, lands in §4.2's `<= 600`
+band at `formQ` 550, and reports nothing. That is §4.2 working — `splitQ` exists so a crescent against
+a fat field is not read as a cut through the body, and a band that leaves two thirds of the dome below
+it is not bisecting the form — so it is asserted in the corpus rather than wished away.
+**Lowering `CURVATURE_GATE` is still not a fix for anything**: it would admit
+`value/hard-surface-terminator-32` at 93 by another route and re-open the question §6 settled.
 
 #### `dist` and `Dmax`
 
@@ -736,7 +770,7 @@ for each plane P:
 
     splitQ      rhu(min(areaA, areaB) * 1000, max(areaA, areaB))
     reachQ      rhu(min(extent(P), bodyExtent) * 1000, bodyExtent)
-    curvedQ     max of the two curvature references; see below
+    curvedQ     max of the three curvature references; see below
 
     crossesQ = (curvedQ < 250 || reachQ < 500) ? 0
              : rhu((1000 - bendQ) * splitQ, 1000)        // higher is worse
@@ -744,10 +778,41 @@ for each plane P:
 formQ = band( max over planes of crossesQ )              // the WORST plane
 ```
 
-**`curvedQ` is the maximum of two references, and the second one is not optional.** The first is
-the one this subsection originally specified: staircase corners on the subject's own silhouette
-within Chebyshev 3 of the plane, scaled by the silhouette edge pixels in the same neighbourhood.
-The second is §3.3's `regionCurvedQ`, read on the two tone regions the plane separates.
+**`curvedQ` is the maximum of three references, and the second and third are not optional.** The
+first is the one this subsection originally specified: staircase corners on the subject's own
+silhouette within Chebyshev 3 of the plane, scaled by the silhouette edge pixels in the same
+neighbourhood. The second is §3.3's `regionCurvedQ` over the two tone regions the plane separates,
+whole boundary. The third is §3.3's `planeCurvedQ`, which is the same density with **the plane's own
+boundary removed**, and it is the one that decides.
+
+**Why three, and why the third had to exist.** The first is inert on a full-bleed document, because a
+full-bleed subject's outline is the frame: it read 0..77 on all ten committed scenes against a gate
+of 250. The second fixed that, and the ten scenes went to 667..880. But the second still let the
+plane sit in the denominator of the reading, and a straight band across a dome read **260** at y=34
+and **248** at y=40 — caught at one row, excused at the other, for no reason a person could act on.
+Whether a defect was caught depended on where it had been drawn. Removing the plane from its own
+region's boundary makes both rows clear the gate, and `value/straight-band-over-terrain-64` is the
+positive half of that pair.
+
+**A maximum, and it promises less than it first appears to.** A maximum can only make the gate
+*more* permissive, never less, and that has one precise consequence: **every plane already judged
+before is still judged, with an identical `bendQ` and `splitQ`, so every score derived from it is
+unchanged.** That is what the max buys, and it is a real guarantee. The stronger and vaguer claim
+that "nothing with a readable outline moves" is **false** and was measured to be so during
+acceptance: adding the second reference changed `curvedQ max` on **32 of 59** rows while moving no
+score at all. Adding the third moved `gated` on 8 rows and `curvedQ max` on 4, again with **no score
+moving anywhere** — nine more planes became judged on the committed artwork and every one of them
+came back clean, which is the *reason* improving rather than the number.
+
+**And what no score moving does not mean.** It means nothing in this corpus got worse. It is not
+evidence that the committed artwork has no defects, because the corpus cannot see a defect the gate
+still declines to open on, and §6's human-rated tier is the only instrument that could say. Nine
+more judged planes reading clean is a weaker claim than it looks, and it is recorded that way.
+
+The full-bleed scenes are where the capability was actually missing: they go from 0..77 to 667..880
+through this line, three of them acquire a measured `formQ` of 1000 that they previously reported as
+`unmeasured`, and `value/hard-surface-terminator-32` — the box, the gate's own negative control —
+stays at 93 through both additions and keeps its exemption.
 
 **A maximum, and it promises less than it first appears to.** A maximum can only make the gate
 *more* permissive, never less, and that has one precise consequence worth stating: **every plane
@@ -2087,13 +2152,18 @@ a fragment rather than crossing the body is a different question from one that d
 form, and §4.2 gates it on purpose. `sunset-lighthouse-512.pixel` has 1008 terminators and every one
 of them is gated. That is the next coverage gap and it is a separate piece of work.
 
-**And the new reference has a measured limitation of its own, recorded in §3.3 rather than tuned
-away:** whether a straight cut is *caught* depends on which tone region it crosses. The same band
-over the same dome reads `curvedQ` 260 in one position and 248 in another, against a gate of 250. So
-a straight shadow band across a curved mountain is now *judged* where the reference reads high, and
-still excused where it reads low — the honesty is fixed everywhere and the coverage is not. Lowering
-`CURVATURE_GATE` is not the fix and §3.3 says why; the fix is to stop the plane's own boundary from
-diluting the ratio, which makes the quantity per-terminator and needs its own measurements.
+**The curvature half of that gap is now closed.** T-101 added §3.3's `planeCurvedQ`, which reads a
+region's curvature with the plane's own boundary removed, and the pair that read 260 against 248 —
+caught at one row and excused at another — now reads 333 against 420, both clear of the gate. The
+straight-band case is in the corpus and reports `plane-crosses-form`. Lowering `CURVATURE_GATE` was
+never the fix and §3.3 still says why: the box is at 93 and would have been admitted by another route.
+
+**Two gaps remain, and neither is curvature.** The first is `splitQ`: `crossesQ` is exactly `splitQ`
+whenever `bendQ` is 0, so a straight cut is *reported* only when §4.2 also judges it to bisect the
+form — which is the multiplier doing its documented job, not a hole, and it is why the corpus case
+puts its band at the dome's middle rather than at an arbitrary row. The second is `reachQ`, which is
+where the remaining seven full-bleed scenes are stuck: `sunset-lighthouse-512.pixel` has 1008
+terminators and all of them are gated.
 
 The two real *subjects* in the corpus are not in this state: both have an outline, both have their
 planes gated by `reachQ` as fragments, and both report a measured `formQ` 1000.

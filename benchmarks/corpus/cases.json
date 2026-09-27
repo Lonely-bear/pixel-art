@@ -8003,6 +8003,119 @@
             "silhouette": "no-subject"
           }
         }
-    }
+      },
+      {
+        "id": "value/straight-band-over-terrain-64",
+        "label": "The same full-bleed dome with a straight horizontal shadow band laid across its middle: a terminator that ignores the form it cuts",
+        "tier": "synthetic",
+        "provenance": "generated",
+        "pair": [
+          "value/full-bleed-form"
+        ],
+        "defects": [
+          {
+            "kind": "plane-crosses-form",
+            "note": "The positive half of T-100's pair and of T-101's reason for existing, and the case the corpus could not hold until T-101 landed. Identical canvas, identical dome, identical five swatches to `value/terrain-following-terminator-64`; the one changed property is a 10px band at y=40 laid across the lit face instead of four crescents concentric with the dome. By hand from §4.2: the band is 10 rows of solid ink, so it is an area and not a dither artefact; the line at y=40 walks one direction only, so `dirQ` is 0 and `surplusQ` is 0 and `bendQ` is 0, which is the reading of a boundary that does not turn; and `crossesQ` is then exactly `splitQ`, because `bendQ` is the only thing that could have damped it. THE BAND IS AT THE DOME'S MIDDLE ON PURPOSE, and that is measured rather than decorative. `splitQ` is §4.2's only multiplier, so a straight cut that does not halve the form is damped toward 0 on purpose — that is the clause which makes a crescent safe. At y=34 two thirds of the dome is below the band, `splitQ` reads 501, and §4.2's table puts that in the `<= 600` band at `formQ` 550 with NO issue: a milder cut, scored as a milder cut. At y=40 the dome is roughly 700px above the band and 810 below against the band's 640, `splitQ` reads 676, past the 600 floor, and the code fires. Both rows are the same defect drawn with the same intent; the one that reports it is the one that actually bisects the form. Before T-100 §4.2 could not report this at all: the curvature gate read its curvature off the subject's own outline, which on a full-bleed document IS the canvas frame, so `curvedQ` was 0 against a gate of 250, every plane was exempt, and the dimension returned `unmeasured: { form: 'no-subject' }` over a straight cut through a curved form. Before T-101 it could report it at one row and not at another — 260 at y=34, 248 at y=40 — because the band's own straight cut sat in the denominator of the arc it crossed, so whether a defect was caught depended on where it had been drawn. That is not a gate, it is a coin toss."
+          }
+        ],
+        "recipe": {
+          "canvas": {
+            "w": 64,
+            "h": 64
+          },
+          "layers": [
+            "Base"
+          ],
+          "palette": [
+            "#93c0dc",
+            "#4a7ba6",
+            "#35618c",
+            "#274a70",
+            "#1b3a5c"
+          ],
+          "ops": [
+            {
+              "op": "rect",
+              "layer": "Base",
+              "rect": [
+                0,
+                0,
+                64,
+                64
+              ],
+              "color": "pal:0",
+              "fill": true
+            },
+            {
+              "op": "ellipse",
+              "layer": "Base",
+              "rect": [
+                0,
+                26,
+                64,
+                80
+              ],
+              "color": "pal:4",
+              "fill": true
+            },
+            {
+              "op": "ellipse",
+              "layer": "Base",
+              "rect": [
+                0,
+                22,
+                64,
+                80
+              ],
+              "color": "pal:3",
+              "fill": true
+            },
+            {
+              "op": "ellipse",
+              "layer": "Base",
+              "rect": [
+                0,
+                18,
+                64,
+                80
+              ],
+              "color": "pal:2",
+              "fill": true
+            },
+            {
+              "op": "ellipse",
+              "layer": "Base",
+              "rect": [
+                0,
+                14,
+                64,
+                80
+              ],
+              "color": "pal:1",
+              "fill": true
+            },
+            {
+              "op": "rect",
+              "layer": "Base",
+              "rect": [
+                0,
+                40,
+                64,
+                10
+              ],
+              "color": "pal:0",
+              "fill": true
+            }
+          ]
+        },
+        "expect": {
+          "codes": [
+            "plane-crosses-form"
+          ],
+          "preconditions": {
+            "silhouette": "no-subject"
+          }
+        }
+      }
   ]
 }

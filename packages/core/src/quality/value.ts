@@ -8,8 +8,12 @@ import {
   edgePixelAt,
   lqBucketOf,
   lqOf,
+  planeCurvedQ,
   regionCurvedQ,
+  regionPairKey,
   rhu,
+  type PlaneCurvatureTable,
+  type PlaneSideCurvature,
   SUBJECT_REQUIRED_MARGIN,
 } from './measure.js';
 import type {
@@ -536,10 +540,11 @@ function measureFrame(context: QualityContext, index: number): ValueFrame {
   const planes = regions.filter((region) => region.thickness >= 3).length;
   const bodyExtent = Math.max(maxX - minX + 1, maxY - minY + 1);
   // One pass, before the terminators are described rather than inside their loop: the quantity is
-  // per region and a 512x512 scene in this repository carries 2971 terminators over a few hundred
-  // regions, so computing it per terminator would be quadratic in the thing being measured.
+  // per region PAIR and a 512x512 scene in this repository carries 1008 terminators over a few
+  // hundred regions, so computing it per terminator would be quadratic in the thing being measured.
   const regionCurved = regionCurvedQ(regionId, regions.length, width, height);
-  const terminators = findTerminators(cel, mask, width, height, regions, regionId, regionCurved, dist, Dmax, bodyExtent);
+  const planeCurved = planeCurvedQ(regionId, regions.length, width, height);
+  const terminators = findTerminators(cel, mask, width, height, regions, regionId, regionCurved, planeCurved, dist, Dmax, bodyExtent);
   // Worst plane, not the mean: the defect is one plane in the wrong place, and a mean is allowed
   // to hide it behind four well-formed crescents. **Among the judged planes only** — a gated plane
   // carries a `crossesQ` of 0 that means "not asked", and letting those compete for the title of
@@ -963,6 +968,7 @@ function findTerminators(
   regions: readonly ToneRegion[],
   regionId: Int32Array,
   regionCurved: Int32Array,
+  planeCurved: PlaneCurvatureTable,
   dist: Int32Array,
   Dmax: number,
   bodyExtent: number,
@@ -1028,7 +1034,8 @@ function findTerminators(
       }
       if (component.length < MIN_TERMINATOR) continue;
       component.sort((a, b) => a - b);
-      out.push(describeTerminator(component, [lo, hi], regions, regionCurved, mask, width, height, dist, Dmax, bodyExtent));
+      const pairKey = regionPairKey(regions.length, lo, hi);
+      out.push(describeTerminator(component, [lo, hi], regions, regionCurved, planeCurved.get(pairKey) ?? null, mask, width, height, dist, Dmax, bodyExtent));
     }
   }
   return out;
@@ -1040,6 +1047,7 @@ function describeTerminator(
   pair: readonly [number, number],
   regions: readonly ToneRegion[],
   regionCurved: Int32Array,
+  pairCurved: readonly [PlaneSideCurvature, PlaneSideCurvature] | null,
   mask: Uint8Array,
   width: number,
   height: number,
@@ -1122,27 +1130,35 @@ function describeTerminator(
   const reachQ = rhu(Math.min(extent, bodyExtent) * 1000, bodyExtent);
   const { edgeN, corners } = curvatureNear(pixels, mask, width, height);
   const silhouetteCurvedQ = rhu(corners * 1000, edgeN + 1);
-  // §4.2's curvature gate has **two** references and takes the larger, and the second one exists
-  // because the first is inert on a full-bleed document: a full-bleed subject's silhouette IS the
-  // canvas rectangle, so `silhouetteCurvedQ` reads 0..77 against a gate of 250 on all ten committed
-  // scenes and every plane in the picture is exempt. `regionCurvedQ` asks the same question — "is
-  // the form straight-edged or curved?" — of the tone regions' own boundaries, which is the only
-  // curvature available on a subject that has no outline. See `measure.ts`.
+  // §4.2's curvature gate has **three** references and takes the largest, and the second and third
+  // exist because the first is inert on a full-bleed document: a full-bleed subject's silhouette IS
+  // the canvas rectangle, so `silhouetteCurvedQ` reads 0..77 against a gate of 250 on all ten
+  // committed scenes and every plane in the picture is exempt. The other two read the curvature off
+  // the shape of the tone regions, which is the only curvature available on a subject with no
+  // outline. See `measure.ts` for each one's definition and for the measurement that decided it.
   //
-  // **What taking the maximum does and does not promise, stated precisely because the loose version
-  // of this claim was wrong once.** It promises that a plane already judged before is still judged,
-  // with an identical `bendQ` and `splitQ`, so its `crossesQ` and every score derived from it are
-  // unchanged: across the whole corpus no `value`, `formQ` or `crossesQ` moved for any subject with
-  // a readable outline. It does **not** promise that such a subject is untouched. A maximum can only
-  // make the gate more permissive, never less, so planes that were previously exempt on curvature
-  // are now judged, and the reading itself moves on most rows — measured: `curvedQ max` changed on
-  // 32 of 59 rows, `lantern-keeper` went 500 -> 750 and `1 curvature, 4 reach` -> `0 curvature,
-  // 5 reach`, and twenty `sweep/rect-*` rows went from 0 to 48..114. In every one of those the
-  // score is identical, and in most the reason improved: a plane that used to be "not asked" is now
-  // examined and comes back clean. A max is what buys that without disturbing a single score; it is
-  // not, and was never, a claim that the pipeline behaves as before on sprites.
+  // **`planeCurvedQ` is the one the gate trusts, and `regionCurvedQ` is kept beside it as the
+  // uncorrected whole-boundary reading.** The difference is T-101's: a straight band across a dome
+  // read 260 at one row and 248 at another, purely because the band's own straight cut was
+  // diluting the arc it crossed, so whether a defect was caught depended on where it had been drawn.
+  // Excluding the plane's own boundary makes a wide part and a narrow part of the same form read
+  // alike. It cannot manufacture confidence, because a region whose ONLY boundary is the plane is
+  // left with nothing and reads 0 — still "cannot measure", still failing toward it.
   const regionReadingQ = Math.max(regionCurved[pair[0]], regionCurved[pair[1]]);
-  const curvedQ = Math.max(silhouetteCurvedQ, regionReadingQ);
+  const planeReadingQ = pairCurved === null ? 0 : Math.max(pairCurved[0].curvedQ, pairCurved[1].curvedQ);
+  const curvedQ = Math.max(silhouetteCurvedQ, regionReadingQ, planeReadingQ);
+  //
+  // **What taking a maximum does and does not promise, kept because the loose version of this claim
+  // was written once and measured to be false.** A maximum can only make the gate *more* permissive,
+  // never less, so a plane already judged keeps an identical `bendQ` and `splitQ` and therefore an
+  // identical `crossesQ`: across the corpus no `value`, `formQ` or `crossesQ` moved for any subject
+  // with a readable outline when the first of these three references was added. What it does **not**
+  // promise is that such a subject is untouched. `curvedQ max` moved on 32 of 59 rows, `lantern-keeper`
+  // went 500 → 750 and `1 curvature, 4 reach` → `0 curvature, 5 reach`, and twenty `sweep/rect-*` rows
+  // went from 0 to 48..114 — every score identical, and in most the *reason* improved, because a plane
+  // that used to be "not asked" is now examined and comes back clean. A maximum buys that without
+  // disturbing a single score. It is not, and was never, a claim that the pipeline behaves as before
+  // on sprites, and anyone extending this line must not write that claim.
   // Three gates, each earning its place on a measurement, and all three failing toward "cannot
   // measure". `curvedQ`: a straight plane across a straight-edged form is correct. `reachQ`: a
   // boundary that does not cross the body is a fragment, not a cross-section. `splitQ` is the
