@@ -361,6 +361,173 @@ export function staircaseCornerWhere(
   return false;
 }
 
+/** How many `LqBucket`s exist: `1 << LQ_BUCKET_SHIFT`, which is 16 for the shipped shift of 4. */
+export const LQ_BUCKETS = 1 << LQ_BUCKET_SHIFT;
+
+/** §3.3's `|R| >= 8`: a component smaller than this cannot be an alternation, it is a stray. */
+export const DITHER_MIN_REGION = 8;
+
+/** §3.3's `400/1000`: the share of a component that must have an opposite-bucket 8-neighbour. */
+export const DITHER_ALTERNATION_MIN = 400;
+
+/** The four orthogonal offsets, precomputed rather than built inside the flood fill. */
+const DITHER_ORTHO: readonly (readonly [number, number])[] = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+];
+
+/**
+ * §3.3's `ditherMask`: the pixels that belong to a dither region, and its share of the solid mask.
+ *
+ * ## What dither is here, because the first attempt defined it as a lattice and was blind
+ *
+ * Dither is **periodic alternation between two adjacent ramp steps over an area**, and that is the
+ * whole definition. §4.4's first exclusion for it tested `ditherCell` — all four orthogonal
+ * neighbours transparent, all four diagonals solid — which is the exact signature of a *perfect
+ * axis-aligned 50% checkerboard* and nothing else. Measured against a sprite with three clearly
+ * visible `bayer4` seams it reported `ditherShare` **0.0000**: on a diagonal terminator or an arc the
+ * lattice and the boundary fight each other, and the one check designed to catch "mostly 1px dither"
+ * was blind to exactly the dither an agent produces. **Three properties replace it, and each is a
+ * deliberate rejection of something simpler:**
+ *
+ *   - **Orientation-free.** A 50% checker, a `bayer4` field, a `sparse` field and a hand-drawn 2px
+ *     cluster pattern all satisfy it, on an axis or on an arc. Nothing in the predicate knows what a
+ *     Bayer matrix is.
+ *   - **Scale-free.** It counts the *bucket pair*, so `cluster2` at the same coverage is detected
+ *     exactly like a 1px pattern at the same coverage. It cannot tell them apart, and §4.4 says what
+ *     follows from that.
+ *   - **The alternation clause is the only thing doing the discrimination.** Without it, a gold-to-green
+ *     boundary is a connected set of two adjacent buckets and would be counted. With it, the interior
+ *     of the gold field has no other-bucket 8-neighbour, the gold/green component fails the 400/1000
+ *     test, and a coherent edge is not dither. That is why the threshold is a *fraction of the region*
+ *     rather than a neighbourhood test applied per pixel.
+ *
+ * ## The cost, stated because it is a false positive that cannot be removed
+ *
+ * A 2px checkerboard is legitimate craft at 32×32 and above — it reads as a soft tonal step rather
+ * than as digital stipple. The predicate cannot tell that from a mistaken 1px stipple, so **both** are
+ * detected, **both** are exempted from §4.4's noise measures, and a heavily-textured sprite picks up
+ * the `dither-dominant` advisory. Treating visible grain as defect is the failure this whole dimension
+ * has to avoid, and `despeckle`'s own `minClusterSize` option exists for the same reason. A `sparse`
+ * pattern at low coverage is a further false negative, since at low coverage a region stops being a
+ * connected set of two adjacent buckets and falls out of the mask entirely.
+ *
+ * ## Cost, and why the candidate-pair restriction is there
+ *
+ * At most 15 bucket pairs, and the "both buckets occupied" pre-check drops the ones a given sprite does
+ * not use — a six-tone sprite does five flood fills rather than fifteen. `|R| >= 8` keeps a single
+ * stray pixel from being its own dither region. One flood fill per component per pair, integer
+ * arithmetic throughout, and the result depends only on the pixels: no randomness, no timestamps,
+ * nothing that could make the same input produce a different mask on another machine.
+ *
+ * ## Units, because the specification writes this one as a fraction
+ *
+ * §3.3 says `ditherShare = (pixels with ditherMask == 1) / N` and §4.4's worked example writes it as
+ * `25/612 = 0.0408` against a `10/100` advisory. Every other ratio in this pipeline is integer
+ * per-mille (§3.7), so this one is too: the returned `share` is that same 0.0408 as **41**, and §4.4's
+ * advisory threshold of `10/100` is **100** on the same scale. Converting at the boundary rather than
+ * carrying two conventions is the whole point of §3.7.
+ */
+export function ditherMask(
+  cel: QualityCel,
+  solidMask: Uint8Array,
+  width: number,
+  height: number,
+): { readonly mask: Uint8Array; readonly share: number; readonly regions: number } {
+  const size = width * height;
+  const mask = new Uint8Array(size);
+
+  // Which buckets are occupied at all, so the pair loop skips the empty ones. Occupancy is a
+  // property of the document rather than of the pair, and a six-tone sprite should not pay for
+  // fifteen flood fills.
+  const occupied = new Uint8Array(LQ_BUCKETS);
+  let solid = 0;
+  for (let p = 0; p < size; p++) {
+    if (solidMask[p] !== 1) continue;
+    occupied[lqBucketOf(cel, p)] = 1;
+    solid++;
+  }
+
+  const seen = new Uint8Array(size);
+  const queue = new Int32Array(size);
+  let regions = 0;
+  let masked = 0;
+
+  for (let k = 0; k + 1 < LQ_BUCKETS; k++) {
+    if (occupied[k] === 0 || occupied[k + 1] === 0) continue;
+    const inPair = new Uint8Array(size);
+    for (let p = 0; p < size; p++) {
+      if (solidMask[p] !== 1) continue;
+      const b = lqBucketOf(cel, p);
+      if (b === k || b === k + 1) inPair[p] = 1;
+    }
+    seen.fill(0);
+    for (let start = 0; start < size; start++) {
+      if (inPair[start] === 0 || seen[start] === 1) continue;
+      // One flood fill per COMPONENT of the union set, which is what the specification's
+      // parenthetical insists on and what matters: two separate alternations of the same two steps
+      // are two regions, and a single fill over the union would merge them into one component whose
+      // alternation test could be passed by the wrong half of it.
+      const component: number[] = [];
+      let head = 0;
+      let tail = 0;
+      seen[start] = 1;
+      queue[tail++] = start;
+      while (head < tail) {
+        const p = queue[head++];
+        component.push(p);
+        const x = p % width;
+        const y = (p - x) / width;
+        for (const [dx, dy] of DITHER_ORTHO) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+          const q = ny * width + nx;
+          if (inPair[q] === 0 || seen[q] === 1) continue;
+          seen[q] = 1;
+          queue[tail++] = q;
+        }
+      }
+      if (component.length < DITHER_MIN_REGION) continue;
+      let alternating = 0;
+      let done = false;
+      for (const p of component) {
+        const own = lqBucketOf(cel, p);
+        const other = own === k ? k + 1 : k;
+        const x = p % width;
+        const y = (p - x) / width;
+        for (let dy = -1; dy <= 1 && !done; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+            const q = ny * width + nx;
+            // "in R of the OTHER bucket": the neighbour is in the same component by construction,
+            // since it is 4-adjacent to a member of R and in the pair's union set.
+            if (inPair[q] === 0) continue;
+            if (lqBucketOf(cel, q) !== other) continue;
+            alternating++;
+            done = true;
+            break;
+          }
+        }
+      }
+      if (alternating * 1000 < DITHER_ALTERNATION_MIN * component.length) continue;
+      for (const p of component) {
+        if (mask[p] === 0) masked++;
+        mask[p] = 1;
+      }
+      regions++;
+    }
+  }
+
+  return { mask, share: solid === 0 ? 0 : rhu(masked * 1000, solid), regions };
+}
+
+
 /**
  * The curvature of each labelled region, as §4.2's curvature gate reads it when the subject's own
  * outline cannot answer.

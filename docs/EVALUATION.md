@@ -2158,7 +2158,47 @@ caught at one row and excused at another — now reads 333 against 420, both cle
 straight-band case is in the corpus and reports `plane-crosses-form`. Lowering `CURVATURE_GATE` was
 never the fix and §3.3 still says why: the box is at 93 and would have been admitted by another route.
 
-**One gap remains that is not curvature, and it is not `reachQ` either.** The first is `splitQ`:
+**`noise` is implemented and NOT registered, and §4.4's `colourOrphans` does not work.** T-015's
+analyzer and §3.3's `ditherMask` are written, compile, and are on disk; the dimension is deliberately
+absent from the aggregator, because registering it puts 17 corpus cases into mismatch — including
+six clean controls — for a reason that is a property of the *specification*, not of the
+implementation. Two findings, and the second is the more serious one.
+
+**`colourOrphans` cannot tell a speck from a gradient, and the committed artwork is the proof.**
+Measured over the whole corpus, on the ten real scenes and on the hand-authored subjects: 79/1000 on
+`artwork/verify/lantern-keeper.pixel`, 89 on `autumn-dusk-lake-256`, 100 on `dusk-lake-valley-v2`,
+**153 on `sunset-lighthouse-512.pixel`** — 40,231 pixels of 262,144. §4.4's own diagnosis of the
+measure it replaced was that "distance from the local median" was tracking *boundary length* rather
+than stray pixels, and that what distinguishes a speck from an edge is "the absence of any agreement
+at all". Both are true, and neither survives contact with a smooth ramp: in a gradient a pixel's 4-
+neighbours are the buckets on either side of it, so **having no same-bucket 4-neighbour is the normal
+state of the picture and not a defect.** The measure answers its question correctly and the question
+is the wrong one. This is the T-012 failure wearing different clothes — a dimension that fires on
+clean work is worse than one that misses a defect — and §4.4's `> 8/1000` trigger is two orders of
+magnitude below where a gradient lands. **A threshold change cannot fix it**: the clean controls sit
+at 0 and the landscapes at 79..153, and the *defective* cases also sit at 0, so there is no cut that
+separates them.
+
+**`ditherMask` reads 0 on every one of the 65 cases, including the dithered scenes.** This is the more
+serious finding, because `ditherMask` is the quantity T-102's entire conclusion points at, and the
+scene T-102 measured at 2,880 regions per bucket is exactly the picture it should be loudest on. The
+predicate is implemented as specified — one flood fill per component of each occupied adjacent bucket
+pair, `|R| >= 8`, and `>= 400/1000` of `R` with an opposite-bucket 8-neighbour in `R` — and it
+returns nothing. So either §3.3's `>= 8` floor and `400/1000` clause are wrong for a *gradient*
+(the component of `{k, k+1}` in a ramp is a wide band whose interior pixels have no opposite-bucket
+neighbour, so the ratio lands well under 400), or the pair-restriction to *adjacent* buckets misses
+the structure that is actually there. **Until that is settled, the honest statement about the four
+dithered scenes is the one already recorded: the report's `gated` column gives `curvature` and
+`reach` as reasons whose real cause is neither.**
+
+**A third, smaller finding, recorded because it is mine and it is the kind that hides.** The band
+table was first written in descending-bound order and read in that order, so a ratio of 0 matched the
+`<= 50` row and returned the *worst* sub-score: every clean control read 200 instead of 1000. The
+first version of this dimension therefore reported the whole corpus as noisy, which is a loud enough
+failure that it could not be shipped by accident — but it is the reason the first thing to check on any
+future band table here is the direction it is read in.
+
+**Two gaps remain that are not curvature, and it is not `reachQ` either.** The first is `splitQ`:
 `crossesQ` is exactly `splitQ` whenever `bendQ` is 0, so a straight cut is *reported* only when
 §4.2 also judges it to bisect the form — which is the multiplier doing its documented job, not a
 hole, and it is why the corpus case puts its band at the dome's middle rather than at an arbitrary

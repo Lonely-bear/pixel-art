@@ -208,6 +208,19 @@ export type ExcludedReason =
    * measurement declining to guess.
    */
   | 'no-judgeable-plane'
+  /**
+   * The subject is a line drawing — §3.3's `Dmax <= 1` — so §4.4's three neighbour measures
+   * (`isolated`, `diagOnly`, `spurs`) have nothing to measure: on a 1px chain every pixel has one
+   * neighbour by construction, so the counts would be reporting the shape itself.
+   *
+   * A **sub-score** absence, not a dimension absence. `colourOrphans` and `nearDuplicatePairs`
+   * still apply to a line sprite and are still scored, so the dimension is present and its three
+   * excluded sub-scores drop their weight with the remainder re-normalised.
+   *
+   * Distinct from `'no-judgeable-plane'` because nothing was declined for want of a subject: the
+   * subject is exactly what the measure needs, and it is too thin for the measure to mean anything.
+   */
+  | 'line-sprite'
   /** No analyzer is registered for this dimension, so no number was produced. */
   | 'not-implemented';
 
