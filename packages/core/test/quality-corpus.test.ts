@@ -76,6 +76,22 @@ const RUN = runCorpus(SPEC, SCORES);
 const DISTRIBUTION = distribute(RUN);
 const BASELINE_PATH = fileURLToPath(new URL('../../../benchmarks/corpus/baseline.md', import.meta.url));
 
+/**
+ * Timeout for the tests that deliberately re-run the whole corpus.
+ *
+ * Three of them do, and they do it for the reason the first one states: a guard
+ * that cannot be shown to fail is not known to hold, and the only way to show it
+ * is to mutate an expectation and watch the runner catch it. That costs a full
+ * pass — sixty-three sprites materialised and analysed — which runs about three
+ * seconds on a workstation and about six on a CI runner, so vitest's 5s default
+ * sits *inside* the workload's own variance. That default is a statement about
+ * test hygiene, not about how long this particular assertion honestly takes, and
+ * the failure it produces is a red X that says nothing about the artwork. Thirty
+ * seconds is far beyond any measured run and still bounded, so a genuine hang is
+ * still a hang.
+ */
+const CORPUS_PASS_TIMEOUT_MS = 30_000;
+
 /** Rows keyed by id, so a test can talk about one case rather than searching for it. */
 const ROWS = new Map(RUN.rows.map((row) => [row.id, row]));
 
@@ -138,7 +154,7 @@ describe('the corpus is a regression guard, not a report', () => {
     expect(broken.failures[0].reason).toContain('detached-pieces');
     // And the row says `fail`, so the table a human reads is honest about it too.
     expect(broken.rows.find((r) => r.id === 'defect/detached-pieces-22')?.status).toBe('fail');
-  });
+  }, CORPUS_PASS_TIMEOUT_MS);
 
   it('fails a case that measures something other than it declares', () => {
     // A `measure` expectation is the other half of the guard: the gate could be moved so that
@@ -146,7 +162,7 @@ describe('the corpus is a regression guard, not a report', () => {
     const broken = runCorpus(withExpectation('sweep/rect-30x4', { measure: { compactnessQ: [999] } }), SCORES);
     expect(broken.failures.map((f) => f.id)).toEqual(['sweep/rect-30x4']);
     expect(broken.failures[0].reason).toContain('measured [326]');
-  });
+  }, CORPUS_PASS_TIMEOUT_MS);
 
   it('has a negative control for every condition, and every one of them is silent', () => {
     // "An analyzer that fires on clean work is worse than one that misses a defect" is only a
@@ -1252,7 +1268,7 @@ describe('the report', () => {
     const again = renderMarkdown(SPEC, SCORES, runCorpus(SPEC, SCORES).rows);
     expect(again).toBe(RUN.markdown);
     expect(again).toBe(readFileSync(BASELINE_PATH, 'utf8'));
-  });
+  }, CORPUS_PASS_TIMEOUT_MS);
 
   it('prints the table, the distribution and the unresolved specification conflicts', () => {
     // A report nobody can read is a report nobody compares. These are the sections a reviewer has
