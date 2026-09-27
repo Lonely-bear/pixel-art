@@ -7888,6 +7888,121 @@
           "silhouette": null
         }
       }
+    },
+    {
+      "id": "value/terrain-following-terminator-64",
+        "label": "A full-bleed 64x64 scene whose lit dome is shaded with a terminator that follows the dome's own curve: the construction §4.2 wants, on artwork with no subject to read",
+        "tier": "synthetic",
+        "provenance": "generated",
+        "pair": [
+          "value/full-bleed-form"
+        ],
+        "defects": [
+          {
+            "kind": "clean-control",
+            "note": "The negative half of T-100's pair, and the only negative control that can catch a curvature reference which is so permissive that it judges every plane on every full-bleed scene. Its lit dome is drawn as a smaller ellipse over a larger one in the shadow swatch, so the lit/shadow boundary is a crescent concentric with the dome -- an offset of the form, which is the construction §4.2 admits and the one `value/level-set-32` already pins on a subject with a readable outline. Everything else is identical to `value/straight-band-over-terrain-64`, which is what makes the pair §6.2's cheapest kind of regression test: one property, two answers."
+          }
+        ],
+        "recipe": {
+          "canvas": {
+            "w": 64,
+            "h": 64
+          },
+          "layers": [
+            "Base"
+          ],
+          "palette": [
+            "#93c0dc",
+            "#4a7ba6",
+            "#35618c",
+            "#274a70",
+            "#1b3a5c"
+          ],
+          "ops": [
+            {
+              "op": "rect",
+              "layer": "Base",
+              "rect": [
+                0,
+                0,
+                64,
+                64
+              ],
+              "color": "pal:0",
+              "fill": true
+            },
+            {
+              "op": "ellipse",
+              "layer": "Base",
+              "rect": [
+                0,
+                26,
+                64,
+                80
+              ],
+              "color": "pal:4",
+              "fill": true
+            },
+            {
+              "op": "ellipse",
+              "layer": "Base",
+              "rect": [
+                0,
+                22,
+                64,
+                80
+              ],
+              "color": "pal:3",
+              "fill": true
+            },
+            {
+              "op": "ellipse",
+              "layer": "Base",
+              "rect": [
+                0,
+                18,
+                64,
+                80
+              ],
+              "color": "pal:2",
+              "fill": true
+            },
+            {
+              "op": "ellipse",
+              "layer": "Base",
+              "rect": [
+                0,
+                14,
+                64,
+                80
+              ],
+              "color": "pal:1",
+              "fill": true
+            }
+          ]
+        },
+        "expect": {
+          "codes": [],
+          "absent": [
+            "plane-crosses-form",
+            "flat-value",
+            "narrow-value-range",
+            "shape-clipped",
+            "fragmented-silhouette",
+            "detached-pieces",
+            "interior-hole",
+            "thin-profile",
+            "subject-undersized",
+            "hue-carries-form",
+            "key-light-inconsistent",
+            "shadow-crushed"
+          ],
+          "verdict": "pass",
+          "noBlocking": true,
+          "preconditions": {
+            "silhouette": "no-subject"
+          }
+        }
     }
   ]
 }

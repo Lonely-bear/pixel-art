@@ -196,6 +196,7 @@ name appears here, no dimension may define its own version of it.
 | `dist(p)` | For a solid `p`, the Chebyshev distance to the nearest non-solid pixel or to the canvas edge. `0` on an `edgePixel`. |
 | `Dmax` | `max` of `dist` over all solid pixels — the subject's half-thickness. |
 | `convexCorner(p)` | `p` is solid, exactly 2 of its 4 orthogonal neighbours are solid, those 2 are **adjacent** (one horizontal, one vertical), and the diagonal pixel between them is transparent. |
+| `regionCurvedQ(r)` | For a tone region `r`: `rhu(stairCorners(r) * 1000, boundary(r) + 1)`, where `boundary(r)` counts the pixels of `r` with at least one 4-neighbour outside `r` — a different region, transparent, or off the canvas — and `stairCorners(r)` is how many of those are a **convex staircase corner of `r`**. See below. |
 | `toneEdge(p)` | `p` is solid and at least one solid 4-neighbour `n` has a different `LqBucket` (§3.4). |
 | `ditherMask` | Per-pixel flag: `p` is in a region of high-frequency alternation between two adjacent tone buckets. See below. |
 
@@ -217,6 +218,68 @@ perimeter of the union of unit squares, which is the transition count.
 `perimeter` is exactly that: sum over solid pixels of their transparent 4-neighbour count.
 It is the true boundary length of the pixel set, which is why the isoperimetric quotient in
 §4.1 is bounded above by 1 by construction instead of by luck.
+
+#### `regionCurvedQ`, and why a second curvature reference had to exist
+
+`convexCorner` above is a predicate on the **subject's** mask, and §4.2's curvature gate spent two
+years of this repository's history reading its curvature through that one door. On a full-bleed
+document the door is a wall: the subject reaches every edge, so its outline *is* the canvas
+rectangle, the whole picture has four convex corners, and none of them is near a plane in the
+middle of a landscape. Measured, `curvedQ` read **0..77 on all ten** committed scenes against a gate
+of 250, so every plane in every one of them was exempt and a straight shadow band drawn across a
+curved mountain was not scored — it was reported as `unmeasured`, which is the one answer an agent
+cannot act on.
+
+**No threshold fixes that**, and the reason is geometric rather than a matter of tuning: when the
+mountain reaches the edges it *is* the frame, so "the frame" and "a curved form" are the same set of
+pixels and no value of a gate separates them. The fix had to be a curvature source that does not come
+from the silhouette, and the only one the document has is **the shape of its own tone regions** — the
+dome is a curved form whether or not anybody drew its edge.
+
+Three decisions, and the second is the one that would have been got wrong by default.
+
+**It is a density and not a count**, for a different reason than T-022 removed `compactnessQ`'s
+scale-dependence. T-022 needed a shape *descriptor*, and a descriptor that cannot tell a 3px blade
+from a horizonline cannot describe shape. This is a *gate*, and a gate needs to know what
+**fraction** of the nearby boundary turns; a count would make the answer depend on how many boundary
+pixels a region happens to have, which is a property of its size. A 3px band on 32×32 and the same
+band on 4096² are both straight, and both read 0. **A density is also what makes the new reference
+safe to take as a maximum**: it is bounded by 1000 like the reading it is combined with, so it can
+raise a gate and never invert one.
+
+**The plane being judged is left inside its own region's boundary count.** Subtracting it would be
+more precise and is not done, because a region's boundary always *contains* the terminator, so
+including it can only dilute the ratio and can never manufacture curvature the form does not have.
+The gate therefore keeps failing toward "cannot measure" — the direction every gate in this document
+is built to fail in — and a region whose only boundary is the plane reads 0 rather than a confident
+non-zero. It is also what keeps the quantity to one pass over the canvas: excluding the plane makes
+the ratio per-terminator, and a 512² scene in this repository carries 1008 terminators.
+
+**The staircase predicate has one definition and two call shapes.** `regionCurvedQ` asks
+"is this neighbour in *this* region", which is a labelled subset of the canvas rather than a mask, so
+the predicate takes a membership test and `convexStaircaseCornerAt` is the `Uint8Array` call into it.
+A second copy of the quadrant walk is exactly the kind of thing that looks right in both copies and
+differs by one quadrant.
+
+**What it discriminates, measured.** A straight-edged box is a stack of horizontal bands, so every
+band's boundary is two straight runs and the density is low — `value/hard-surface-terminator-32`
+reads **93** against a gate of 250 and keeps §4.2's exemption for "a straight plane across a
+straight-edged form is correct, not wrong". A dome is nested ellipses, so every crescent's boundary
+is an arc — `value/terrain-following-terminator-64` reads **422** and is judged. On the same two
+documents the silhouette reading is 65 and 0, which is the measurement that says the new reference is
+what moved. The ten real scenes now read **667..880**.
+
+**A recorded limitation, because a corpus case cannot hold it.** Whether a straight cut is *caught*
+turns out to depend on which tone region it happens to cross. The same band, the same dome, the same
+five swatches, moved from y=34 to y=40: `curvedQ` **260** at one and **248** at the other, against a
+gate of 250. The band is a perfect rectangle whose own boundary contributes boundary pixels and no
+corners, while the dome region it cuts contributes corners along the arc and none along the straight
+cut; where the band crosses a wide part of the dome the arc dominates and the reading clears, and
+where it crosses a narrow part near the frame the straight cut dominates and it does not. The fix
+direction is to exclude the plane's own boundary from the ratio rather than leave it to dilute, at the
+cost of making the quantity per-termin instead of per-region; that is a design change with its own
+measurements, and **lowering the gate is not it** — that would admit `value/hard-surface-terminator-32`
+at 93 by another route and re-open the question §6 settled.
 
 #### `dist` and `Dmax`
 
@@ -673,13 +736,45 @@ for each plane P:
 
     splitQ      rhu(min(areaA, areaB) * 1000, max(areaA, areaB))
     reachQ      rhu(min(extent(P), bodyExtent) * 1000, bodyExtent)
-    curvedQ     rhu(stairCorners * 1000, edgeN + 1)     over the Chebyshev-3 neighbourhood
+    curvedQ     max of the two curvature references; see below
 
     crossesQ = (curvedQ < 250 || reachQ < 500) ? 0
              : rhu((1000 - bendQ) * splitQ, 1000)        // higher is worse
 
 formQ = band( max over planes of crossesQ )              // the WORST plane
 ```
+
+**`curvedQ` is the maximum of two references, and the second one is not optional.** The first is
+the one this subsection originally specified: staircase corners on the subject's own silhouette
+within Chebyshev 3 of the plane, scaled by the silhouette edge pixels in the same neighbourhood.
+The second is §3.3's `regionCurvedQ`, read on the two tone regions the plane separates.
+
+**A maximum, and it promises less than it first appears to.** A maximum can only make the gate
+*more* permissive, never less, and that has one precise consequence worth stating: **every plane
+already judged before is still judged, with an identical `bendQ` and `splitQ`, so every score
+derived from it is unchanged.** Across the corpus, no `value`, `formQ` or `crossesQ` moved for any
+subject with a readable outline. That is what the max buys, and it is a real guarantee — the
+stronger and vaguer claim that "nothing with a readable outline moves" is **false**, and was
+measured to be so during acceptance: `curvedQ max` changed on **32 of 59** rows,
+`artwork/verify/lantern-keeper.pixel` went 500 → 750 and `1 curvature, 4 reach` →
+`0 curvature, 5 reach`, and twenty `sweep/rect-*` rows went from 0 to 48..114. In most of those the
+*reason* improved rather than the number moving: a plane that used to be "not asked" is now
+examined and returns clean.
+
+And the full-bleed scenes are where the capability was actually missing: they go from 0..77 to
+667..880 through this one line, three of them acquire a measured `formQ` of 1000 that they
+previously reported as `unmeasured`, and `value/hard-surface-terminator-32` — the box, the gate's
+own negative control — stays at 93 and keeps its exemption.
+
+That in turn demotes the document-level short-circuit from a veto to a fallback. While the gate had
+only the silhouette reference, "this subject fills the canvas, so its outline is the frame, so the
+gate abstains" was a correct description of the mechanism, and it fired *before* any plane was
+consulted. It stopped being correct the moment the gate grew a second reference: a document with no
+outline can have judgeable planes, and when it does the dimension has an opinion and must state it.
+The branch now only decides what happens when **every** plane was gated anyway. §3.3 records the
+measured limitation of the new reference — whether a straight cut is caught still depends on which
+tone region it crosses, 260 against 248 either side of the gate — and states why lowering the gate
+is not the fix.
 
 Two clauses in the `planes` definition are not §4.2's, and both earn their place. **A plane is an
 area, not a line**: a tone region counts only if at least one of its pixels has three or more solid
@@ -796,13 +891,16 @@ spanQ    the depth spread, computed and recorded but deliberately not scored —
 **When the form term is unmeasured, and when it is merely clean.** These are different claims and
 conflating them is the single largest measurement defect this dimension had. `formQ` is `null` —
 absent, with the reason on `QualityDimension.unmeasured` and a sentence in the verdict — in exactly
-one situation:
+one situation, and it used to be a broader one than it is now:
 
-> **The subject reaches every canvas edge.** §4.2's curvature gate asks whether the local silhouette
-> is round, and it reads that off the subject's own outline. A subject that fills the canvas has no
-> outline: its boundary *is* the frame, there are four convex corners in the whole document and none
-> of them near an interior plane, and `curvedQ` is 0 on every plane of every frame. The term has no
-> reference to judge against, and that is a fact about the asset class rather than about the artwork.
+> **Every plane in the document was gated.** §4.2's curvature gate asks whether the local form is
+> round, and `reachQ` asks whether a boundary crosses the body rather than dying out as a fragment.
+> A subject that fills the canvas used to fail the first of these for a reason about the *document*
+> rather than the artwork — its outline is the frame, so there were four convex corners in the whole
+> picture and none near an interior plane, and `curvedQ` was 0 on every plane of every frame. That is
+> no longer a reason, because the gate reads a second reference (§3.3's `regionCurvedQ`) that does not
+> come from the silhouette. What remains is the honest per-plane answer, and it is an answer about
+> this picture: nothing here was judgeable.
 
 `value` itself stays applicable to a full-bleed scene — its tone half measures one, and §4.2 is
 written for scenes — so the dimension is present, contributes its measured half at full weight, and
@@ -1966,27 +2064,39 @@ approximating a circle with few corners will fall below the 250/1000 threshold a
 straight-edged. That is the safe direction — it downgrades a blocking severity to an advisory — but
 it is a direction, not a solution.
 
-*The inertness.* `crossesQ` is **0 on every one of the twelve real artworks in the corpus**, and on
-**ten of them no plane was ever eligible to be judged**, so `formQ` read 1000 and `value` read 700 to
-950 on a term that had not looked at anything. All ten are full-bleed, and the cause is now measured
-rather than guessed: §4.2's curvature gate reads local curvature off the subject's outline, a
-full-bleed subject's outline is the canvas rectangle, and `maxCurvedQ` over every plane of every
-scene is 0..77 against a gate of 250. T-013 recorded this as "the curvature gate reads nothing on a
-full-bleed subject", and the number that followed it — a perfect form score — sat in the committed
-baseline through three tasks without anybody asking where it came from.
+*The inertness — fixed, and what it cost to fix.* `crossesQ` was **0 on every one of the twelve real
+artworks in the corpus**, and on **ten of them no plane was ever eligible to be judged**, so `formQ`
+read 1000 and `value` read 700 to 950 on a term that had not looked at anything. All ten were
+full-bleed, and the cause was measured rather than guessed: §4.2's curvature gate read local
+curvature off the subject's outline, a full-bleed subject's outline is the canvas rectangle, and
+`maxCurvedQ` over every plane of every scene was 0..77 against a gate of 250. T-013 recorded this as
+"the curvature gate reads nothing on a full-bleed subject", and the number that followed it — a
+perfect form score — sat in the committed baseline through three tasks without anybody asking where
+it came from. §3.3's `regionCurvedQ` is the fix and the ten scenes now read 667..880; **three of
+them have a measured `formQ` of 1000 that they previously reported as `unmeasured`, and the other
+seven are still `unmeasured` because every plane in them is gated on `reachQ` rather than on
+curvature.**
 
-The form term is therefore **reported as unmeasured on a full-bleed subject** (see the block in
-§4.2), and the corpus has a dedicated `unmeasured sub-scores` column so the absence is re-derived on
-every run instead of being a paragraph in a comment somebody trusts. That fixes the honesty and not
-the coverage: a straight shadow band across a curved mountain in a 256×256 scene is still excused,
-because the gate cannot tell a mountain from a rectangle when the mountain *is* the frame.
+The corpus has a dedicated `unmeasured sub-scores` column so the absence is re-derived on every run
+instead of being a paragraph in a comment somebody trusts, and that is the mechanism that let the
+three rows move without anybody deciding they should.
 
-Nobody should read a full-bleed scene's `value` score as evidence that its shading follows its form,
-and closing that needs a curvature reference that is not the silhouette — the terrain's own form, or
-the local structure of the tone regions. That is a new §3.3 quantity, it is the one T-013 left open,
-and it is not a threshold change. The two real *subjects* in the corpus are not in this state: both
-have an outline, both have their planes gated by `reachQ` as fragments, and both report a measured
-`formQ` 1000.
+*What is still missing, and it is not the curvature half.* **Seven of the ten scenes still report
+`formQ: unmeasured`, and the blocker there is `reachQ`, not curvature** — a boundary that dies out as
+a fragment rather than crossing the body is a different question from one that does not follow the
+form, and §4.2 gates it on purpose. `sunset-lighthouse-512.pixel` has 1008 terminators and every one
+of them is gated. That is the next coverage gap and it is a separate piece of work.
+
+**And the new reference has a measured limitation of its own, recorded in §3.3 rather than tuned
+away:** whether a straight cut is *caught* depends on which tone region it crosses. The same band
+over the same dome reads `curvedQ` 260 in one position and 248 in another, against a gate of 250. So
+a straight shadow band across a curved mountain is now *judged* where the reference reads high, and
+still excused where it reads low — the honesty is fixed everywhere and the coverage is not. Lowering
+`CURVATURE_GATE` is not the fix and §3.3 says why; the fix is to stop the plane's own boundary from
+diluting the ratio, which makes the quantity per-terminator and needs its own measurements.
+
+The two real *subjects* in the corpus are not in this state: both have an outline, both have their
+planes gated by `reachQ` as fragments, and both report a measured `formQ` 1000.
 
 **6. `noise` is the dimension most likely to sand a piece flat.** The redesigned
 `colourOrphans` predicate is sharp — it fires only on a pixel that agrees with *nothing* —

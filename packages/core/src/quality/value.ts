@@ -8,6 +8,7 @@ import {
   edgePixelAt,
   lqBucketOf,
   lqOf,
+  regionCurvedQ,
   rhu,
   SUBJECT_REQUIRED_MARGIN,
 } from './measure.js';
@@ -391,16 +392,23 @@ export const valueAnalyzer: QualityAnalyzer = (context: QualityContext): Quality
  * Why the form term has no number, in one sentence.
  *
  * `'no-subject'` is the case a reader can act on and the reason it is worth a sentence: the subject
- * fills the canvas, so its outline is the frame, so there is no local curvature for a terminator to
- * agree or disagree with. That is a fact about the asset class rather than a defect in the
- * artwork, and it is the same fact the aggregator already reports as `no-subject` for `silhouette`
- * — which is why one of the two is that member and not a new one.
+ * fills the canvas, so its outline is the frame, so the silhouette half of the curvature gate has
+ * nothing to read. That is a fact about the asset class rather than a defect in the artwork, and it
+ * is the same fact the aggregator already reports as `no-subject` for `silhouette` — which is why
+ * one of the two is that member and not a new one.
+ *
+ * **The sentence says the gate abstained, not that the gate is blind, and the difference is T-100.**
+ * It used to claim the stronger and now false thing — that the outline was the only curvature there
+ * was — because at the time it was. §4.2's gate has had a second reference since, one that reads the
+ * shape of the tone regions themselves, and a reader who is told "there is no local curvature" would
+ * go looking for a flat picture and find a mountain. What is true is narrower and still actionable:
+ * no plane in this document cleared the gate, so there is nothing here to have an opinion about.
  */
 function formBlindNote(frame: ValueFrame, reason: ExcludedReason): string {
   if (reason === 'no-judgeable-plane') {
     return ' No tone boundary to judge for form conformance, so that half of the dimension is unmeasured rather than clean.';
   }
-  return " Form conformance is unmeasured: the subject reaches every canvas edge, so its outline is the frame and there is no local curvature for a terminator to follow. The tone half was measured.";
+  return ' Form conformance is unmeasured: the subject reaches every canvas edge, so its outline is the frame, and no plane in the picture cleared the form term’s gates. The tone half was measured.';
 }
 
 /** §4.2's whole measurement, once per frame. */
@@ -527,7 +535,11 @@ function measureFrame(context: QualityContext, index: number): ValueFrame {
   const { regions, regionId } = labelToneRegions(cel, mask, width, height);
   const planes = regions.filter((region) => region.thickness >= 3).length;
   const bodyExtent = Math.max(maxX - minX + 1, maxY - minY + 1);
-  const terminators = findTerminators(cel, mask, width, height, regions, regionId, dist, Dmax, bodyExtent);
+  // One pass, before the terminators are described rather than inside their loop: the quantity is
+  // per region and a 512x512 scene in this repository carries 2971 terminators over a few hundred
+  // regions, so computing it per terminator would be quadratic in the thing being measured.
+  const regionCurved = regionCurvedQ(regionId, regions.length, width, height);
+  const terminators = findTerminators(cel, mask, width, height, regions, regionId, regionCurved, dist, Dmax, bodyExtent);
   // Worst plane, not the mean: the defect is one plane in the wrong place, and a mean is allowed
   // to hide it behind four well-formed crescents. **Among the judged planes only** — a gated plane
   // carries a `crossesQ` of 0 that means "not asked", and letting those compete for the title of
@@ -558,8 +570,20 @@ function measureFrame(context: QualityContext, index: number): ValueFrame {
   // three clean controls from `pass` to `warn` — a defect-free rectangle told it was mediocre
   // because the scorer was half-blind, which is the distortion this whole mechanism exists to
   // prevent wearing a different hat.
+  // **A fallback, not a veto — and it was a veto until T-100.** The document-level branch used to
+  // read "a subject that fills the canvas has no outline, therefore the curvature gate has nothing
+  // to read and the form half is unmeasured", and it fired *before* the planes were consulted at
+  // all. That was correct while the gate's only curvature reference was the silhouette, and it is
+  // the mechanism T-099 added to stop a perfect 1000 standing in for a measurement nobody took.
+  //
+  // It stopped being correct the moment the gate grew a second reference that does not come from
+  // the silhouette: `regionCurvedQ` reads the curvature off the tone regions' own boundaries, and on
+  // a full-bleed scene it answers (measured: `curvedQ` 0..77 before, 667..880 after, against a gate
+  // of 250). A document with no outline can therefore have judgeable planes, and when it does the
+  // dimension has an opinion and must state it. So the branch now only decides what happens when
+  // **every** plane was gated anyway, which is the case it was written for.
   const noOutline = edgeGapOf(mask, width, height) <= SUBJECT_REQUIRED_MARGIN;
-  const formQ = noOutline ? null : worst === null ? 1000 : formBandFor(worst.crossesQ).formQ;
+  const formQ = worst === null ? (noOutline ? null : 1000) : formBandFor(worst.crossesQ).formQ;
 
   /* --- the score, and the issues --- */
   const issues: QualityIssue[] = [];
@@ -938,6 +962,7 @@ function findTerminators(
   height: number,
   regions: readonly ToneRegion[],
   regionId: Int32Array,
+  regionCurved: Int32Array,
   dist: Int32Array,
   Dmax: number,
   bodyExtent: number,
@@ -1003,7 +1028,7 @@ function findTerminators(
       }
       if (component.length < MIN_TERMINATOR) continue;
       component.sort((a, b) => a - b);
-      out.push(describeTerminator(component, [lo, hi], regions, mask, width, height, dist, Dmax, bodyExtent));
+      out.push(describeTerminator(component, [lo, hi], regions, regionCurved, mask, width, height, dist, Dmax, bodyExtent));
     }
   }
   return out;
@@ -1014,6 +1039,7 @@ function describeTerminator(
   pixels: readonly number[],
   pair: readonly [number, number],
   regions: readonly ToneRegion[],
+  regionCurved: Int32Array,
   mask: Uint8Array,
   width: number,
   height: number,
@@ -1095,7 +1121,28 @@ function describeTerminator(
   const splitQ = a < b ? rhu(a * 1000, b) : rhu(b * 1000, a);
   const reachQ = rhu(Math.min(extent, bodyExtent) * 1000, bodyExtent);
   const { edgeN, corners } = curvatureNear(pixels, mask, width, height);
-  const curvedQ = rhu(corners * 1000, edgeN + 1);
+  const silhouetteCurvedQ = rhu(corners * 1000, edgeN + 1);
+  // §4.2's curvature gate has **two** references and takes the larger, and the second one exists
+  // because the first is inert on a full-bleed document: a full-bleed subject's silhouette IS the
+  // canvas rectangle, so `silhouetteCurvedQ` reads 0..77 against a gate of 250 on all ten committed
+  // scenes and every plane in the picture is exempt. `regionCurvedQ` asks the same question — "is
+  // the form straight-edged or curved?" — of the tone regions' own boundaries, which is the only
+  // curvature available on a subject that has no outline. See `measure.ts`.
+  //
+  // **What taking the maximum does and does not promise, stated precisely because the loose version
+  // of this claim was wrong once.** It promises that a plane already judged before is still judged,
+  // with an identical `bendQ` and `splitQ`, so its `crossesQ` and every score derived from it are
+  // unchanged: across the whole corpus no `value`, `formQ` or `crossesQ` moved for any subject with
+  // a readable outline. It does **not** promise that such a subject is untouched. A maximum can only
+  // make the gate more permissive, never less, so planes that were previously exempt on curvature
+  // are now judged, and the reading itself moves on most rows — measured: `curvedQ max` changed on
+  // 32 of 59 rows, `lantern-keeper` went 500 -> 750 and `1 curvature, 4 reach` -> `0 curvature,
+  // 5 reach`, and twenty `sweep/rect-*` rows went from 0 to 48..114. In every one of those the
+  // score is identical, and in most the reason improved: a plane that used to be "not asked" is now
+  // examined and comes back clean. A max is what buys that without disturbing a single score; it is
+  // not, and was never, a claim that the pipeline behaves as before on sprites.
+  const regionReadingQ = Math.max(regionCurved[pair[0]], regionCurved[pair[1]]);
+  const curvedQ = Math.max(silhouetteCurvedQ, regionReadingQ);
   // Three gates, each earning its place on a measurement, and all three failing toward "cannot
   // measure". `curvedQ`: a straight plane across a straight-edged form is correct. `reachQ`: a
   // boundary that does not cross the body is a fragment, not a cross-section. `splitQ` is the
@@ -1163,7 +1210,6 @@ function curvatureNear(
   }
   return { edgeN, corners };
 }
-
 /** The tight box of the solid pixels, which is §3.3's `bounds`. */
 function subjectRect(minX: number, minY: number, maxX: number, maxY: number): Rect {
   return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };

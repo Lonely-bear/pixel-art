@@ -677,27 +677,57 @@ export const DECLARED_QUANTITIES: readonly QuantityDeclaration[] = [
     neededBy: ['silhouette', 'value'],
     discriminator:
       'A 32x32 filled disc, a 16x16 square, a 3px-wide diagonal band: all three measure 0 under §3.3\'s clause, and a 45-degree chamfer on a block also measures 0. Only a one-pixel nick cut diagonally outside a corner measures 1. The corrected predicate reads 64, 4 and 46 on the same three shapes.',
-    // **The curvature gate is inert on every full-bleed scene, and this is the measurement.**
-    // `curvedQ` is 0 on all ten of this repository's committed scenes — and `reachQ`, the other
-    // gate in the same product, is under 500 on all ten as well — so `crossesQ` is 0 and the
-    // whole form sub-term is 1000 on 12 of the 12 real assets, and on every synthetic control in
-    // the corpus. The cause is one fact: `curvedQ` counts `edgePixel`s within Chebyshev 3 of the
-    // tone plane, and a full-bleed subject has no edge pixel except the canvas frame, which is
-    // nowhere near a plane in the middle of a landscape. So a straight shadow band across a
-    // curved mountain is currently excused, and the two gates that would catch it are both
-    // reading a silhouette.
+    // **The curvature gate WAS inert on every full-bleed scene, and T-100 is what this record was
+    // waiting for.** `curvedQ` read 0 on all ten of this repository's committed scenes — and
+    // `reachQ`, the other gate in the same product, is under 500 on most of them as well — so
+    // `crossesQ` was 0 and the whole form sub-term was 1000 on 12 of the 12 real assets, and every
+    // plane in every full-bleed scene was exempt. The cause was one fact: `curvedQ` counted
+    // `edgePixel`s within Chebyshev 3 of the tone plane, and a full-bleed subject has no edge pixel
+    // except the canvas frame, which is nowhere near a plane in the middle of a landscape. So a
+    // straight shadow band across a curved mountain was excused, and both gates that would have
+    // caught it were reading a silhouette.
     //
-    // The fix is a local-curvature source that does not come from the silhouette at all — a
-    // **new §3.3 quantity** — and guessing at one from inside a dimension is precisely what
-    // `TASKS.md` records T-012 correctly declining to do for this very name. So it is recorded
-    // and not invented. The report prints `curvedQ` and `reachQ` on every `value` row so the
-    // inertness is visible in a committed file rather than remembered.
+    // **The fix was a new §3.3 quantity rather than a threshold, and it is `regionCurvedQ` below.**
+    // That is the shape of the answer the comment above asked for and could not supply from inside
+    // a dimension: the curvature has to come from somewhere that is not the subject's outline. The
+    // ten scenes now read 667..880 against a gate of 250, three of them have a measured `formQ` of
+    // 1000, and `value/straight-band-over-terrain-64` — a straight band across a curved dome, the
+    // defect this hole let through — reads `crossesQ` 501 and fires `plane-crosses-form`.
+  },
+  {
+    // **T-100's quantity, and the reason §3.3 needed one at all.** §4.2's curvature gate asks
+    // whether the local form is round, and until T-100 it read that off the subject's own outline —
+    // which on a full-bleed document is the canvas rectangle, so the gate was closed on every plane
+    // in all ten committed scenes and a straight shadow band across a curved mountain was excused.
+    // No threshold fixes that, because when the mountain reaches the edges it *is* the frame and the
+    // two are the same set of pixels; the only fix is a curvature source that does not come from the
+    // silhouette, and the only such source the document has is the shape of its own tone regions.
+    name: 'regionCurvedQ',
+    status: 'implemented',
+    adopted:
+      'Per tone region, the density of convex-staircase corners on that region\'s OWN boundary: rhu(corners * 1000, boundary + 1). §4.2\'s `curvedQ` is then the MAX of this and the silhouette reading, so nothing with a readable outline changes by a single unit. The region being judged is deliberately left inside its own boundary count: a region\'s boundary always contains the terminator, so including it can only dilute the ratio and never manufacture curvature, which keeps the gate failing toward "cannot measure" — the direction every §4.2 gate is built to fail in — and keeps the quantity to one pass over the canvas.',
+    specText:
+      'Not in §3.3. T-100 added it as the curvature reference §4.2\'s gate needs and cannot get from the silhouette, which is the "a new §3.3 quantity rather than a patch" that `convexCorner`\'s record above was waiting for. The predicate is `convexStaircaseCornerAt` with membership taken as `regionId[q] === r` rather than as a mask, so there is one definition of the staircase and two call shapes into it.',
+    neededBy: ['value'],
+    discriminator:
+      'Two shapes that differ in nothing but whether the form turns, which is the whole question the gate asks. A straight-edged box is a stack of horizontal bands, so every band\'s boundary is two straight runs and the density is low: `value/hard-surface-terminator-32` reads 93 against a gate of 250 and keeps its exemption, which is §4.2\'s own clause that "a straight plane across a straight-edged form is correct, not wrong". A dome is nested ellipses, so every crescent\'s boundary is an arc: `value/terrain-following-terminator-64` reads 422 and is judged. On the same two documents the *other* reference reads 65 and 0, which is the measurement that says the new one is what moved.',
+    // **The two halves of the discrimination, kept apart because conflating them is T-099's lesson.**
+    // The pair `value/terrain-following-terminator-64` / `value/straight-band-over-terrain-64` is one
+    // dome and one change — whether the lit face is shaded by crescents concentric with the form or
+    // split by a straight band. Both are now JUDGED (neither reads `unmeasured`), and they differ on
+    // `bendQ`: 1000 against 0, `crossesQ` 0 against 501, `value` 950 against 725. The gate decided
+    // whether to look; `bendQ` and `splitQ` decided what it found. A reference that had made the
+    // second case `unmeasured` again would be a regression, and one that had fired on the first would
+    // be a false positive on correctly shaded work — which is the more expensive of the two.
+    discriminatorValues: [
+      ['value/hard-surface-terminator-32 — the box: gate must stay CLOSED (§4.2 spares it)', 93],
+      ['value/terrain-following-terminator-64 — the dome, form-following: judged, bendQ 1000', 422],
+      ['value/straight-band-over-terrain-64 — the same dome, straight band: judged, bendQ 0', 260],
+      ['artwork/autumn-dusk-lake-256.pixel — a real 256x256 landscape', 833],
+      ['artwork/sunset-lighthouse-512.pixel — a real 512x512 landscape', 857],
+    ],
   },
 ];
-
-/* ------------------------------------------------------------------ *
- * Loading and validating
- * ------------------------------------------------------------------ */
 
 /** `ExcludedReason` duplicated rather than imported, so this file has no runtime dependency. */
 export type ExcludedReason = 'single-frame' | 'no-motion-content' | 'no-subject' | 'not-implemented';

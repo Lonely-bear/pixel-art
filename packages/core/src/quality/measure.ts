@@ -316,8 +316,34 @@ export function convexStaircaseCornerAt(
   x: number,
   y: number,
 ): boolean {
+  return staircaseCornerWhere((q) => mask[q] === 1, width, height, x, y);
+}
+
+/**
+ * {@link convexStaircaseCornerAt} over an arbitrary membership test rather than a `Uint8Array`.
+ *
+ * **This is the one definition; `convexStaircaseCornerAt` is the mask-shaped call into it.** The
+ * split exists because §4.2's curvature reference needs the predicate over a *tone region* — a set
+ * of pixels that is a labelled subset of the canvas (`regionId[q] === r`), not a mask — and the
+ * alternative was a second copy of the quadrant walk. §3.3's warning is explicit that a §3.3 name
+ * with two definitions is the likeliest way for this pipeline to produce a confident wrong answer,
+ * and a quadrant walk is exactly the kind of thing that looks right in both copies and differs by
+ * one quadrant. See {@link regionCurvedQ} for the quantity that needs it.
+ *
+ * The predicate is only ever called for pixels already known to be on a boundary, and the
+ * membership test is a closure rather than an array index, so the cost is nine calls per boundary
+ * pixel. At 512x512 with a few hundred boundary pixels per region that is a few million calls per
+ * pass, and there is one pass for the whole document — see {@link regionCurvedQ}.
+ */
+export function staircaseCornerWhere(
+  member: (index: number) => boolean,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+): boolean {
   if (x < 0 || y < 0 || x >= width || y >= height) return false;
-  if (mask[y * width + x] !== 1) return false;
+  if (!member(y * width + x)) return false;
   for (const [a, b] of QUAD) {
     const ax = x + a[0];
     const ay = y + a[1];
@@ -327,13 +353,106 @@ export function convexStaircaseCornerAt(
     // same way, and a predicate that skipped the quadrant instead would report a subject that runs
     // off the edge of the frame as having no corner there at all.
     const aSolid =
-      ax < 0 || ay < 0 || ax >= width || ay >= height ? false : mask[ay * width + ax] === 1;
+      ax < 0 || ay < 0 || ax >= width || ay >= height ? false : member(ay * width + ax);
     const bSolid =
-      bx < 0 || by < 0 || bx >= width || by >= height ? false : mask[by * width + bx] === 1;
+      bx < 0 || by < 0 || bx >= width || by >= height ? false : member(by * width + bx);
     if (!aSolid && !bSolid) return true;
   }
   return false;
 }
+
+/**
+ * The curvature of each labelled region, as §4.2's curvature gate reads it when the subject's own
+ * outline cannot answer.
+ *
+ * ## The hole this fills, stated as the measurement that opened it
+ *
+ * §4.2's gate asks **"is the form straight-edged, or curved?"** — a straight plane across a
+ * straight-edged form is correct, not wrong, which is why the lit face of a box meeting its shadow
+ * face along a line must not be failed. The existing reference answers that by counting staircase
+ * corners on the *subject's silhouette* within Chebyshev 3 of the plane, and that is inert on every
+ * full-bleed document: a full-bleed subject's silhouette **is the canvas rectangle**, so the whole
+ * picture has four convex corners, none of them near an interior plane, and `curvedQ` reads 0..77
+ * against a gate of 250. Measured on the twelve committed assets in `artwork/`, every one of them.
+ * A straight shadow band drawn across a 256x256 mountain is therefore excused today.
+ *
+ * The fix is not a threshold — no threshold separates "the frame" from "a mountain that happens to
+ * reach the edges", because when the mountain is the frame they are the same set of pixels. It is a
+ * second reference, and the only one available that does not come from the silhouette is **the shape
+ * of the tone regions themselves**: the dome is a curved form whether or not anyone drew its edge.
+ *
+ * ## What is counted, and why the plane is not subtracted
+ *
+ * For every region `r`, over its own membership:
+ *
+ * ```
+ * boundary(r)  p has regionId p == r and at least one 4-neighbour whose regionId differs
+ *              from r, or which is transparent, or which is off the canvas
+ * corners(r)   those pixels that are a convex staircase corner of r
+ * curvedQ(r)   rhu(corners(r) * 1000, boundary(r) + 1)
+ * ```
+ *
+ * **The terminator being judged is deliberately left in its own region's boundary.** Subtracting it
+ * would be more precise and is not done, for a reason that is a direction rather than a shortcut:
+ * a region's boundary always *contains* the plane, so including it can only dilute the ratio and
+ * can never manufacture curvature the form does not have. The gate therefore still fails toward
+ * "cannot measure" — the direction every gate in §4.2 is built to fail in — and a region whose only
+ * boundary is the plane reads 0 rather than a confident non-zero. It also keeps the quantity to one
+ * pass over the canvas: excluding the plane makes the ratio per-terminator, and a 512x512 scene in
+ * this repository carries 2971 terminators.
+ *
+ * ## The discrimination, and it is the whole argument
+ *
+ * A box is a stack of straight bands, so every band's boundary is two straight runs and `curvedQ`
+ * is 0 — the negative control `value/hard-surface-terminator-32` keeps its exemption. A dome is a
+ * set of nested ellipses, so every crescent's boundary is an arc and `curvedQ` is high. The two
+ * differ in nothing but whether the form turns, which is the question the gate was asking.
+ *
+ * **A density, not a count, and that is deliberate for a different reason than T-022's.** T-022
+ * removed the scale-dependence of `compactnessQ` because a shape descriptor that cannot tell a 3px
+ * blade from a horizonline cannot describe shape. This is a *gate*, not a descriptor: what it needs
+ * to know is what **fraction** of the nearby boundary turns, and a count would make the answer
+ * depend on how many boundary pixels a region happens to have, which is a property of its size
+ * rather than of its shape. A 3px band on 32x32 and the same band on 4096x4096 are both straight,
+ * and both read 0.
+ */
+export function regionCurvedQ(
+  regionId: Int32Array,
+  regionCount: number,
+  width: number,
+  height: number,
+): Int32Array {
+  const curved = new Int32Array(regionCount);
+  const boundary = new Int32Array(regionCount);
+  const corners = new Int32Array(regionCount);
+  // The staircase test has to ask "is this neighbour in *this* region", so the region being walked
+  // is captured by a variable the loop sets rather than by a closure per boundary pixel: at a
+  // few hundred regions and a few hundred boundary pixels each, a closure per pixel is an
+  // allocation on the hot path of a 512x512 document, and the whole quantity is one pass.
+  let current = -1;
+  const member = (q: number) => regionId[q] === current;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const p = y * width + x;
+      const r = regionId[p];
+      if (r < 0) continue;
+      // A 4-neighbour off the canvas counts as outside the region, so a region running to the frame
+      // is measured on the boundary it actually has rather than on one the window invents.
+      let isBoundary = x === 0 || x === width - 1 || y === 0 || y === height - 1;
+      if (!isBoundary) {
+        isBoundary =
+          regionId[p - 1] !== r || regionId[p + 1] !== r || regionId[p - width] !== r || regionId[p + width] !== r;
+      }
+      if (!isBoundary) continue;
+      boundary[r]++;
+      current = r;
+      if (staircaseCornerWhere(member, width, height, x, y)) corners[r]++;
+    }
+  }
+  for (let r = 0; r < regionCount; r++) curved[r] = rhu(corners[r] * 1000, boundary[r] + 1);
+  return curved;
+}
+
 
 /**
  * {@link convexStaircaseCornerAt} over the whole mask.

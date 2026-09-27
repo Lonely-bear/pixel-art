@@ -10,6 +10,26 @@ All notable changes to dotloom-mcp are documented in this file.
 
 ### Fixed
 
+- **§4.2's curvature gate can now read curvature that does not come from the silhouette.** This is the
+  coverage half of the entry below: the previous change made the form term *honest* about a full-bleed
+  scene, and this one makes it *able to judge* one. The gate asked whether the local form is round and
+  had a single door — the subject's own outline — and on a document that fills its canvas that door is
+  a wall, because the outline is the frame: `curvedQ` read 0–77 on all ten committed scenes against a
+  gate of 250, so every plane in every one of them was exempt. No threshold fixes that, because when
+  the mountain reaches the edges it *is* the frame.
+  A second reference, §3.3's new `regionCurvedQ`, reads the curvature off the shape of the document's
+  own tone regions, and the gate takes the **maximum** of the two. A maximum can only make the gate
+  more permissive, so every plane already judged is still judged with the same numbers and **no
+  `value`, `formQ` or `crossesQ` moved for any subject with a readable outline**; planes that used
+  to be exempt on curvature are now examined instead, and the reading itself changes on most rows
+  (measured: `curvedQ max` moved on 32 of 59). The ten scenes now read 667–880, three of them
+  acquire a measured `formQ` of 1000 that they previously reported as `unmeasured`, and
+  `value/hard-surface-terminator-32` — a straight-edged box, the gate's own negative control —
+  stays at 93 and keeps the exemption that a straight plane across a straight-edged form is
+  correct.
+  Measured limitation, recorded rather than tuned away: whether a straight cut is *caught* still depends
+  on which tone region it crosses (260 against 248 either side of the gate), so the honesty is fixed
+  everywhere and the coverage is not.
 - **The quality scorer's form term was reporting a perfect score on ten finished paintings it had
   never looked at.** §4.2's curvature gate asks whether the local silhouette is round and reads it
   off the subject's own outline — and a subject that fills its canvas has no outline, because its

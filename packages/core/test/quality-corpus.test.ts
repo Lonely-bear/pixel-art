@@ -1179,28 +1179,48 @@ describe("this repository's own artwork, which is real and unlabelled", () => {
       { id: 'artwork/moonlit-alpine-lake-fast.pixel', kl: 6 },
       { id: 'artwork/sunset-lighthouse-512-baseline-model-a.pixel', kl: 10 },
     ]);
-    // **And the gate the form term reads nothing through, which is the other half of the same
-    // finding.** §4.2's curvature gate asks whether the local silhouette is round, and it reads
-    // that off the subject's own outline. All ten scenes reach every canvas edge, so their outline
-    // *is* the frame: `maxCurvedQ` over every plane is 0..77 against a gate of 250, and not one
-    // plane on any of the ten comes close to being judged. A straight shadow band across a curved
-    // mountain is still excused today — the gate is doing its job on a rectangle — but the report no
-    // longer calls that a clean form measurement.
+    // **And the curvature gate, which is the other half of the same finding — now with an answer.**
+    // §4.2's curvature gate asks whether the local form is round, and it used to read that off the
+    // subject's own outline alone. All ten scenes reach every canvas edge, so their outline *is* the
+    // frame: `maxCurvedQ` over every plane was 0..77 against a gate of 250, and not one plane on any
+    // of the ten came close to being judged. A straight shadow band across a curved mountain was
+    // excused — the gate was doing its job on a rectangle.
     //
-    // **Curvature and not reach is the gate that binds, and the corpus now says which.** The autumn
-    // lake's most favourable plane reaches `reachQ` 1000, well over that gate's 500, so an
-    // assertion on the reach column would have read as a pass and hidden the finding. It is the
-    // curvature maximum that never clears 250, on any plane, on any of the ten — which is the
-    // measurement T-013 recorded as "the curvature gate reads nothing on a full-bleed subject"
-    // before anyone asked what the report was doing with the 1000 that followed.
-    //
-    // **This assertion used to be `every real asset reads formQ 1000`, and it was pinning the bug
-    // as expected behaviour with a paragraph explaining why.** The maxima replace the worst plane's
-    // readings on purpose: reading them off `worst` prints `-` on exactly the rows this finding is
-    // about, which is the one thing a re-measured column must not do.
+    // **T-100 gave the gate a second reference that is not the silhouette**, and the assertion below
+    // is written on the side that would have failed without it. It reads `toBeLessThan(250)` before
+    // T-100 and asserts the opposite now, because an assertion that passes both before and after a
+    // fix is not guarding the fix. Every one of the ten clears the gate by a wide margin, which is
+    // the measurement that says the reference found real curvature rather than inventing it: these
+    // are landscapes with hills, shorelines and a lighthouse, and 667..880 is what a curved form
+    // reads.
     for (const entry of scenes) {
-      expect(row(entry.id).value?.maxCurvedQ ?? 0, entry.id).toBeLessThan(250);
-      // And the absence is stated, not inferred from a number.
+      expect(row(entry.id).value?.maxCurvedQ ?? 0, entry.id).toBeGreaterThanOrEqual(250);
+    }
+    //
+    // **The gate opening is not the same as the form term being measured, and the difference is the
+    // honest part.** Three of the ten have a plane that clears both gates, so their form half is
+    // measured — and it reads 1000, with `crossesQ` 0 and `bendQ` 1000, which is "examined and found
+    // correctly shaded" rather than "nobody looked". The other seven have every plane gated, mostly
+    // on `reach` (a fragment too small to be a cross-section), and for those the form half stays
+    // `unmeasured` and says so. Both outcomes are listed rather than asserted as a range, because
+    // the seven are a statement about `reachQ` and not about the curvature reference, and folding
+    // them in would make this test a guard on a gate T-100 did not touch.
+    const measuredForm = scenes
+      .map((entry) => entry.id)
+      .filter((id) => row(id).value?.formQ !== null);
+    expect(measuredForm).toEqual([
+      'artwork/autumn-dusk-lake-256.pixel',
+      'artwork/dusk-lake-valley-agent.pixel',
+      'artwork/dusk-lake-valley-v2.pixel',
+    ]);
+    for (const id of measuredForm) {
+      // Judged, and clean. `crossesQ` 0 with `bendQ` 1000 is the evidence for the second half: a
+      // boundary that turns, which is the construction §4.2 admits.
+      expect(row(id).value?.formQ, id).toBe(1000);
+      expect(row(id).value?.worstCrossesQ, id).toBe(0);
+      expect(row(id).unmeasured, id).toEqual({});
+    }
+    for (const entry of scenes.filter((e) => !measuredForm.includes(e.id))) {
       expect(row(entry.id).value?.formQ, entry.id).toBeNull();
       expect(row(entry.id).unmeasured, entry.id).toEqual({ 'value.form': 'no-subject' });
     }
@@ -1219,6 +1239,79 @@ describe("this repository's own artwork, which is real and unlabelled", () => {
       expect(row(entry.id).value?.formQ, entry.id).toBe(1000);
       expect(row(entry.id).unmeasured, entry.id).toEqual({});
     }
+  });
+
+  it('records the straight band it does not catch, with the two numbers that explain why', () => {
+    // **A full-bleed scene with a straight shadow band across a curved dome, and the reason this is
+    // a test rather than a corpus case.** The corpus cannot hold it: the loader rejects a case that
+    // declares a defect the analyzer is not expected to report, so a case for a defect that is
+    // *almost* caught has nowhere to live. That is the correct product position — the corpus will
+    // not pretend a detection exists — and it leaves the measurement with no committed home, which
+    // is the one thing `TASKS.md` says not to do. So the numbers are pinned here instead.
+    //
+    // **What is fixed and what is not.** T-100's job was to stop the gate being *blind* on a
+    // full-bleed document, and that is done and asserted above. This is the second half and it is
+    // NOT done: whether a straight cut is *caught* depends on which tone region it happens to cross.
+    // The same band, the same dome, the same five swatches, moved from y=34 to y=40:
+    //
+    //     band at y=34   curvedQ 260   gate opens   crossesQ 501   formQ 550   plane-crosses-form
+    //     band at y=40   curvedQ 248   gate closes  crossesQ  -     formQ null  unmeasured
+    //
+    // Two per-mille either side of a gate of 250. `regionCurvedQ` is a **per-region density**, and
+    // the band is a perfect rectangle whose own boundary contributes boundary pixels and no corners,
+    // while the dome region it cuts contributes corners along the arc and none along the straight
+    // cut. Where the band crosses a wide part of the dome the arc dominates and the reading clears;
+    // where it crosses a narrow part near the frame the straight cut dominates and it does not.
+    //
+    // **The direction of the fix is stated so the next session does not start by moving the gate.**
+    // Lowering `CURVATURE_GATE` to catch 248 is exactly the move `TASKS.md` forbids: it would also
+    // admit `value/hard-surface-terminator-32` at 93 by a different route and re-open the question
+    // T-021 settled. The measurement, not the threshold, is what is wrong — most likely the plane's
+    // own boundary should be excluded from the ratio rather than left to dilute it, at the cost of
+    // making the quantity per-terminator instead of per-region. That is a design change with its own
+    // measurements, so it is not made here.
+    const dome = {
+      canvas: { w: 64, h: 64 },
+      layers: ['Base'],
+      palette: ['#93c0dc', '#4a7ba6', '#35618c', '#274a70', '#1b3a5c'],
+    } as const;
+    const ellipses = [
+      { op: 'ellipse', layer: 'Base', rect: [0, 26, 64, 80], color: 'pal:4', fill: true },
+      { op: 'ellipse', layer: 'Base', rect: [0, 22, 64, 80], color: 'pal:3', fill: true },
+      { op: 'ellipse', layer: 'Base', rect: [0, 18, 64, 80], color: 'pal:2', fill: true },
+      { op: 'ellipse', layer: 'Base', rect: [0, 14, 64, 80], color: 'pal:1', fill: true },
+    ] as const;
+    const sky = { op: 'rect', layer: 'Base', rect: [0, 0, 64, 64], color: 'pal:0', fill: true } as const;
+    const curvedQFor = (y: number) => {
+      const sprite = buildFromRecipe(`gap/band-${y}`, {
+        ...dome,
+        ops: [
+          sky,
+          ...ellipses,
+          { op: 'rect', layer: 'Base', rect: [0, y, 64, 10], color: 'pal:0', fill: true },
+        ],
+      } as never);
+      const context = createQualityContext(sprite);
+      const frame = measureValue(context)[0];
+      return {
+        curvedQ: Math.max(...frame.terminators.map((t) => t.curvedQ)),
+        formQ: frame.formQ,
+        crossesQ: frame.worst === null ? null : frame.worst.crossesQ,
+      };
+    };
+    // The assertion is on the side that documents the gap: both readings are below the gate that
+    // T-100's own regression test asserts is cleared on all ten real scenes, and the difference
+    // between them is the whole finding. If a future revision of the quantity closes the gap, both
+    // of these move and this test fails — which is the point of writing it down.
+    expect(curvedQFor(40).curvedQ).toBeLessThan(250);
+    expect(curvedQFor(40).formQ).toBeNull();
+    // And the control half: with no band at all, the same dome is judged clean, so the dome's
+    // curvature IS being read and the band is what loses it. Without this, "the gate is closed"
+    // would be consistent with the reference being inert again.
+    const unbanded = buildFromRecipe('gap/unbanded', { ...dome, ops: [sky, ...ellipses] } as never);
+    const cleanFrame = measureValue(createQualityContext(unbanded))[0];
+    expect(Math.max(...cleanFrame.terminators.map((t) => t.curvedQ))).toBeGreaterThanOrEqual(250);
+    expect(cleanFrame.formQ).toBe(1000);
   });
 
   it('keeps the two real subjects measurable, and records them as a drift baseline', () => {

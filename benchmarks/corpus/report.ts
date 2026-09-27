@@ -1135,14 +1135,23 @@ export function renderMarkdown(spec: CorpusSpec, scores: CorpusScores, rows: rea
     'file rather than in an argument. `crossesQ` is what this build scores: 0 is a plane that',
     'follows the form, 1000 is a plane that slices it.',
     '',
-    '`curvedQ` and `reachQ` are §4.2\'s two gates, on the same row, and they are the reason the',
-    'form term reads 1000 on **all twelve** of this repository\'s real assets. `curvedQ` counts',
-    '`edgePixel`s within Chebyshev 3 of the plane, and a full-bleed subject has no edge pixel',
-    'except the canvas frame — so it is 0 on all ten committed scenes, and `reachQ` is under its',
-    '500 floor on all ten for the same reason. A straight shadow band across a curved mountain is',
-    'therefore excused today. The fix is a local-curvature source that does not come from the',
-    'silhouette, which is a **new §3.3 quantity** rather than a patch, so it is recorded here and',
-    'in `DECLARED_QUANTITIES` and not invented from inside a dimension.',
+    '`curvedQ` and `reachQ` are §4.2\'s two gates, on the same row. `curvedQ` is the **maximum of two',
+    'references**, and the second one is why the gate is not inert on a full-bleed document. The first',
+    'counts `edgePixel`s within Chebyshev 3 of the plane on the subject\'s own outline, which on a',
+    'full-bleed subject is the canvas frame: it read 0..77 on all ten committed scenes against a gate',
+    'of 250, so every plane on every one of them was exempt and a straight shadow band across a',
+    'curved mountain was excused. The second, `regionCurvedQ`, reads the curvature off the tone',
+    'regions\' own boundaries, which is the only curvature available on a subject that has no outline,',
+    'and it takes the larger of the two so that nothing with a readable outline changes. The ten scenes',
+    'now read 667..880.',
+    '',
+    '**Opening the gate is not the same as measuring the form term, and the column keeps them apart.**',
+    'Three of the ten have a plane that clears both gates, so their `formQ` is a number — and it is',
+    '1000, with `crossesQ` 0, which is "examined and found correctly shaded" rather than "nobody',
+    'looked". The other seven have every plane gated, mostly on `reach`, which is a statement about',
+    '`reachQ` and not about the curvature reference, and their `formQ` stays `unmeasured`. A row',
+    'reading `unmeasured` here has been *measured* as unmeasurable, which is the distinction the',
+    '`unmeasured sub-scores` column below exists to keep legible.',
     '',
     '`keyLight` is the other column to read with the artwork in hand: §4.2 samples two ninths of',
     '`bounds` and subtracts the means, which is a statement about a lit subject. In a landscape',
@@ -1258,6 +1267,15 @@ export function renderMarkdown(spec: CorpusSpec, scores: CorpusScores, rows: rea
       'half has no outline to read and used to report `formQ` 1000 on every one of them. A row ' +
       'reading `value` is present, `excluded` empty, `formQ` 1000 was a perfect score for a ' +
       'measurement nobody took.',
+    '',
+    '**T-100 moved some of these rows, and the direction is the point.** The curvature gate stopped ' +
+      'being inert on full-bleed documents, so three of the ten scenes now report a measured ' +
+      '`formQ` of 1000 and an empty `unmeasured` map: judged, and correctly shaded. Seven still ' +
+      'report `no-subject`, because every plane in them is gated on `reach` rather than on ' +
+      'curvature. The seven are the remaining coverage gap and they are a `reachQ` question; the ' +
+      'curvature half of the gate is now answered everywhere. A reader comparing this table against ' +
+      'an older baseline should expect `value` to move **up** on the rows that changed, because ' +
+      '`formQ` stopped being a free 1000 and became a measurement, and it measured clean.',
   );
   out.push('');
 
