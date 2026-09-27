@@ -34,7 +34,7 @@ npm install --save-dev dotloom-mcp
 | `buildAnimation(spec)` | **稳定** | 同上，外加帧数和动画标签。返回一个 `Sprite`。 |
 | `exportAssets(sprite, plan)` | **稳定** | 把精灵渲染成成品文件，以字节返回。绝不写磁盘。 |
 | `API_VERSION` | **稳定** | 本契约的版本号，字符串形式。见[版本策略](#版本策略)。 |
-| `VERSION` | **稳定** | 包版本号，例如 `'0.4.1'`。 |
+| `VERSION` | **稳定** | 包版本号，例如 `'0.4.2'`。 |
 | `core` | 内部 | 完整的无界面引擎：`Sprite`、`Editor`、全部命令、绑定、瓦片地图、渐变、导入器、编解码器。 |
 | `mcp` | 内部 | MCP 服务器及其面向 Agent 的工具面，在进程内运行。 |
 | `script` | 内部 | 基于 `node:vm` 的脚本运行时，面向受信任的脚本和插件。 |

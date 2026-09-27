@@ -579,15 +579,17 @@ or config change is needed:
 
 - [Library API](docs/API.md) — build-time asset generation, the determinism contract, and the versioning policy ([中文](docs/API-ZH.md))
 - [Technical reference](docs/REFERENCE.md) — command catalogue, MCP internals, scripting, animation, tilemaps, and design decisions
-- [Changelog](CHANGELOG.md) — release history and scope
+- [Changelog](CHANGELOG.md) — release history and scope ([中文](CHANGELOG-ZH.md))
 - [Model Context Protocol](https://modelcontextprotocol.io/)
 - [OpenCode MCP configuration](https://opencode.ai/v2/docs/mcp-servers/)
 
 ## Project status
 
-`dotloom-mcp@0.4.1` is the current release. `0.4.0` was the first to ship desktop
+`dotloom-mcp@0.4.2` is the current release. `0.4.0` was the first to ship desktop
 installers; `0.4.1` made the headless server reconnect to an app that starts late
-instead of committing to memory for the rest of the session.
+instead of committing to memory for the rest of the session; `0.4.2` added a
+one-command demo, a stable build-time library API, byte-reproducible `.pixel`
+files, and in-app updates.
 
 - [x] Core document model, rasteriser, command bus, history, and native serialisation
 - [x] PNG, spritesheet, GIF, Aseprite import, and Tiled export

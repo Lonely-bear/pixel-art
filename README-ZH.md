@@ -565,15 +565,16 @@ electron-builder 读取。
 - [English README](README.md) — 英文项目介绍与完整使用说明
 - [库 API](docs/API-ZH.md) — 构建期生成资产的任务形接口、确定性契约与版本策略（[English](docs/API.md)）
 - [技术参考](docs/REFERENCE.md) — 命令目录、MCP 内部机制、脚本、动画、瓦片地图和设计决策
-- [更新日志](CHANGELOG.md) — 发布历史和范围
+- [更新日志](CHANGELOG-ZH.md) — 发布历史和范围（[English](CHANGELOG.md)）
 - [Model Context Protocol](https://modelcontextprotocol.io/)
 - [OpenCode MCP 配置](https://opencode.ai/v2/docs/mcp-servers/)
 
 ## 项目状态
 
-`dotloom-mcp@0.4.1` 是当前版本。`0.4.0` 是第一个提供桌面安装程序的版本；`0.4.1`
+`dotloom-mcp@0.4.2` 是当前版本。`0.4.0` 是第一个提供桌面安装程序的版本；`0.4.1`
 让无界面服务器在编辑器稍晚启动时能够重连，而不是在本次会话剩余时间里一直待在
-内存模式。
+内存模式；`0.4.2` 带来了一条命令的 demo、稳定的构建期库 API、字节可复现的
+`.pixel` 文件，以及应用内更新。
 
 - [x] 核心文档模型、光栅器、命令总线、历史记录和原生序列化
 - [x] PNG、精灵图、GIF、Aseprite 导入和 Tiled 导出

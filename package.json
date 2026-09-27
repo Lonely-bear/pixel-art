@@ -1,6 +1,6 @@
 {
   "name": "dotloom-mcp",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "dotloom-mcp is a pixel-art engine for humans and AI agents, with a scriptable CLI and Model Context Protocol server.",
   "license": "Apache-2.0",
   "author": "Lonely-bear",
@@ -39,6 +39,7 @@
     "README.md",
     "README-ZH.md",
     "CHANGELOG.md",
+    "CHANGELOG-ZH.md",
     "LICENSE",
     "assets",
     "docs"

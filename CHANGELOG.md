@@ -2,10 +2,131 @@
 
 All notable changes to dotloom-mcp are documented in this file.
 
+<p align="center">
+  <a href="CHANGELOG.md">English</a> · <a href="CHANGELOG-ZH.md">中文</a>
+</p>
+
 ## [Unreleased]
+
+## [0.4.2] - 2026-09-27
 
 ### Added
 
+- **`pixel demo`: the whole product, in one command.** Someone who has just installed the
+  package has nothing but Node, so this one takes no input file, no palette and no required
+  arguments. It authors a 32×32 sprite — ten colours, six layers, two frames on an `idle`
+  tag, 33 commands — through the real command bus, writes an upscaled PNG and the editable
+  `.pixel` source beside it, and prints exactly one JSON object like every other command,
+  so it composes with a shell script. The artwork is drawn the way a pixel artist blocks
+  one in — one flat silhouette, a hue-shifted ramp, tonal planes that follow the form,
+  light from a single direction, a consistent 1px contour — because a demo that looks
+  procedural teaches people the wrong thing, and every mutation goes through
+  `Editor.execute`, so the `.pixel` it leaves behind is a genuine document with a real undo
+  history behind it. That is the proof this is a tool and not a texture generator.
+  `--out` and `--size` are the only flags.
+- **A build-time library API, for the half of the pipeline with nobody in the loop.** An
+  agent drives this product over MCP; a game's build script has to be able to drive it
+  from code, as a `devDependency`, with no GUI, no MCP client and no editor running.
+  `buildSprite(spec)`, `buildAnimation(spec)` and `exportAssets(sprite, plan)` are that
+  entry point, next to `VERSION` and `API_VERSION`; `core`, `mcp` and `script` ship beside
+  them as the documented escape hatch. `exportAssets` returns bytes and never writes to
+  disk — where they go belongs to the build system, not to this package.
+  [`docs/API.md`](docs/API.md) is the authority and [`docs/API-ZH.md`](docs/API-ZH.md)
+  mirrors it, and `API_VERSION` is the versioned contract: inside one major version of it
+  only additive changes are permitted, so a build script can pin it and mean something.
+  It is `1` here, and the eight exports are asserted by a test.
+- **The published entry is typechecked, and its surface is asserted.** `pnpm typecheck` now
+  compiles the npm entry along with everything else (`tsconfig.npm.json`). It had no
+  typecheck coverage at all, which meant a broken entry failed in a consumer's pipeline
+  rather than in this one.
+- **Determinism is a guarantee rather than an assumption.** Every "random-looking" thing
+  the engine draws — noise fields, scatter points, terrain variant choices, reflection
+  wobble — now comes from one seeded source, built on `mix32` and `mulberry32` rather than
+  an inlined hash of unknown provenance. What that buys is small and specific: a committed
+  baseline diff means *the artwork changed*, not *the run changed*, and those are
+  indistinguishable after the fact. Fields are position-addressed, so evaluation order is
+  irrelevant and adding a pixel does not disturb its neighbours; streams are for sequential
+  work, because a stream is order-dependent and skipping one draw shifts everything after
+  it. Chasing this turned up three real defects — a truncated `scatter` seed,
+  `Math.hypot` on a result path, and a `serializeSprite` that was never byte-reproducible
+  in the first place. `deterministicIdFactory` is the opt-in for documents that have to come
+  out byte-identical.
+- **A `.pixel` file is byte-reproducible.** The same ops, run twice, produce the same
+  archive. Cel entries are named by position (`cels/0_1.png`) rather than embedding the
+  layer id inside the filename, because an id comes from the clock and real entropy, and a
+  filename that changes on every run makes "the source did not change" an uncheckable
+  claim. The zip timestamp is pinned to 1980-01-01 *local* — fflate had been stamping
+  every entry with `Date.now()`, so even a fully deterministic document produced a
+  different archive on every save, and pinning the instant in UTC would instead have made
+  the bytes depend on the machine's timezone. The rename is non-breaking in both
+  directions, because the reader always resolved paths through the manifest, so the
+  container version is deliberately **not** bumped.
+- **A quality-analysis contract, an aggregator, and the first two of six dimensions.**
+  `packages/core/src/quality/` freezes six dimensions with per-mille integer scores, a
+  `pass` / `warn` / `fail` verdict, and a compile-time guard that fails the build if a
+  dimension id is added without its weights row. `silhouette` and `value` are implemented
+  and measured against this repository's own artwork, which is where the interesting part
+  is:
+  - **Applicability is declared per dimension, not per document class.** A full-bleed
+    scene has no silhouette and no outline, and does have value structure and a palette —
+    so a dimension that cannot measure a document contributes **no number at all**: its key
+    is absent from the report and the reason is recorded, never a sentinel and never `0`,
+    because `0` is silently averaged in by every caller that trusted the field. The first
+    `silhouette` implementation scored ten full-bleed scenes a confident 800 with a blocking
+    `shape-clipped` issue, since for a scene whose ink runs to the frame the alpha boundary
+    *is* the canvas edge. Ten confident wrong numbers are worse than none. The "is there a
+    subject" test is deliberately a pixel margin rather than a per-mille quantity: a 1px
+    margin is 234/1000 on a 16² canvas and 7/1000 at 2px on a 1024² one, and no single
+    threshold serves both ends.
+  - **The threshold did not move; the measurement did.** The only real character sprite in
+    this repository was being *penalised* — `compactnessQ` 269 against a gate of 300 — and
+    the dimension returned an identical 800 for artwork that had been rejected twice and
+    artwork that had been accepted. The cause was the measurement, not the gate: compactness
+    was computed over the whole mask, so a subject was paying for its own scattered pixels,
+    and it was scale-invariant, so a 32² blade edge and a 1024² horizon scored the same. It
+    is now computed per subject part and split into `thicknessPx` and `thicknessQ`, which
+    is the shape of the thing: blade and horizon differ by 91 while every shape reading
+    stays identical.
+  - **`value` can tell a bad shadow from a good one.** A hard straight-diagonal band and
+    correctly nested contours were 0.014 apart in the report total. They are now 385‰ apart
+    in the dimension and 0.179 in the total — a whole verdict grade, which is the difference
+    between a scorer and a mood ring.
+  - **Two findings are recorded and deliberately left unfixed**, because the honest fix in
+    each case is a new shared quantity rather than a threshold: the curvature gate reads
+    nothing on a full-bleed subject, so the form sub-term is a perfect 1000 on all twelve
+    real assets — a straight shadow band across the mountains passes today — and `keyLight`
+    is a subject-level check being applied to scenes.
+
+  **None of this is an MCP tool, and none of it is on the advertised surface.** A number an
+  agent can see becomes the target instead of the artwork — that is how a lake got sanded
+  into a dark flat rectangle before `quality_report` was deleted in 0.3.1 — so what ships
+  here is a library, a specification and a calibration harness. The command, the tool and
+  the gate that would consume them are later work, and the gate belongs in
+  `finalize_document` refusing, not in a tool that advises. The lesson that produced
+  `AGENTS.md`'s "do not show an agent a number to optimise" section is written down rather
+  than left as tribal knowledge.
+- **A calibration corpus with ground truth by construction.** 63 cases in three tiers:
+  48 synthetic, each carrying a **declared** defect *and* what it must not fire on, because
+  an analyzer that cries wolf on clean work is worse than one that misses a defect;
+  12 real — this repository's committed artwork, which may assert quietness but never taste;
+  and 3 awaiting a human rating, a tier whose type has no `expect` field at all, so no code
+  path can compare an unrated image against an expectation. The tier boundaries are
+  enforced by four loader rules rather than by a comment. Cases are declarative descriptions
+  materialised deterministically at test time instead of committed PNGs — sixty-odd binary
+  files would be an unreviewable diff on every engine change, and a threshold edit would
+  look like a picture edit — and the generated report is compared byte for byte, so a score
+  that moves is a diff a reviewer reads. It also withholds the machine's own scores from
+  the human-rated section, because a rater who has seen the number is anchored to it.
+- **The scoring specification is written down.**
+  [`docs/EVALUATION.md`](docs/EVALUATION.md) is the contract for the analyzers: what each
+  dimension measures, how it is banded, which house-style conventions it encodes and what
+  each of those costs, and what the scorer is *not*. It has been amended twice against
+  measured evidence — the second time because four of the formulas turned out to be
+  measuring something other than what they claimed, and because §3.1 described an input
+  contract (`alphaThreshold`, `background`, `scope`) that exists in the prose and not in the
+  frozen type, which six analyzers would otherwise have been written against. The
+  dimensions now also ship a `baseline.md` next to the corpus, so a score change arrives
+  with the measurement that justifies it.
 - **The app can update itself from the Releases it was downloaded from.** A background
   check runs a few times a day while the editor is open, and when a newer version exists
   a banner offers to download it, show its release notes, and restart into it. The same
@@ -26,6 +147,17 @@ All notable changes to dotloom-mcp are documented in this file.
   installers, and attaches them to the Release. Without them an installed app sees a
   release with nothing it can install, which is the difference between "you are on the
   latest version" and "there is no update" - and only the first of those is true.
+- **The project can be picked up by a stranger, human or agent.** `CONTRIBUTING.md`
+  covers setup, the build-order trap, the review rules and the release checklist;
+  `CODE_OF_CONDUCT.md` and issue templates for bugs, features, agent usability and an
+  asset showcase are in place, along with a pull request template that asks for a
+  changelog entry in the voice already in the file, and a seeded list of good first
+  issues. `AGENTS.md` documents the one architectural rule - every mutation crosses
+  `applyCommand` - and the traps that catch agents out, and `TASKS.md` is the single
+  event bus the roadmap runs on. It also records the review rule this release was built
+  under: a claim of "verified" is not evidence, it has to be re-checked independently,
+  and with a *discriminating* case, because a test that passes whether or not the bug is
+  present proves nothing.
 
 ### Fixed
 
@@ -37,6 +169,16 @@ All notable changes to dotloom-mcp are documented in this file.
 
 ### Changed
 
+- **The README leads with the thing a stranger can do.** `pixel demo` and a real
+  transcript are the first section, above the install instructions and the agent
+  configuration: a reader who has to scroll to find out what the tool does is being asked
+  for patience nobody offered them. The same pass corrected a factual error inherited from
+  the 0.4.x README, where the desktop app was described as bundling the CLI - it bundles
+  the MCP server, `pixel` is an npm install away, and the Release notes repeated the same
+  mistake until now.
+- **This changelog has a Chinese mirror.** [`CHANGELOG-ZH.md`](CHANGELOG-ZH.md) tracks
+  it, and both files ship in the npm tarball. English is the source of truth; where the two
+  disagree, the English one is correct and the Chinese one is the stale copy.
 - The import menu entry is now labelled **Import PNG / .aseprite** in every language, so
   it says what it actually accepts.
 

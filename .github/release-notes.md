@@ -8,8 +8,10 @@
 | macOS, Intel | `dotloom-mcp-*-x64.dmg` |
 | Linux | `dotloom-mcp-*-x86_64.AppImage` — run it, nothing to install; or `dotloom-mcp-*-amd64.deb` on Debian/Ubuntu |
 
-Nothing else is required. The CLI and the MCP server are built into the same
-binary as the editor, so installing the app is the whole installation.
+Nothing else is required. The MCP server is built into the same binary as the
+editor, so installing the app is the whole installation. The `pixel` CLI is not
+part of that binary — it comes from npm (`npm install -g dotloom-mcp`), and so does
+the headless server for anyone who wants one without the editor.
 
 ## First launch on macOS
 

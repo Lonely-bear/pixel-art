@@ -35,7 +35,7 @@ Eight exports. Three of them do the work.
 | `buildAnimation(spec)` | **stable** | The same, plus a frame count and animation tags. Returns a `Sprite`. |
 | `exportAssets(sprite, plan)` | **stable** | Render a sprite into finished files and return them as bytes. Never writes to disk. |
 | `API_VERSION` | **stable** | The version of this contract, as a string. See [Versioning](#versioning). |
-| `VERSION` | **stable** | The package version, e.g. `'0.4.1'`. |
+| `VERSION` | **stable** | The package version, e.g. `'0.4.2'`. |
 | `core` | internal | The whole headless engine: `Sprite`, `Editor`, every command, the rigs, tilemaps, ramps, importers, codecs. |
 | `mcp` | internal | The MCP server and its agent-facing surface, in-process. |
 | `script` | internal | The `node:vm` scripting runtime for trusted scripts and plugins. |
