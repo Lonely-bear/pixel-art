@@ -822,6 +822,14 @@ describe('multi-frame: the worst frame wins, and a degenerate sequence is exclud
     expect(blank.scores.silhouette).toBe(1000);
     expect(blank.actualVerdict).toBe('fail');
     expect(blank.preconditions.silhouette).toBeNull();
+    // **The one combination that looks like a lie and is not, so it is pinned here.** A blank
+    // canvas reports 1000 on a dimension whose form half it declares unmeasured. The 1000 is
+    // §5.3's rule and is correct — a blank canvas must not be graded as bad art, and `empty-frame`
+    // is the aggregator's to raise at severity 1.00 — while the declaration is what stops the 1000
+    // from being read as a form measurement. `no-judgeable-plane` rather than `no-subject` because
+    // there is no ink at all here, so there is no margin to have run off the edge; the two reasons
+    // are different facts and an agent branches on them.
+    expect(blank.unmeasured).toEqual({ 'value.form': 'no-judgeable-plane' });
   });
 });
 

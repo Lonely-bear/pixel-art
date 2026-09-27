@@ -157,6 +157,15 @@ export interface ValueReading {
   readonly maxCurvedQ: number | null;
   /** §4.2's reach gate, `reachQ >= 500`. The maximum over every plane. */
   readonly maxReachQ: number | null;
+  /**
+   * How many planes were not judged, split by which gate closed.
+   *
+   * The one-line form of the T-099 finding: a full-bleed scene reads `145 curvature` here, which
+   * says "of 145 tone boundaries, every one was exempt and here is why" without a reader having to
+   * compare `curvedQ max` against the gate themselves. `0/0` is a frame where every plane was
+   * judged, which is the only combination that means the term had a real opinion.
+   */
+  readonly gated: string;
   readonly Dmax: number;
   readonly keyLight: number | null;
   readonly hueOnlyQ: number;
@@ -321,6 +330,7 @@ function evaluateCase(entry: CorpusCase, sprite: Sprite | null): CorpusRow {
           // close did the most favourable plane come to being judged?
           maxCurvedQ: maxOf(worstValue.terminators.map((term) => term.curvedQ)),
           maxReachQ: maxOf(worstValue.terminators.map((term) => term.reachQ)),
+          gated: `${worstValue.gateCounts.curvature} curvature, ${worstValue.gateCounts.reach} reach`,
           Dmax: worstValue.Dmax,
           keyLight: worstValue.keyLight,
           hueOnlyQ: worstValue.hueOnlyQ,
@@ -1161,6 +1171,7 @@ export function renderMarkdown(spec: CorpusSpec, scores: CorpusScores, rows: rea
       v.worstBendQ === null ? '-' : String(v.worstBendQ),
       v.maxCurvedQ === null ? '-' : String(v.maxCurvedQ),
       v.maxReachQ === null ? '-' : String(v.maxReachQ),
+      v.gated,
       v.worstSpanQ === null ? '-' : String(v.worstSpanQ),
       String(v.Dmax),
       v.keyLight === null ? 'not measurable' : String(v.keyLight),
@@ -1185,6 +1196,7 @@ export function renderMarkdown(spec: CorpusSpec, scores: CorpusScores, rows: rea
         'bendQ',
         'curvedQ max',
         'reachQ max',
+        'gated',
         'spanQ unscored',
         'Dmax',
         'keyLight',

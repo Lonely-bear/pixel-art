@@ -1193,11 +1193,6 @@ function plural(count: number, word: string): string {
   return count === 1 ? word : `${word}s`;
 }
 
-/** `"1 boundary"` / `"4 boundaries"`, for the irregular plural the verdict note needs. */
-function pluralBoundaries(count: number, word: string, pluralWord: string): string {
-  return count === 1 ? word : pluralWord;
-}
-
 /** A noun for how a plane divides the subject, so the message names the geometry. */
 function planeWord(term: Terminator): string {
   if (term.splitQ >= 700) return 'into two near-equal halves';

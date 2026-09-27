@@ -209,17 +209,32 @@ one a corpus that only carried the pairs it passes would hide.
 Both are real, both are outside what this directory may change, and both are recorded in three
 places - here, in `DECLARED_QUANTITIES` or `DEFECT_KINDS` in `format.ts`, and as an assertion in
 `quality-corpus.test.ts` - because a finding that lives in a comment is a finding the next revision
-will not trip over. Neither is fixed, and the reason is the same in both: the fix is a **new §3.3
-quantity**, and `TASKS.md` records T-012 correctly declining to invent one from inside a dimension
-for `convexCorner` itself.
+will not trip over. **Neither is fixed**, and for the first one that is now a distinction rather than
+a shrug: T-099 stopped the report *claiming* a measurement it never took, which is a fix to the
+honesty, and left the coverage alone, which is the finding. Both need a **new §3.3 quantity**, and
+`TASKS.md` records T-012 correctly declining to invent one from inside a dimension for
+`convexCorner` itself.
 
-- **§4.2's curvature gate reads nothing on a full-bleed subject.** `curvedQ` counts `edgePixel`s
-  within Chebyshev 3 of the tone plane, and a full-bleed subject has no edge pixel except the
-  canvas frame - so it is **0 on all ten** of this repository's committed scenes, and `reachQ` is
-  under its 500 floor on all ten for the same reason. `crossesQ` is therefore 0, the whole form
-  sub-term is 1000 on **all twelve** real assets, and a straight shadow band across a curved
-  mountain is excused today. The fix is a local-curvature source that does not come from the
-  silhouette at all. Section 2b prints `curvedQ` and `reachQ` on every row so the inertness is
+- **§4.2's curvature gate reads nothing on a full-bleed subject — and the report used to call that
+  a clean form measurement.** `curvedQ` counts `edgePixel`s within Chebyshev 3 of the tone plane, and
+  a full-bleed subject has no edge pixel except the canvas frame, so it is **0..77 on all ten** of
+  this repository's committed scenes against a gate of 250. `crossesQ` is therefore 0 on every
+  plane, and until T-099 the whole form sub-term read **1000 on all twelve** real assets and
+  `value` read 700..950 on a term that had not looked at anything.
+
+  Two thirds of this paragraph was wrong before T-099 measured it, in the way this repository keeps
+  finding: it also said `reachQ` was under its floor on all ten, which is false — the most
+  favourable plane of the autumn lake reads `reachQ` 1000. Curvature is the gate that binds, and an
+  assertion written from the wrong belief would have read as a pass and hidden the finding.
+
+  T-099 fixed the honesty and **not** the coverage. `formQ` is now `null` on a full-bleed subject,
+  with the reason (`no-subject`) on `QualityDimension.unmeasured` and a sentence in the verdict, and
+  a straight shadow band across a curved mountain is **still excused** — the gate cannot tell a
+  mountain from a rectangle when the mountain is the frame. The fix is a local-curvature source that
+  does not come from the silhouette at all, and `TASKS.md` records it as T-100. Section 2 prints
+  `curvedQ max` and `reachQ max` — the maximum over every plane, not the worst plane's readings,
+  because reading them off `worst` prints `-` on exactly the rows this finding is about — and
+  section 3 carries an `unmeasured sub-scores` column, so both the inertness and the honesty are
   re-measured on every run rather than remembered.
 - **§4.2's `keyLight` is a subject-level check applied to scenes.** It samples two ninths of
   `bounds` and subtracts, on the assumption that the corners are two sides of one lit form; in a

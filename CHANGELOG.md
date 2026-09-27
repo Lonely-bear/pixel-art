@@ -8,6 +8,52 @@ All notable changes to dotloom-mcp are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The quality scorer's form term was reporting a perfect score on ten finished paintings it had
+  never looked at.** §4.2's curvature gate asks whether the local silhouette is round and reads it
+  off the subject's own outline — and a subject that fills its canvas has no outline, because its
+  boundary *is* the frame. Every plane on all ten of this repository's committed scenes was exempt,
+  every one of them scored zero, and nothing recorded that a zero there meant "not asked" rather
+  than "no defect", so the sub-term read `formQ` 1000 and `value` read 700–950 on a term that had
+  examined nothing. `formQ` is now `null` with a stated reason, and the dimension reports the half
+  it did measure.
+- **`QualityDimension` can now be partly unmeasured, and says which part.** A dimension that is
+  present and half-blind is a shape neither the report's `dimensions` map nor a score can express:
+  `dimensions` is partial, so absence means *not applicable*, and a score cannot say "this half is
+  1000 for a measurement nobody took". The new `unmeasured` field names the sub-scores that were not
+  measured and why, it is **required** rather than optional — a sub-score that is silently absent is
+  indistinguishable from one counted at its best — and an unmeasured sub-score drops its weight with
+  the remainder re-normalised, which is the rule a still sprite's absent `motion` already followed.
+  Two new reason strings are agent-facing API: `'no-judgeable-plane'` for a frame with no tone plane
+  to judge, and `'no-subject'` reused from the dimension-level enum for a full-bleed subject.
+- **The form term ranked a target above a sphere.** §4.2's `bendQ` divided the number of distinct
+  8-step orientations a boundary walks by the number of half-plane orientations, and an open
+  boundary on a convex body cannot use the fourth without closing — so a maximally-turning arc read
+  667 and the ring enclosing it read 1000. The product's own reference artwork, and the translated
+  contours the craft guide teaches, came out 250 per-mille *below* a level-set ring on the same body
+  with the same five tones, the same five planes and no defect on either side. The ladder now
+  saturates at three orientations; the band table did not move, the acceptance pair's separation
+  grew from 325 to 450 per-mille, and the straight-diagonal defect case is unchanged and still
+  blocking.
+
+### Changed
+
+- **`docs/EVALUATION.md` §4.2 now describes the scorer that exists.** It specified the `dist`-spread
+  form term that the implementation replaced two tasks ago; `crossesQ`, `bendQ`, `splitQ`, `reachQ`
+  and `curvedQ` appeared nowhere in the specification, the scoring table keyed on a quantity nothing
+  computed, the issue-code row fired on it, and the worked example was arithmetic that had never been
+  run. The scoring table's 150 "no penalty" boundary had been carried across from the old
+  quantity's scale with its numbers unchanged and never re-derived, which is how it came to
+  penalise the product's own taught construction. The rewritten section keeps the rejected
+  alternative and the measurement that rejected it, and the worked example is now two committed
+  corpus cases rather than two sheets of arithmetic.
+- **The generated calibration report grew a column it needed.** §2 prints `curvedQ max` and
+  `reachQ max` — the maximum over every plane rather than the worst plane's readings, because
+  reading them off the worst plane prints `-` on exactly the rows the finding is about — plus a
+  `gated` column giving the count per gate, and §3 carries an `unmeasured sub-scores` column so an
+  absent sub-score is re-derived on every run instead of being remembered from a comment.
+
 ## [0.4.2] - 2026-09-27
 
 ### Added
