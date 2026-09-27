@@ -51,7 +51,31 @@ import type { QualityAnalyzer, QualityCel, QualityContext, QualityDimension, Qua
  * than one per dimension. They live in this file only because the whitelist for this
  * dimension allows no third file; **the second dimension needs `quality/measure.ts` and
  * should extract them there before it starts.** §3.3: "Where a name appears here, no
- * dimension may define its own version of it."
+ * dimension may define its own version of it." `measure.ts` now re-exports every name in
+ * this section, so the second consumer has one import path even though the definitions
+ * have not moved.
+ *
+ * ## Two quantities, because "is it a good shape" and "will it read" are two questions
+ *
+ * `compactnessQ` is the isoperimetric quotient, and it is **scale-invariant on purpose**.
+ * A 32×32 square and a 1024×1024 square are the same shape; a 30×1 blade and a 900×30
+ * blade are the same shape. Any measurement that separated them would be measuring the
+ * canvas, not the drawing, and calling that a *shape* descriptor would be the kind of
+ * conflation §3.3's whole table exists to prevent.
+ *
+ * What the quotient genuinely cannot see is the sprite's own size, and §3.3 already says
+ * so: "`Dmax` doubles as the sprite's own scale, and it is why several ratios below are
+ * normalised against it rather than against a constant: a 3px-wide blade and a 30px-wide
+ * cloak do not have the same room to put a curved terminator in." §4.1 never applied that
+ * argument, so `thin-profile` could not tell a knife from a horizon: a 3px band across a
+ * 1024² canvas and a 3px band across a 32² canvas differ in the one property that matters
+ * and scored alike on everything the quotient reads.
+ *
+ * So the scale-aware reading is a **second** quantity, {@link thicknessQ}, and the two are
+ * reported side by side rather than merged. Merging them is the tempting move and it is
+ * the wrong one: a single number that is partly a shape descriptor and partly a scale
+ * reading is a number whose meaning depends on which of the two the reader had in mind,
+ * which is a worse failure than reporting two.
  */
 
 /** Neighbour offsets, orthogonal only. §3.3's `n4`. */
@@ -99,6 +123,14 @@ export interface MaskComponent {
   readonly area: number;
   /** Tight bounding box, in absolute canvas coordinates. */
   readonly bounds: Rect;
+  /**
+   * Canvas index of the region's first pixel in row-major scan order.
+   *
+   * Carried because "which pixel starts this region" is the ordering {@link connectedComponents}
+   * already promises, and because {@link subjectMask} needs a seed to flood from and
+   * `bounds` cannot supply one: another component can start earlier inside the same box.
+   */
+  readonly seed: number;
 }
 
 /**
@@ -240,8 +272,8 @@ export function boundaryPerimeter(mask: Uint8Array, width: number, height: numbe
  *
  * The whole pipeline measures ratios in integer form so that no threshold is ever a float
  * comparison; this is its only division. It is not a general `roundedDivide` — the caller
- * owns a positive `b`, and the one place that could divide by zero ({@link compactnessQ})
- * guards explicitly.
+ * owns a positive `b`, and the one place that could divide by zero ({@link compactnessQ},
+ * {@link thicknessQ}) guards explicitly.
  */
 export function rhu(a: number, b: number): number {
   return Math.floor((a + b / 2) / b);
@@ -259,11 +291,176 @@ export function rhu(a: number, b: number): number {
  * `P > 8.9e6`, `Q < 3142/P < 0.4` — so the only consumer of this number, the `< 300` test,
  * cannot be decided differently by a last-bit difference even in the case where the
  * arithmetic would stop being exact.
+ *
+ * ## What `solid` and `perimeter` are measured over
+ *
+ * **Over the subject — the largest 4-connected component — and not over the whole mask.**
+ * This is the second of the two measurement defects T-021 measured against 52 subject
+ * frames, and it is the one that was unambiguously a bug rather than a policy question:
+ * three separate masses have three perimeters, so a sprite whose *body* is a perfect square
+ * was charged `-100` of `thin-profile` for the fragments floating beside it. `defect/three-masses-20`
+ * measured 259 on a whole-mask basis where its own body alone is 785, and `silhouette` is the
+ * only dimension in the pipeline that could see it, because `detached-pieces` and
+ * `fragmented-silhouette` name the strays and this one did not.
+ *
+ * Masking to the subject is not a subtlety: a 4-connected component has no 4-adjacent pixel
+ * outside itself, so the subject's boundary is the same length whether "not in the subject"
+ * is read as transparent or as another component, and holes inside the subject still count.
+ *
+ * The two fragmenting codes are what own fragmentation, and they still do. `detached-pieces`
+ * prices the strays, `fragmented-silhouette` fires when no mass dominates, and `compactnessQ`
+ * now says only whether the largest mass is a form. Three comparable masses score 250 − 150
+ * − 150 = 0, which is the §4.1 "2 — two masses of comparable size" reading, and it is reached
+ * without a second code punishing the same fact.
  */
 export function compactnessQ(solid: number, perimeter: number): number {
   if (perimeter <= 0) return 0;
   return Math.min(1000, rhu(4 * 355 * 1000 * solid, 113 * perimeter * perimeter));
 }
+
+/**
+ * The subject alone, as a mask of its own: 1 on the largest 4-connected component, 0
+ * everywhere else.
+ *
+ * The one function here that allocates a second full-canvas buffer, and it allocates it
+ * deliberately rather than threading a component label through the perimeter and the
+ * inscribed-square pass. A label array costs the same memory and has to stay resident while
+ * both passes run, so the flood-then-measure arrangement is strictly cheaper: the flood's
+ * own `seen`/`stack` are function-local and gone before `boundaryPerimeter` and
+ * {@link inscribedSquareSide} are called. Peak working set is `2 bytes/pixel` held across
+ * those two calls and `6` inside the flood, which is the flood's cost either way.
+ *
+ * `component` is the region to isolate, so the caller chooses which one is the subject and
+ * this function has no opinion about it. `component.seed` rather than `component.bounds`,
+ * because two components can share a bounding box and the earlier one in scan order is not
+ * necessarily the one asked for.
+ */
+export function subjectMask(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  component: MaskComponent,
+): Uint8Array {
+  const out = new Uint8Array(mask.length);
+  const seen = new Uint8Array(mask.length);
+  const stack = new Int32Array(mask.length);
+  seen[component.seed] = 1;
+  stack[0] = component.seed;
+  let depth = 1;
+  while (depth > 0) {
+    const p = stack[--depth];
+    out[p] = 1;
+    const x = p % width;
+    const y = (p - x) / width;
+    for (const [dx, dy] of ORTHO) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+      const q = ny * width + nx;
+      if (mask[q] !== 1 || seen[q] === 1) continue;
+      seen[q] = 1;
+      stack[depth++] = q;
+    }
+  }
+  return out;
+}
+
+/**
+ * Side of the largest axis-aligned square of solid pixels, in pixels.
+ *
+ * ## Why an inscribed square and not `Dmax`
+ *
+ * §3.3 nominates `Dmax` for exactly this role — "`Dmax` doubles as the sprite's own scale …
+ * a 3px-wide blade and a 30px-wide cloak do not have the same room to put a curved terminator
+ * in" — and `Dmax` **is not implemented**, because §3.3 defines it twice incompatibly (the
+ * table says Chebyshev, the prose says a 4-connected BFS) and `benchmarks/corpus/format.ts`
+ * records that as an open conflict with no owner until `value` lands.
+ *
+ * So this is the same argument answered by the one method that has no reading to choose
+ * between. A maximal inscribed square is a pure pixel count: the standard rolling-row
+ * recurrence `d = 1 + min(above, left, aboveLeft)`, integer throughout, `O(bounds.w)`
+ * memory and one pass, and every rasterisation of it returns the same integer. The
+ * distribution it produces is on the record as `thicknessPx` beside every gate, so the day
+ * `Dmax` is settled the PO can compare the two columns and swap this function for it without
+ * re-deciding the gate.
+ *
+ * ## What it is and is not sensitive to
+ *
+ * A **max**, like `Dmax`, so it describes the shape's *deepest* part and is blind to a
+ * slender limb: a 20×20 body with a 1px antenna beside it measures 20. That is the right
+ * blindness for §3.3's argument, which is about where a shape has room for a terminator, and
+ * a thin appendage is `noise`'s and `outline`'s business rather than this dimension's. It is
+ * a **max** rather than a *minimum* thickness because a minimum would fire on every drawn
+ * outline and every 1px accent, and an analyzer that fires on clean work is worse than one
+ * that misses a defect.
+ *
+ * On a rectangle it is the short side; on a disc it is the largest inscribed square rather
+ * than the diameter, so it understates a round shape by about 30%. That is a known,
+ * deliberate, and now *visible* bias — `thicknessQ` is reported next to `compactnessQ`, and
+ * a disc is the one shape where the two disagree about how roomy it is.
+ */
+export function inscribedSquareSide(
+  solid: Uint8Array,
+  width: number,
+  height: number,
+  bounds: Rect,
+): number {
+  // `row[0]` is the zero column left of `bounds.x` and is never written, so the recurrence's
+  // "left" term is a real 0 on the first column rather than a special case inside the loop.
+  const row = new Int32Array(bounds.w + 1);
+  let best = 0;
+  for (let y = bounds.y; y < bounds.y + bounds.h; y++) {
+    let diagonal = 0;
+    const base = y * width;
+    for (let i = 0; i < bounds.w; i++) {
+      const above = row[i + 1];
+      row[i + 1] =
+        solid[base + bounds.x + i] === 1 ? 1 + Math.min(above, row[i], diagonal) : 0;
+      if (row[i + 1] > best) best = row[i + 1];
+      diagonal = above;
+    }
+  }
+  return best;
+}
+
+/**
+ * The subject's thickness as a per-mille of the room it has to be read in, per-mille.
+ *
+ * `min(1000, rhu(1000 * thicknessPx, min(W, H)))` — the subject's largest inscribed square
+ * against the canvas's short side. This is the scale-aware half of the pair §3.3's `Dmax`
+ * paragraph argues for, and it is the half that can tell a knife from a horizon: a 3px band
+ * on a 32² canvas is 94/1000 and a 3px band on a 1024² canvas is 2/1000, where
+ * `compactnessQ` reads 274 for both when the subject is held fixed and the canvas grows.
+ *
+ * ## The denominator is the canvas, and the honest limit of that choice
+ *
+ * The canvas is the only length in a `QualityContext` that is not the subject, and it is the
+ * only one a document actually carries: **a game asset's on-screen size is not in the
+ * document**, so an absolute "is this thick enough" rule would have to invent a display size
+ * to work at. The consequence is stated rather than hidden — a 28×3 band on 32² and a 896×96
+ * band on 1024² are the *same drawing at two resolutions* and both measure 93, because any
+ * ratio of two lengths in the same sprite is invariant under uniform magnification. That pair
+ * is not separated, and the corpus says so. Separating it is a decision about a target
+ * resolution, which is a product decision this task does not make.
+ *
+ * ## Where it overlaps `spanQ`, stated plainly
+ *
+ * For a rectangle the inscribed square *is* the short side, and `spanQ` is also driven by the
+ * short side, so for band-like subjects the two numbers nearly coincide — a 28×3 band on 32²
+ * reads `thicknessQ` 93 and `spanQ` 93. They are not the same measurement: `spanQ` is the
+ * subject's *extent* and fires `subject-undersized`, `thicknessQ` is its *depth* and fires
+ * `thin-profile`; they diverge wherever the inscribed square is smaller than the short side
+ * (a ring, a C, a comb) and they agree only when the subject really is its own thin axis. A
+ * subject that is both small and thin in its frame gets both codes, which is the same
+ * judgement from two angles rather than one fact penalised twice — and the report prints both
+ * columns so a reader can see the agreement instead of taking it on trust.
+ */
+export function thicknessQ(thicknessPx: number, width: number, height: number): number {
+  const room = Math.min(width, height);
+  if (room <= 0) return 0;
+  return Math.min(1000, rhu(1000 * thicknessPx, room));
+}
+
 
 /**
  * Count §3.3's `convexCorner` pixels.
@@ -363,7 +560,7 @@ function scanComponents(
         stack[depth++] = q;
       }
     }
-    out.push({ area, bounds: { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 } });
+    out.push({ area, bounds: { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 }, seed: start });
   }
   return out;
 }
@@ -419,8 +616,37 @@ export interface SilhouetteFrame {
   /** Bounds of the largest stray, which is what `detached-pieces` points at. */
   readonly strayBounds: Rect | null;
   readonly borderTouch: number;
+  /**
+   * The **whole mask's** boundary length, kept because it is what the report's
+   * `edgePixels` comparison and every corpus expectation were written against. It is *not*
+   * what `compactnessQ` is computed over any more; see `subjectPerimeter` for that.
+   */
   readonly perimeter: number;
+  /** The subject's own boundary length — the `perimeter` `compactnessQ` is given. */
+  readonly subjectPerimeter: number;
+  /**
+   * §4.1's gate, on the **subject**. Scale-invariant shape descriptor; see the file header
+   * for why that is the intent rather than an oversight.
+   */
   readonly compactnessQ: number;
+  /**
+   * Side of the subject's largest inscribed axis-aligned square, in pixels.
+   *
+   * Carried in absolute pixels as well as as a ratio, because the absolute reading is a
+   * *different* question with a different gate and the two are not interchangeable: the
+   * 30×1 blade and the 900×30 blade have the same `thicknessQ` and a 30× difference in this
+   * column. Deciding which of them `thin-profile` should read is a gate decision, so both
+   * numbers are on the record rather than one of them being chosen here.
+   */
+  readonly thicknessPx: number;
+  /** The scale-aware legibility reading: `thicknessPx` against `min(W, H)`, per-mille. */
+  readonly thicknessQ: number;
+  /**
+   * `min(compactnessQ, thicknessQ)` — the worse of the two readings, and the number
+   * `thin-profile` bands on. Two gates rather than one number: §4.1's `compactnessQ < 300`
+   * is unchanged, and `thicknessQ < 250` is transcribed from §3.7's `span < 0.25`.
+   */
+  readonly profileQ: number;
   readonly holeCount: number;
   /** Every hole's area, ascending. */
   readonly holeAreas: readonly number[];
@@ -447,6 +673,72 @@ const BASE_BANDS: readonly (readonly [number, number])[] = [
 /** §3.5 step 4: an adjustment total outside this band stops being legible. */
 const ADJUSTMENT_MIN = -450;
 const ADJUSTMENT_MAX = 50;
+
+/**
+ * §4.1's `compactnessQ < 300` gate, unchanged.
+ *
+ * Named rather than inlined so the corpus can transcribe it and so a reader can see that the
+ * number T-022 was told not to move has not moved. The measurement *under* it changed — it is
+ * now the subject's quotient rather than the whole mask's — which is the distinction that
+ * matters: TASKS.md's ruling is "fix the measurement, not the gate", and a gate that now
+ * reads a different quantity is not the same gate being left alone.
+ */
+const COMPACTNESS_GATE = 300;
+
+/**
+ * `thicknessQ < 250`, transcribed from §3.7's `span < 0.25`.
+ *
+ * **A transcription, not an invention, and the only number in this file with no line of
+ * §4.1 behind it.** §3.7's `span` gate is the specification's one statement about how much
+ * of the canvas a subject must occupy to count as present — a quarter of an edge — and a
+ * subject whose inscribed thickness is under a quarter of the room is in the same position.
+ * Reusing the spec's own number is the honest alternative to picking one, and it is still a
+ * policy number: §4.1 does not have this row, the corpus prints what every candidate would
+ * do in both directions, and the gate decision stays with the PO.
+ */
+const THICKNESS_GATE = 250;
+
+/**
+ * `profileQ < 150`: one more step below the existing one, and **nothing above it moves**.
+ *
+ * The complaint this answers is precise. `sweep/rect-30x2` and `sweep/rect-30x28` are 600
+ * per-mille apart on `profileQ` and 100 apart on the score, and §6.2 calls a pair that
+ * separates by 0.02 "passing the test and still wrong". A single step across 600 condemns
+ * itself — but **grading the range above 150 is impossible without moving the gate**, because
+ * a threshold that stops firing above 300 *is* a gate move and TASKS.md forbids one here. So
+ * the only step that can be added without touching the gate's firing set is one *below* it,
+ * and that is what this is: the trigger is unchanged, the subjects that fire are unchanged,
+ * and the worst of them cost twice as much.
+ *
+ * The consequence is stated rather than buried: the 784-versus-184 pair still separates by
+ * 100, and it will keep separating by 100 until the gate moves. That is the gate
+ * conversation, not this task's.
+ */
+const THIN_PROFILE_DEEP = 150;
+
+/**
+ * `interior-hole`'s two clauses, priced separately.
+ *
+ * §4.1 has one row covering both "any hole with area ≤ 3 px" and "`holeRatio > 1/100`", at a
+ * flat −100, and the corpus measured what that costs: a 1 px speck and a 6×6 window in the
+ * same 20×20 body are the same code at the same −100, from two different clauses, on shapes
+ * 288 per-mille apart. The fix is **not a fourth code** — §8.3's compatibility promise makes
+ * a new code an API decision and this is a pricing question — it is two rows under the code
+ * that already exists.
+ *
+ * The split is taken from §4.1's own rating anchors rather than invented: "**4** — one mass,
+ * one small nick: a single 1–2 px hole" against "**2** — two masses of comparable size … or
+ * several holes". A nick is half the cost of a window, and the big window keeps §4.1's
+ * −100 exactly, so nothing that was expensive before has become cheap.
+ *
+ * **Order matters and is the rule**: the ratio clause is tested first, so the small-hole row
+ * only prices holes the ratio clause cannot reach. A 3 px hole in a 200 px body has a ratio
+ * of 15/1000 and is a window, not a nick, and the two rows must not both apply.
+ */
+const HOLE_SMALL_MAX_AREA = 3;
+const HOLE_NICK_PENALTY = -50;
+const HOLE_WINDOW_PENALTY = -100;
+
 
 /**
  * Measure every frame in the context, in playback order.
@@ -547,7 +839,11 @@ function measureFrame(context: QualityContext, index: number): SilhouetteFrame {
       strayBounds: null,
       borderTouch: 0,
       perimeter: 0,
+      subjectPerimeter: 0,
       compactnessQ: 0,
+      thicknessPx: 0,
+      thicknessQ: 0,
+      profileQ: 0,
       holeCount: 0,
       holeAreas: [],
       holeArea: 0,
@@ -563,7 +859,8 @@ function measureFrame(context: QualityContext, index: number): SilhouetteFrame {
   const components = [...connectedComponents(mask, width, height, 4)].sort(
     (a, b) => b.area - a.area || a.bounds.y - b.bounds.y || a.bounds.x - b.bounds.x,
   );
-  const largest = components[0].area;
+  const subject = components[0];
+  const largest = subject.area;
   const strays = components.slice(1);
   const strayPixels = solid - largest;
   const shareQ = rhu(largest * 1000, solid);
@@ -573,10 +870,24 @@ function measureFrame(context: QualityContext, index: number): SilhouetteFrame {
   const bounds = solidBounds(mask, width, height)!;
   const touches = borderTouch(mask, width, height);
   const perimeter = boundaryPerimeter(mask, width, height);
-  const compact = compactnessQ(solid, perimeter);
+  // The subject, alone, and the two readings that are computed over it. `components[0]` is
+  // the largest mass *of the whole mask*, so this is the step that stops a subject paying
+  // for the fragments beside it: `perimeter` above is the whole mask's and is kept because
+  // the report and every corpus expectation were written against it, while everything below
+  // is the subject's.
+  const subjectOnly = subjectMask(mask, width, height, subject);
+  const subjectPerimeter = boundaryPerimeter(subjectOnly, width, height);
+  const thicknessPx = inscribedSquareSide(subjectOnly, width, height, subject.bounds);
+  const compact = compactnessQ(largest, subjectPerimeter);
+  const thin = thicknessQ(thicknessPx, width, height);
+  // One number, two gates. The gates are separate because they are separate questions — a
+  // shape that is not round, and a shape with no room — and a reader of `profileQ` who wants
+  // to know which one bit has to look at the two columns beside it, which the report prints.
+  const profileQ = Math.min(compact, thin);
   const holes = [...interiorHoles(mask, width, height)].sort(
     (a, b) => a.area - b.area || a.bounds.y - b.bounds.y || a.bounds.x - b.bounds.x,
   );
+
   const holeArea = holes.reduce((sum, hole) => sum + hole.area, 0);
   // §3.7 spells `span < 0.25` as `bounds.w * 4 < W || bounds.h * 4 < H`, against the whole
   // canvas rather than the focus. `spanQ` is the same ratio in per-mille, kept in the record
@@ -619,12 +930,18 @@ function measureFrame(context: QualityContext, index: number): SilhouetteFrame {
   // so a see-through pixel is a hole in the game world, not an eye. §4.1 names the
   // exception — a ring, a handle, a keyhole — as a known false positive that a human
   // rater's note settles, and no measurement can tell one from a mistake.
-  const smallHole = holes.find((hole) => hole.area <= 3);
-  if (smallHole !== undefined || holeArea * 100 > solid) {
-    adjustment -= 100;
-    // Point at the ≤3px hole when there is one, because that is the specific fix; otherwise
-    // at the largest, because the trigger was the total area.
-    const target = smallHole ?? holes[holes.length - 1];
+  //
+  // The two clauses of §4.1's single row are priced separately, ratio first, so a window is
+  // never mistaken for a nick. See `HOLE_NICK_PENALTY` for why the split is taken from §4.1's
+  // rating anchors rather than invented.
+  const windowHoles = holeArea * 100 > solid;
+  const nickHole = windowHoles ? undefined : holes.find((hole) => hole.area <= HOLE_SMALL_MAX_AREA);
+  if (nickHole !== undefined || windowHoles) {
+    const byRatio = windowHoles;
+    adjustment += byRatio ? HOLE_WINDOW_PENALTY : HOLE_NICK_PENALTY;
+    // Point at the ≤3px hole when the *ratio* is what fired and one exists, because that is
+    // the specific fix; otherwise at the largest, because the trigger was the total area.
+    const target = (byRatio ? holes.find((hole) => hole.area <= HOLE_SMALL_MAX_AREA) : nickHole) ?? holes[holes.length - 1];
     if (focused(context, target.bounds)) {
       issues.push({
         code: 'interior-hole',
@@ -638,12 +955,20 @@ function measureFrame(context: QualityContext, index: number): SilhouetteFrame {
     }
   }
 
-  if (compact < 300) {
-    adjustment -= 100;
+  // §4.1's `compactnessQ < 300` gate, unchanged, plus `thicknessQ < 250` beside it. The
+  // message names both readings and both numbers so a reader is never told "too thin" without
+  // being told which of the two senses it is in — a single score with two meanings behind it
+  // is the failure this split exists to prevent.
+  if (compact < COMPACTNESS_GATE || thin < THICKNESS_GATE) {
+    const deep = profileQ < THIN_PROFILE_DEEP;
+    adjustment += deep ? -200 : -100;
     if (focused(context, bounds)) {
       issues.push({
         code: 'thin-profile',
-        message: `compactness ${compact}/1000: the shape is too thin to read at game scale; thicken it, or give the sprite more pixels.`,
+        message:
+          `profile ${profileQ}/1000 (compactness ${compact}/1000, thickness ${thin}/1000 at ` +
+          `${thicknessPx}px in a ${width}x${height} canvas): the shape is too thin to read at game ` +
+          'scale; thicken it, or give the sprite more pixels.',
         rect: bounds,
         severity: 0.3,
       });
@@ -704,7 +1029,11 @@ function measureFrame(context: QualityContext, index: number): SilhouetteFrame {
     strayBounds: strays[0]?.bounds ?? null,
     borderTouch: touches,
     perimeter,
+    subjectPerimeter,
     compactnessQ: compact,
+    thicknessPx,
+    thicknessQ: thin,
+    profileQ,
     holeCount: holes.length,
     holeAreas: holes.map((h) => h.area),
     holeArea,
@@ -759,7 +1088,16 @@ function describe(frame: SilhouetteFrame, context: QualityContext): string {
     parts.push(`${frame.holeCount} interior ${plural(frame.holeCount, 'hole')} (${areasOf(frame.holeAreas)} px)`);
   }
   if (frame.borderTouch >= 3) parts.push(`reaching ${frame.borderTouch} canvas edges`);
-  if (frame.compactnessQ < 300) parts.push(`thin profile at ${frame.compactnessQ}/1000`);
+  // Both readings, always together, because "thin" is two claims and a verdict that said
+  // only the number would leave the reader guessing which sense it meant. Cheap, and it is
+  // the same string the issue carries.
+  if (frame.compactnessQ < COMPACTNESS_GATE || frame.thicknessQ < THICKNESS_GATE) {
+    parts.push(
+      `thin profile at ${frame.profileQ}/1000 (compactness ${frame.compactnessQ}, thickness ` +
+        `${frame.thicknessQ} at ${frame.thicknessPx}px)`,
+    );
+  }
+
   const bounds = frame.bounds;
   if (bounds !== null && (bounds.w * 4 < context.width || bounds.h * 4 < context.height)) {
     parts.push(`only ${bounds.w}x${bounds.h} of ${context.width}x${context.height}`);

@@ -90,6 +90,27 @@ export type CorpusProvenance = 'generated' | 'repo-artwork' | 'repo-png';
  * that misses a defect" a checkable property rather than an aspiration: a control case is
  * required to declare `expect.absent`, so a quiet analyzer and a noisy one produce different
  * results.
+ *
+ * ## Which codes are here and which are not, and why
+ *
+ * Six of `value`'s seven codes have a case that declares them; the seventh,
+ * `key-light-inconsistent`, deliberately does not, and the reason is a finding rather than an
+ * omission. **§4.2's `keyLight` is a subject-level check being applied to scenes.** It samples
+ * two ninths of `bounds` — the top-left and the bottom-right — and subtracts the means, on the
+ * assumption that they are two sides of one lit form. In a landscape those corners are
+ * *different materials*: measured on this repository's ten committed scenes, the check reads
+ * 10, 6 and 10 on three of them, which is inside §4.2's own `0 <= keyLight < 12` clause, so it
+ * fires. Two of the ten are the same scene at two settings, so the honest count is "two scenes
+ * in three renderings", and the finding is the same either way: a check that reads a lit subject
+ * is reporting on a photograph of a valley.
+ *
+ * The right fix is a §3.3 quantity — "which pixels belong to the same lit form" — and
+ * `TASKS.md` records T-012 correctly declining to invent one for `convexCorner` from inside a
+ * dimension. So this is recorded rather than fixed, in three places: here, in
+ * `DECLARED_QUANTITIES` for the curvature gate that fails the same way, and in the report's own
+ * `value` table, which prints `keyLight` on every row so a reader can see which subjects the
+ * number is a claim about. What is *not* done is dropping the code, because a code that quietly
+ * stops appearing in a test is a code that quietly stops working.
  */
 export type DefectKind =
   | 'clean-control'
@@ -100,7 +121,13 @@ export type DefectKind =
   | 'subject-undersized'
   | 'fragmented-silhouette'
   | 'empty-frame'
-  | 'frames-identical';
+  | 'frames-identical'
+  | 'plane-crosses-form'
+  | 'hue-carries-form'
+  | 'flat-value'
+  | 'narrow-value-range'
+  | 'shadow-crushed'
+  | 'highlight-blown';
 
 /** One injected defect and why it is there. The note is the reviewer's context, not the assertion. */
 export interface CorpusDefect {
@@ -133,12 +160,17 @@ export type MeasuredQuantity =
   | 'strayQ'
   | 'borderTouch'
   | 'perimeter'
+  | 'subjectPerimeter'
   | 'holeCount'
   | 'holeArea'
   | 'spanQ'
   | 'convexCorners'
   | 'compactnessQ'
+  | 'thicknessPx'
+  | 'thicknessQ'
+  | 'profileQ'
   | 'scoreQ';
+
 
 /** The two connectivity counts, pinned in both directions by one declaration. */
 export interface ConnectivityExpectation {
@@ -264,15 +296,22 @@ export interface SyntheticCase {
   readonly recipe: Recipe;
   readonly expect: CorpusExpectation;
   /**
-   * The §6.2 contrast-pair group this case belongs to, if any.
+   * The §6.2 contrast-pair groups this case belongs to.
    *
    * A matched pair differing in exactly one property is the cheapest regression test this system
    * has and the only one that catches a mis-targeted measurement, so the grouping is data rather
    * than a naming convention: the report can then compute the *size of the gap* between members,
    * which §6.2 says is the thing worth reviewing ("a pair that separates by 0.02 is passing the
    * test and still wrong").
+   *
+   * **A list, not a single group, because a contrast is a relation and a relation is not a
+   * partition.** A 3px band is the reference for two different questions — "the same drawing on
+   * two canvases" and "the same drawing at two resolutions" — and it is the *second* of those
+   * that the report was printing `not separable` for, because a one-valued field put the band on
+   * 32² in one group and could not also put it in the other. The measured answer to a negative
+   * pair is a **zero**, and a zero the report cannot print is a pair the corpus does not have.
    */
-  readonly pair?: string;
+  readonly pair?: readonly string[];
 }
 
 /** A committed asset, unlabelled. Asserts applicability and quietness; never taste. */
@@ -401,17 +440,72 @@ export const SPEC_GATES: Readonly<{ compactnessQ: number; share: number; strayRa
   span: 25,
 };
 
+/**
+ * The thresholds T-022 **derived**, kept apart from {@link SPEC_GATES} on purpose.
+ *
+ * `SPEC_GATES` is a transcription of `docs/EVALUATION.md`, and a transcription is checkable
+ * where an import is not: if the implementation hard-codes 300 and this file says 300, the
+ * two agreeing is evidence, and if the spec moves the number this file is visibly stale.
+ * That property only survives while nothing in this file was *invented*, so T-022's own
+ * numbers live here with a name that says whose they are.
+ *
+ * Every member is a **policy proposal with a distribution behind it, not a settled gate**, and
+ * the distribution is in `baseline.md`. TASKS.md's standing decision is that a threshold is a
+ * product decision; the routing of a fix was "fix the measurement, not the gate", and this is
+ * where the numbers that routing forced into the open are recorded so they can be argued about
+ * rather than discovered in a diff.
+ *
+ *   - `thicknessQ` has **no line in §4.1 at all** — it is the gate for a quantity T-022 added.
+ *     250 is transcribed from §3.7's `span < 0.25` ("a subject must occupy a quarter of the
+ *     room") rather than picked, which is the honest alternative to a number chosen to make the
+ *     corpus come out the way it already looked.
+ *   - `profileDeep` and `holeNick` are the two band edges T-022 added, both **below** the gate
+ *     they grade, so no subject that fired before stops firing.
+ */
+export const DERIVED_POLICY: Readonly<{
+  /** `silhouette`'s scale-aware gate: `thicknessQ < thicknessQ` -> `thin-profile`. */
+  thicknessQ: number;
+  /** `profileQ < profileDeep` costs twice the existing step. A second band, below the gate. */
+  profileDeep: number;
+  /** `interior-hole`'s ≤3px clause, when the ratio clause did not fire. */
+  holeNick: number;
+  /** Why each of the three is where it is, for the report and for a reviewer. */
+  readonly rationale: Readonly<Record<'thicknessQ' | 'profileDeep' | 'holeNick', string>>;
+}> = {
+  thicknessQ: 250,
+  profileDeep: 150,
+  holeNick: 50,
+  rationale: {
+    thicknessQ:
+      'Transcribed from §3.7\'s `span < 0.25`, the specification\'s one statement about how much of the canvas a subject must occupy to count as present. Not a line of §4.1, and §4.1 has no row for a thickness gate at all.',
+    profileDeep:
+      'A second step BELOW the existing `compactnessQ < 300`, so the trigger and the set of subjects that fire are unchanged. Grading anything above 150 is impossible without moving the gate, which TASKS.md forbids.',
+    holeNick:
+      '§4.1 prices both hole clauses at -100. The split comes from §4.1\'s own rating anchors: "4 — one mass, one small nick: a single 1-2 px hole" against "2 — ... several holes". A nick is half a window; the window keeps §4.1\'s -100 exactly.',
+  },
+};
+
+
 /* ------------------------------------------------------------------ *
- * §3.3 quantities that have no implementation yet
+ * §3.3 quantities: what is measured, and what is still in conflict
  * ------------------------------------------------------------------ */
 
 /**
- * The measurement record for a §3.3 name that exists in the specification and not in the code.
+ * The measurement record for a §3.3 name: what the specification says, what this repository
+ * does about it, and — where the specification says two incompatible things — the numbers that
+ * settle the argument.
  *
  * Written down because §3.3 is self-contradictory about one of them and the next dimension to
  * need it will otherwise have to re-derive the answer from the same argument. This is the shape
  * `countConvexCorners`' doc comment takes, generalised: a claim about a specification belongs
  * next to the data, not in a comment the next revision will not trip over.
+ *
+ * **`status` is about the code, not about the specification.** `'implemented'` means the pipeline
+ * measures this name today; the specification can still be in conflict, and two of the entries
+ * here are implemented *and* conflicted, which is the state that is easy to miss and expensive to
+ * rediscover. A conflict with no implementation is a task waiting for an owner; a conflict with
+ * one is a divergence between a committed number and a committed document, and the next revision
+ * of §3.3 has to reconcile it deliberately rather than by whoever reads the diff.
  */
 export interface QuantityDeclaration {
   readonly name: string;
@@ -425,13 +519,16 @@ export interface QuantityDeclaration {
   readonly neededBy: readonly string[];
   /**
    * A shape on which two candidate definitions of this quantity give different answers, spelled
-   * out so the test is written from the record rather than from the argument a second time.
+   * out so the test is written from the record rather than from the argument a second time. More
+   * than one shape where one of them is the shape that *fails* to discriminate, because that is
+   * the half of the evidence a reader needs in order to trust the other half.
    */
   readonly discriminator?: string;
   /**
-   * The two answers, as `[label, value]` pairs, for the shape named above. Measured by the
-   * corpus test from two small local reference implementations of the *specification's* wording —
-   * not from the pipeline, which does not implement either reading.
+   * The answers, as `[label, value]` pairs, for the shapes named above — every reading on every
+   * shape, so a tie is visible as a tie rather than hidden by dropping a row. Measured by the
+   * corpus test from small local reference implementations of the *specification's* wordings, and
+   * not from the pipeline, which implements one reading and would therefore agree with itself.
    */
   readonly discriminatorValues?: readonly (readonly [string, number])[];
 }
@@ -439,12 +536,19 @@ export interface QuantityDeclaration {
 /**
  * Every §3.3 name the pipeline touches or defers, and the one place its status is written.
  *
- * The implemented entries are the ones `measure.ts` re-exports, plus the two §4.1 refinements
+ * The implemented entries are the ones `measure.ts` owns, plus the two §4.1 refinements
  * (`perimeter` as a transition count, holes as background-8/holes-4) which are decisions about
- * *how* a name is counted rather than new names. The two unimplemented entries are the real
- * findings: `dist`/`Dmax` is defined twice incompatibly, and §3.3's `convexCorner` is measured
- * and measured to be 0 on every convex shape in the pipeline, which makes §4.2's curvature gate
- * inert in both directions.
+ * *how* a name is counted rather than new names.
+ *
+ * **Nothing is unimplemented any more, and the two findings that replaced that status are both
+ * "implemented, and wrong somewhere".** `dist`/`Dmax` is defined twice incompatibly in §3.3 and
+ * this repository measures the prose reading anyway, which leaves §4.2's own worked example
+ * written against the other one — a divergence between a committed number and a committed
+ * document, recorded with all six measurements that produce it. And §3.3's `convexCorner` is
+ * measured as written, reads 0 on every convex shape in the pipeline, and is inert in both
+ * directions as §4.2's curvature gate, which is why that gate reads 0 on all ten full-bleed
+ * scenes and the form sub-term is 1000 on 12 of the 12 real assets. Both are next to their data
+ * rather than in a changelog, which is the whole reason this file exists.
  */
 export const DECLARED_QUANTITIES: readonly QuantityDeclaration[] = [
   {
@@ -475,6 +579,29 @@ export const DECLARED_QUANTITIES: readonly QuantityDeclaration[] = [
     neededBy: ['silhouette', 'value'],
   },
   {
+    name: 'compactnessQ',
+    status: 'implemented',
+    adopted:
+      'Scale-invariant shape descriptor, and scale-invariant on purpose: measured over the LARGEST 4-connected component (the subject), never the whole mask, so a subject is not charged for the fragments beside it.',
+    specText:
+      'min(1000, rhu(4 * 355 * 1000 * N, 113 * perimeter * perimeter)). §4.1 does not say whether N and perimeter are the whole mask or the subject; T-021 measured the whole-mask reading and it is the second of the two defects T-022 fixed.',
+    neededBy: ['silhouette'],
+    discriminator:
+      'A 5x5 square, measured alone (785) and beside two other 5x5 squares it does not touch (259). The whole-mask reading scores the fragment; the subject reading does not.',
+  },
+  {
+    name: 'thicknessPx',
+    status: 'implemented',
+    adopted:
+      'Side of the subject\'s largest inscribed axis-aligned square, in pixels. NOT §3.3\'s `Dmax`, which is measured below on the prose reading, and deliberately not a redefinition of it.',
+    specText:
+      'Not in §3.3. T-022 added it as the scale-aware reading §3.3\'s `Dmax` paragraph argues for — "Dmax doubles as the sprite\'s own scale ... a 3px-wide blade and a 30px-wide cloak do not have the same room to put a curved terminator in" — computed by the one method with no `dist` reading to choose between. `thicknessQ` is this against `min(W, H)`.',
+    neededBy: ['silhouette'],
+    discriminator:
+      'A 28x3 band, drawn twice: centred on 32x32 and centred on 1024x1024. compactnessQ is 275 on both, which is the shape descriptor being right not to move — it is the same drawing — and thicknessQ is 94 against 3, with thicknessPx 3 in both. A maximal square is a per-side count rather than a half-thickness, so on a disc it reads about 30% under the diameter; that bias is stated rather than tuned away.',
+  },
+
+  {
     name: 'holes',
     status: 'implemented',
     adopted: 'Background counted with 8-connectivity, holes with 4-connectivity.',
@@ -484,33 +611,87 @@ export const DECLARED_QUANTITIES: readonly QuantityDeclaration[] = [
   },
   {
     name: 'dist / Dmax',
-    status: 'unimplemented',
+    status: 'implemented',
     // The prose wins over the table for the same reason the 4-connected subject wins over an
     // 8-connected one: everything else in §3.3 is 4-connected, and a Chebyshev `dist` over an
     // 8-connected neighbourhood would let `value`'s plane-depth normalisation disagree with
-    // `noise`'s thin-sprite rule about where a boundary is. Stated here as the adopted reading,
-    // not implemented, and the discriminator below is what the implementing dimension has to
-    // reproduce.
-    adopted: '4-connected multi-source BFS from every edgePixel, +1 per step (the prose).',
+    // `noise`'s thin-sprite rule about where a boundary is. The status is `implemented` because
+    // T-013 measured it rather than leaving it declared: `distField` in
+    // `packages/core/src/quality/measure.ts` is the prose, verbatim, and `value` is its first
+    // consumer. T-021 recorded this as an open conflict with no owner; the owner arrived and
+    // settled it, which is the only way a record like this should ever change status.
+    adopted:
+      '4-connected multi-source BFS from every edgePixel, +1 per step (the prose), as `distField` in `quality/measure.ts`. `Dmax` is its max over the solid pixels and is on every `ValueFrame`, so `outline` (T-016) and `noise` (T-015) read the same field rather than re-running the BFS.',
     specText:
       'Table: "the Chebyshev distance to the nearest non-solid pixel or to the canvas edge". Prose: "a multi-source BFS over the solid mask from every edgePixel, 4-connected, with +1 per step".',
     neededBy: ['value', 'outline', 'noise'],
+    // **T-022's correction, and the finding.** T-021 shipped a 3x3-minus-a-corner discriminator
+    // and two values, calling the second one "the prose". It is not: a BFS *confined to the solid
+    // mask* from every `edgePixel` reaches the centre in one step, agreeing with the table. What
+    // returns 2 is a BFS over the WHOLE grid from every non-solid pixel — Manhattan distance to
+    // the nearest non-solid pixel, a third reading the specification does not state, and one that
+    // also fails the table's own "0 on an `edgePixel`" clause, since an edge pixel sits 1 from a
+    // non-solid pixel by that measure. So T-021's shape separates the table from an unstated
+    // reading and leaves the reading the specification *does* state untested.
+    //
+    // Both shapes are recorded, because the one that does not discriminate is as load-bearing as
+    // the one that does: it is the evidence that a discriminator has to be *checked* against all
+    // three readings rather than trusted, and `quality-corpus.test.ts` measures all three on both
+    // of them from local reference implementations of the three wordings, in the order §3.3
+    // writes them.
     discriminator:
-      'A 3x3 solid block with ONE corner pixel removed. The pixel diagonally opposite the removed corner has all four of its orthogonal neighbours solid and one transparent diagonal, so the only transparent pixels it can see are diagonal: L-infinity reaches them in one step and L1 needs two.',
+      'Two shapes, and the reason there are two. A 5x5 block is the discriminating one: its centre is 3 from the nearest non-solid pixel in L-infinity, 3 in L1 (the two agree, because the nearest non-solid pixel is axis-aligned from the centre), and **2** through the solid mask from the nearest edge pixel — so it separates the prose from both of the others. The 3x3 block with ONE corner pixel removed, which T-021 shipped, does **not**: the pixel diagonally opposite the removed corner has all four orthogonal neighbours solid, so the only transparent pixels it can see are diagonal, and every reading that gets there in one step gets there in one step. Chebyshev 1, whole-grid 2, prose 1. §3.3 still defines `dist` twice, so the next revision of the spec has to pick one with all six numbers in front of it.',
     discriminatorValues: [
-      ['Chebyshev (L-infinity, the table)', 1],
-      ['4-connected BFS (L1, the prose)', 2],
+      ['5x5 block — Chebyshev (L-infinity, the table)', 3],
+      ['5x5 block — whole-grid BFS from every non-solid pixel (L1, unstated)', 3],
+      ['5x5 block — BFS confined to the solid mask from every edgePixel (the prose, adopted)', 2],
+      ['3x3 block, one corner removed — Chebyshev (L-infinity, the table)', 1],
+      ['3x3 block, one corner removed — whole-grid BFS from every non-solid pixel (L1, unstated)', 2],
+      ['3x3 block, one corner removed — BFS confined to the solid mask from every edgePixel (the prose, adopted)', 1],
     ],
+    // **§4.2's own worked example is written against the other reading, and this is the number
+    // that says so.** §4.2 records `Dmax` 8 for a 32x32 character and normalises `spanQ` by
+    // `Dmax + 1 = 9`. This repository's own 32x32 character body — the 25-row silhouette
+    // `packages/cli/src/demo.ts` builds its whole tonal stack from, which is the same row table
+    // `quality-value.test.ts` shades — measures **Chebyshev 8, whole-grid 11, prose 10** on the
+    // three readings. So the example's 8 is the table's answer exactly, and the adopted reading
+    // gives 10 for the same pixels. The example is not wrong about the artwork; it is written
+    // against the half of §3.3 the implementation does not use, and the next revision has to
+    // re-derive it. The corpus prints the adopted `Dmax` beside every `value` row so the two
+    // numbers can never be confused again.
   },
   {
     name: 'convexCorner',
     status: 'implemented',
-    adopted: 'Measured as §3.3 defines it, which counts concave corners and so reads 0 on every convex shape.',
+    // **Two definitions of this one name now exist, and which one each caller reads is the
+    // load-bearing part of this record.** `silhouette` reports §3.3's clause verbatim
+    // (`countConvexCorners`, `SilhouetteFrame.convexCorners`) and it is 0 on every convex shape
+    // in the pipeline; §4.2's curvature gate reads the corrected predicate instead
+    // (`countConvexStaircaseCorners`, through `value`'s `curvedQ`), which is why the gate fires
+    // at all. Retiring either is a §3.3 revision plus an edit to `silhouette.ts`, so both stand
+    // and the corpus prints them side by side on every row (`cCorners` and `stairCorn`).
+    adopted:
+      'Two, and the difference is load-bearing. `silhouette` measures §3.3\'s clause verbatim, which counts concave corners and so reads 0 on every convex shape; §4.2\'s curvature gate reads `countConvexStaircaseCorners`, a pixel on a convex 45-degree staircase, because §4.2\'s prose is about that and not about this.',
     specText:
       'p is solid, exactly 2 of its 4 orthogonal neighbours are solid, those 2 are adjacent, and the diagonal pixel between them is transparent. §4.2 then claims this is "the signature of a 45-degree staircase on a convex boundary".',
-    neededBy: ['value'],
+    neededBy: ['silhouette', 'value'],
     discriminator:
-      'A 32x32 filled disc, a 16x16 square, a 3px-wide diagonal band: all three measure 0, and a 45-degree chamfer on a block also measures 0. Only a one-pixel nick cut diagonally outside a corner measures 1.',
+      'A 32x32 filled disc, a 16x16 square, a 3px-wide diagonal band: all three measure 0 under §3.3\'s clause, and a 45-degree chamfer on a block also measures 0. Only a one-pixel nick cut diagonally outside a corner measures 1. The corrected predicate reads 64, 4 and 46 on the same three shapes.',
+    // **The curvature gate is inert on every full-bleed scene, and this is the measurement.**
+    // `curvedQ` is 0 on all ten of this repository's committed scenes — and `reachQ`, the other
+    // gate in the same product, is under 500 on all ten as well — so `crossesQ` is 0 and the
+    // whole form sub-term is 1000 on 12 of the 12 real assets, and on every synthetic control in
+    // the corpus. The cause is one fact: `curvedQ` counts `edgePixel`s within Chebyshev 3 of the
+    // tone plane, and a full-bleed subject has no edge pixel except the canvas frame, which is
+    // nowhere near a plane in the middle of a landscape. So a straight shadow band across a
+    // curved mountain is currently excused, and the two gates that would catch it are both
+    // reading a silhouette.
+    //
+    // The fix is a local-curvature source that does not come from the silhouette at all — a
+    // **new §3.3 quantity** — and guessing at one from inside a dimension is precisely what
+    // `TASKS.md` records T-012 correctly declining to do for this very name. So it is recorded
+    // and not invented. The report prints `curvedQ` and `reachQ` on every `value` row so the
+    // inertness is visible in a committed file rather than remembered.
   },
 ];
 
@@ -532,7 +713,21 @@ export class CorpusFormatError extends Error {
   }
 }
 
-const DEFECT_KINDS: readonly DefectKind[] = [
+/**
+ * Every {@link DefectKind}, and the one list a coverage question is asked against.
+ *
+ * **Exported so the coverage guard can enumerate it rather than repeat it.** A hard-coded list of
+ * defect names inside `quality-corpus.test.ts` is a second copy of a closed set, and a second copy
+ * of a closed set is what the `value` work made stale: the dimension landed, the codes landed,
+ * this list landed, and the test's copy of the names did not. Deriving the *coverage* question
+ * from the loader's own list is not the circularity the sibling test in that file warns about —
+ * there the list is compared for *identity* against the module's exports, so deriving it would be
+ * satisfied by any re-implementation. Here the ground truth is "every code in the closed enum has
+ * a case that says what it means", and the closed enum is a specification, not an implementation.
+ * `quality-corpus.test.ts` pins a floor on its size, so a truncated list cannot make the
+ * derivation vacuous.
+ */
+export const DEFECT_KINDS: readonly DefectKind[] = [
   'clean-control',
   'detached-pieces',
   'interior-hole',
@@ -542,6 +737,18 @@ const DEFECT_KINDS: readonly DefectKind[] = [
   'fragmented-silhouette',
   'empty-frame',
   'frames-identical',
+  // T-013: six of `value`'s seven codes. §4.2's own table has eleven; the one with no case here
+  // is `key-light-inconsistent`, and its absence is a recorded finding rather than an omission —
+  // see the note on `DefectKind`. The code is not dead: it fires on
+  // `value/hue-carries-form-32` and on three of the ten committed scenes. It is a subject-level
+  // check with no subject-level case, and adding one would mean asserting that a valley is lit
+  // from the wrong side, which is a taste claim this repository has one sample of.
+  'plane-crosses-form',
+  'hue-carries-form',
+  'flat-value',
+  'narrow-value-range',
+  'shadow-crushed',
+  'highlight-blown',
 ];
 
 const MEASURED_QUANTITIES: readonly MeasuredQuantity[] = [
@@ -555,11 +762,15 @@ const MEASURED_QUANTITIES: readonly MeasuredQuantity[] = [
   'strayQ',
   'borderTouch',
   'perimeter',
+  'subjectPerimeter',
   'holeCount',
   'holeArea',
   'spanQ',
   'convexCorners',
   'compactnessQ',
+  'thicknessPx',
+  'thicknessQ',
+  'profileQ',
   'scoreQ',
 ];
 
@@ -849,9 +1060,33 @@ export function loadCorpusSpec(raw: unknown): CorpusSpec {
       if (defects.some((d) => d.kind === 'clean-control') && (expect.absent ?? []).length === 0) {
         fail(where, 'a clean control must declare expect.absent naming at least one code that must NOT fire');
       }
+      // A case that declares a defect and also declares that same code absent is saying two
+      // contradictory things about one picture, and the runner only reports whichever it happens
+      // to check first. `defect/subject-undersized-64` carried exactly that for a whole task: it
+      // declared `thin-profile` and listed it under `absent`, and it was caught by a test rather
+      // than by the loader, which is the wrong order for a contradiction.
+      for (const defect of defects) {
+        if (defect.kind === 'clean-control') continue;
+        if ((expect.absent ?? []).includes(defect.kind)) {
+          fail(where, `declares defect "${defect.kind}" and also expects.absent to carry it; a case cannot require a code to fire and not fire`);
+        }
+      }
       const recipe = validateRecipe(`${where}.recipe`, entry.recipe);
-      if (entry.pair !== undefined && typeof entry.pair !== 'string') {
-        fail(where, '"pair" must be a group name shared with the case it is a matched pair against');
+      if (entry.pair !== undefined) {
+        // An array of group names, not one. See `SyntheticCase.pair`: a contrast is a relation,
+        // so a case belongs to as many groups as it has contrasts, and a one-valued field made
+        // the report print `not separable` for a pair whose measured answer is 0.
+        if (!Array.isArray(entry.pair) || entry.pair.length === 0) {
+          fail(where, '"pair" must be a non-empty array of group names');
+        }
+        for (const group of entry.pair) {
+          if (typeof group !== 'string' || group.length === 0) {
+            fail(where, 'each "pair" entry must be a non-empty string');
+          }
+          if (!group.includes('/')) {
+            fail(`${where}.pair`, `"${group}" should be namespaced "<dimension>/<name>" like the case ids are`);
+          }
+        }
       }
       return {
         id,
@@ -861,7 +1096,7 @@ export function loadCorpusSpec(raw: unknown): CorpusSpec {
         defects,
         recipe,
         expect,
-        ...(entry.pair === undefined ? {} : { pair: entry.pair as string }),
+        ...(entry.pair === undefined ? {} : { pair: entry.pair as readonly string[] }),
       };
     }
 

@@ -84,7 +84,9 @@ UPDATE_CORPUS=1 pnpm --filter @pixel/core exec vitest run test/quality-corpus.te
 
 ## Writing a case
 
-A case is five things: an `id`, a `label`, a `recipe`, its `defects`, and its `expect`.
+A case is five things: an `id`, a `label`, a `recipe`, its `defects`, and its `expect` — plus a
+`pair` when it belongs to a §6.2 contrast group, which is a **list** of group names because a
+contrast is a relation and a relation is not a partition.
 
 ```json
 {
@@ -189,18 +191,65 @@ T-026 own it.
 
 **It is not exhaustive, and it does not pretend to be.** Coverage is aimed at the failure modes that
 have already been found - negative controls, the 1px-margin trap, the 4-vs-8 connectivity decision,
-the `compactnessQ` gate, the multi-frame rules - because a corpus of only failures calibrates the
-detector and not the scale, and a corpus that only samples the easy end calibrates against its own
-failure modes. §6.2's contrast pairs for `value`, `noise`, `outline` and `motion` are absent because
-those analyzers do not exist; the slot is the `pair` field, and adding one is a data change.
+the `compactnessQ` gate, the multi-frame rules, §4.2's form-conformance term and one case per
+single-code defect §4.2 lists - because a corpus of only failures calibrates the detector and not
+the scale, and a corpus that only samples the easy end calibrates against its own failure modes.
+§6.2's contrast pairs for `noise`, `outline` and `motion` are absent because those analyzers do not
+exist; the slot is the `pair` field, and adding one is a data change.
 
-**`benchmarks/` typechecking is manual, and that is a known gap.** `benchmarks/tsconfig.json`
-exists and the harness typechecks cleanly under it, but no CI step runs it - the same gap T-093
-records for `scripts/npm-index.ts`. It was added because running the check once immediately found a
-type error in `report.ts` that vitest had transpiled straight past, which is the failure a harness
-nobody checks accumulates. Wiring it into the root `typecheck` script is T-093's work, not this
-task's. Run it by hand with:
+`pair` is a **list** of group names, and the list is the point. A contrast is a relation and a
+relation is not a partition: the 3px band on 32² is the reference both for "the same drawing on two
+canvases" and for "the same drawing at two resolutions", and with a one-valued field one of the two
+had to be dropped - which is how the report came to print `not separable` for a pair whose measured
+answer is 0 on all five axes. A pair designed to come out at zero is the one §6.2 wants most and the
+one a corpus that only carried the pairs it passes would hide.
+
+## Two findings the corpus holds rather than fixes
+
+Both are real, both are outside what this directory may change, and both are recorded in three
+places - here, in `DECLARED_QUANTITIES` or `DEFECT_KINDS` in `format.ts`, and as an assertion in
+`quality-corpus.test.ts` - because a finding that lives in a comment is a finding the next revision
+will not trip over. Neither is fixed, and the reason is the same in both: the fix is a **new §3.3
+quantity**, and `TASKS.md` records T-012 correctly declining to invent one from inside a dimension
+for `convexCorner` itself.
+
+- **§4.2's curvature gate reads nothing on a full-bleed subject.** `curvedQ` counts `edgePixel`s
+  within Chebyshev 3 of the tone plane, and a full-bleed subject has no edge pixel except the
+  canvas frame - so it is **0 on all ten** of this repository's committed scenes, and `reachQ` is
+  under its 500 floor on all ten for the same reason. `crossesQ` is therefore 0, the whole form
+  sub-term is 1000 on **all twelve** real assets, and a straight shadow band across a curved
+  mountain is excused today. The fix is a local-curvature source that does not come from the
+  silhouette at all. Section 2b prints `curvedQ` and `reachQ` on every row so the inertness is
+  re-measured on every run rather than remembered.
+- **§4.2's `keyLight` is a subject-level check applied to scenes.** It samples two ninths of
+  `bounds` and subtracts, on the assumption that the corners are two sides of one lit form; in a
+  landscape they are different materials. It reads 10, 6 and 10 on three of the ten scenes - two
+  scenes in three renderings - which is inside §4.2's own `0 <= keyLight < 12` clause, so it fires
+  on finished, committed paintings. `key-light-inconsistent` is therefore the one `value` code with
+  no case that *declares* it: a case that declared it would be asserting that a valley is lit from
+  the wrong side, and this repository has one human-rated asset.
+
+The smallest subject in the corpus is the evidence for the second. `connectivity/background-diagonal-leak-9`
+is a 5x5 block, §4.2's sample regions are 1x1 before they grow, and they grow to the **full width** -
+at which point a band lit from the left appears in both samples and the difference reads -25: lit
+from behind, on a block that is lit from the left. The case is banded from above instead, and its
+`absent` list names `key-light-inconsistent` so it says out loud that the light direction is not what
+it is about.
+
+**`benchmarks/` is typechecked by `pnpm typecheck`, and that is checked too.**
+`benchmarks/tsconfig.json` was added by T-021 as a manual step, and T-021 recorded why: running it
+once immediately found a type error in `report.ts` that vitest had transpiled straight past, which
+is exactly the failure a harness nobody checks accumulates. T-022 wired it into the root
+`typecheck` script, the same way T-093 wired `tsconfig.npm.json` for `scripts/`:
 
 ```bash
-node node_modules/typescript/lib/tsc.js -p benchmarks/tsconfig.json
+node node_modules/typescript/lib/tsc.js -p benchmarks/tsconfig.json   # on its own
+pnpm typecheck                                                        # with everything else
 ```
+
+`quality-corpus.test.ts` asserts two things about that wiring, because a check that can quietly
+stop running is not a check: that the root `typecheck` script still names this project, and that
+its `include` covers **every** `.ts` file under `benchmarks/`. Deleting one `tsc` invocation from
+`package.json`, or adding a harness file outside the glob, is otherwise a silent hole in CI that
+no other test could see. That is T-021's lesson applied to the check itself.
+

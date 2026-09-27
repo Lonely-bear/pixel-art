@@ -21,6 +21,7 @@ import {
   type QualityDimensionRegistration,
 } from '../src/quality/index.js';
 import { silhouetteAnalyzer } from '../src/quality/silhouette.js';
+import { valueAnalyzer } from '../src/quality/value.js';
 import {
   assertReportInvariants,
   DEFAULT_QUALITY_WEIGHTS,
@@ -185,9 +186,15 @@ describe('a full-bleed document has no subject, and silhouette says so', () => {
     // Before the precondition existed, this document scored 800 with `shape-clipped` at
     // severity 0.80 — blocking — because `borderTouch` is 4 whenever the ink runs to the
     // frame. The issue is not filtered out of the report; the dimension that invented it is
-    // never run, which is why the blocking list is empty here rather than merely quiet.
+    // never run, which is why the blocking list carries no silhouette code here rather than
+    // being merely quiet.
     const report = evaluate(firstContext(fullBleed()));
-    expect(codes(report.blocking)).toEqual([]);
+    // The one blocking code is `flat-value`, and it is `value`'s: the fixture is a single flat
+    // colour, which is the defect §4.2 names. `value` is the dimension that is *supposed* to have
+    // an opinion about a full-bleed document, so this list is not empty any more and the honest
+    // form of the claim is per dimension rather than per list.
+    expect(codes(report.blocking)).toEqual(['flat-value']);
+    expect(codes(report.blocking)).not.toContain('shape-clipped');
     // And the measurement really would have fired it, so this is not a vacuous assertion.
     const raw = silhouetteAnalyzer(firstContext(fullBleed()));
     expect(codes(raw.issues)).toContain('shape-clipped');
@@ -382,32 +389,39 @@ describe('motion applicability is the aggregator\'s, and stays the contract\'s t
 });
 
 describe('a dimension with no analyzer is reported as unmeasured, not as perfect', () => {
-  it('accounts for every id exactly once while five of six do not exist', () => {
+  it('accounts for every id exactly once while four of six do not exist', () => {
+    // **Was "five of six"**, and the rename is the point: `value` landed with an analyzer and a
+    // registration, so four remain. The invariant underneath is unchanged and is the reason this
+    // test exists — no id is in neither map, which is the silent hole a `Record` would have had no
+    // way to express.
     const report = evaluate(firstContext(insetBy(2)));
-    expect(Object.keys(report.dimensions)).toEqual(['silhouette']);
+    expect(Object.keys(report.dimensions)).toEqual(['silhouette', 'value']);
     expect(report.excluded).toEqual({
-      value: 'not-implemented',
       palette: 'not-implemented',
       noise: 'not-implemented',
       outline: 'not-implemented',
       motion: 'not-implemented',
     });
-    // This is the invariant the partial record buys: no id is in neither map, which is the
-    // silent hole a `Record` would have had no way to express.
     expect(reportInvariantViolations(report)).toEqual([]);
   });
 
   it('fails closed when nothing at all could be measured', () => {
-    // A full-bleed scene today, because value/palette/noise do not exist yet. 0 rather than
-    // 1000: the report must not tell an agent that a document nobody could measure is
-    // perfect. The reason travels in `excluded`, so the reader sees "0.00, nothing
-    // measured" and not "0.00, bad art".
+    // A full-bleed scene with the registry emptied, which is what the pipeline looked like before
+    // `value` registered. 0 rather than 1000: the report must not tell an agent that a document
+    // nobody could measure is perfect. The reason travels in `excluded`, so the reader sees
+    // "0.00, nothing measured" and not "0.00, bad art".
     const report = evaluate(firstContext(fullBleed()), []);
     expect(Object.keys(report.dimensions)).toEqual([]);
     expect(Object.values(report.excluded).every((reason) => reason === 'not-implemented')).toBe(true);
     expect(report.score).toBe(0);
     expect(report.verdict).toBe('fail');
     expect(reportInvariantViolations(report)).toEqual([]);
+    // And with the real registry the same document is measured, because `value` registers with no
+    // precondition at all: a landscape is built out of value planes, so this dimension has a
+    // great deal to say about exactly the documents `silhouette` refuses.
+    const measured = evaluate(firstContext(fullBleed()));
+    expect(measured.excluded.silhouette).toBe('no-subject');
+    expect(measured.dimensions.value?.scoreQ).toBe(175);
   });
 
   it('never lets an excluded dimension drag the total toward zero', () => {
@@ -559,13 +573,18 @@ describe('the blocking list is assembled from present dimensions and the aggrega
  * ------------------------------------------------------------------ */
 
 describe('the registry is partial on purpose and works that way', () => {
-  it('registers silhouette today, and DEFAULT_ANALYZERS is a projection of it', () => {
-    expect(DEFAULT_DIMENSIONS.map((dimension) => dimension.id)).toEqual(['silhouette']);
-    expect(DEFAULT_ANALYZERS).toEqual([silhouetteAnalyzer]);
+  it('registers silhouette and value today, and DEFAULT_ANALYZERS is a projection of it', () => {
+    // **Was "registers silhouette today"**, and the rename is the finding rather than a chore:
+    // `value` registered with **no `applies` at all**, which is the decision the whole aggregator
+    // exists to make expressible — a full-bleed scene has no silhouette and does have value
+    // structure. The assertion below is that the projection is a projection and not a second list.
+    expect(DEFAULT_DIMENSIONS.map((dimension) => dimension.id)).toEqual(['silhouette', 'value']);
+    expect(DEFAULT_ANALYZERS).toEqual([silhouetteAnalyzer, valueAnalyzer]);
     expect(analyzerFor('silhouette')).toBe(silhouetteAnalyzer);
-    // Five dimensions have no analyzer, which is a fact about the build rather than about
+    expect(analyzerFor('value')).toBe(valueAnalyzer);
+    // Four dimensions have no analyzer, which is a fact about the build rather than about
     // any document, and is reported as such.
-    for (const id of ['value', 'palette', 'noise', 'outline', 'motion'] as const) {
+    for (const id of ['palette', 'noise', 'outline', 'motion'] as const) {
       expect(analyzerFor(id)).toBeUndefined();
     }
   });
@@ -762,6 +781,15 @@ describe('the repository\'s own artwork, measured through evaluate', () => {
     // An advisory, not a gate: the sprite is a subject, it reads, and the report says so
     // without pretending the measurement is settled.
     expect(report.blocking).toEqual([]);
-    expect(report.score).toBe(0.8);
+    // **The total is 823, not 800, and that is the weighted mean over the active set.** `value`
+    // registered and measured this sprite at 850, so the report is rhu(300 * 800 + 260 * 850, 300
+    // + 260) = 823 over a denominator of 560 — a 920-denominator still-sprite mean would not apply,
+    // because `motion` is the only dimension a still sprite excludes and `value` is measured. The
+    // arithmetic is written out because "the score moved and nothing about the art did" is exactly
+    // the kind of diff a reviewer should not have to reconstruct.
+    expect(report.dimensions.silhouette?.scoreQ).toBe(800);
+    expect(report.dimensions.value?.scoreQ).toBe(850);
+    expect(report.score).toBe(0.823);
+    expect(report.verdict).toBe('pass');
   });
 });

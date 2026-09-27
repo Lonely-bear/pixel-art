@@ -7,10 +7,13 @@ import {
   compactnessQ,
   connectedComponents,
   countConvexCorners,
+  inscribedSquareSide,
   interiorHoles,
   measureSilhouette,
   rhu,
   silhouetteAnalyzer,
+  subjectMask,
+  thicknessQ,
   type SilhouetteFrame,
 } from '../src/quality/silhouette.js';
 import { isBlocking, type QualityContext, type QualityIssue } from '../src/quality/types.js';
@@ -215,9 +218,16 @@ describe('silhouette — detached-pieces', () => {
     const issue = only(frame.issues);
     expect(issue.severity).toBe(0.45);
     expect(isBlocking(issue)).toBe(false);
-    // Band 550, one stray so -75. Nothing else fires: compactness 393, span 13/16, 0 sides.
+    // Band 550, one stray so -75. Nothing else fires, and now that is the interesting half:
+    // the subject is one 6x6 square, so its compactnessQ is 785 and not the 393 the whole
+    // mask's two perimeters produced. A shape cut in two is a fragmentation defect, priced by
+    // `detached-pieces`, and the shape of each half is no longer part of the question.
     expect(dimension.scoreQ).toBe(475);
-    expect(frame.compactnessQ).toBe(393);
+    expect(frame.subjectPerimeter).toBe(24);
+    expect(frame.perimeter).toBe(48);
+    expect(frame.compactnessQ).toBe(785);
+    expect(frame.thicknessPx).toBe(6);
+    expect(frame.thicknessQ).toBe(375);
     expect(frame.borderTouch).toBe(0);
   });
 
@@ -227,21 +237,20 @@ describe('silhouette — detached-pieces', () => {
     expect(only(frames.flatMap((f) => f.issues)).rect).toEqual({ x: 9, y: 9, w: 6, h: 6 });
   });
 
-  it('escalates from -75 to -150 at two strays, and drags thin-profile with it', () => {
-    // Three blocks. Two things are worth recording here and neither is obvious from §4.1:
+  it('escalates from -75 to -150 at two strays, and no longer doubles the bill with thin-profile', () => {
+    // Three masses. Two things are worth recording here and neither is obvious from §4.1:
     //
     //   1. `fragmented-silhouette` needs `share < 50/100`, which needs three components,
     //      because two components cap `share` at exactly 500 and the test is strict.
-    //   2. **Three masses of comparable size also trip `thin-profile`.** `compactnessQ` for
-    //      `k` equal squares is `pi/(4k)`: 785 at one, 393 at two, 262 at three. So the
-    //      `strayCount >= 2` row is not independent of the `compactnessQ < 300` row, and
-    //      this sprite costs -250 rather than the -150 the table implies.
+    //   2. **This used to trip `thin-profile` as well, and that was the bug T-021 measured.**
+    //      The 7x7 body, the 8x2 tail and the 6x3 speck have three perimeters between them, so
+    //      the whole-mask quotient was 239 and the row cost -250 for what the table reads as
+    //      -150. On the subject it is a 7x7 square: compactnessQ 785, thicknessQ 438, and the
+    //      dimension says one thing — the pieces are detached — instead of saying it twice.
     //
-    // Pinned as measured behaviour. The alternative is a special case that exempts a
-    // compactness penalty whenever `detached-pieces` fired, which would make the two
-    // quantities disagree about the same shape. Note the coupling is about *comparable*
-    // masses: the counter-case below has three components too and stays well clear of it,
-    // because one dominant mass keeps the perimeter small.
+    // The coupling the previous version of this test pinned was real and it was also a defect.
+    // It is re-pinned here from the other side: the assertion that fails if somebody puts the
+    // whole mask back into `compactnessQ`.
     const { frames, dimension } = measure(
       spriteWhere(20, 16, (x, y) => {
         const body = x >= 2 && x < 9 && y >= 4 && y < 11; // 7x7 = 49
@@ -255,11 +264,13 @@ describe('silhouette — detached-pieces', () => {
     expect(frame.componentAreas).toEqual([49, 18, 16]);
     expect(frame.strayCount).toBe(2);
     expect(frame.shareQ).toBe(590);
-    expect(frame.compactnessQ).toBe(239);
+    expect(frame.subjectPerimeter).toBe(28);
+    expect(frame.compactnessQ).toBe(785);
+    expect(frame.thicknessQ).toBe(438);
     // `fragmented-silhouette` needs share < 500 and 590 is not that, so this is the case
     // that proves the comparison is strict.
-    expect(codes(frame.issues)).toEqual(['detached-pieces', 'thin-profile']);
-    expect(dimension.scoreQ).toBe(300); // 550 - 150 - 100
+    expect(codes(frame.issues)).toEqual(['detached-pieces']);
+    expect(dimension.scoreQ).toBe(400); // 550 - 150, and nothing else
   });
 
   it('does not call a dominant mass plus two specks thin, which is the counter-case', () => {
@@ -277,7 +288,13 @@ describe('silhouette — detached-pieces', () => {
     const frame = only2(frames);
     expect(frame.components).toBe(3);
     expect(frame.componentAreas).toEqual([168, 9, 9]);
-    expect(frame.compactnessQ).toBe(405);
+    // The 14x12 body alone: 52 of boundary against 168 px, so 781, and the two 3x3 specks add
+    // nothing to it. Under the whole-mask reading this was 405, which is the same story as the
+    // case above from the other direction: a big body with specks beside it was being charged a
+    // compactness penalty for the specks.
+    expect(frame.subjectPerimeter).toBe(52);
+    expect(frame.compactnessQ).toBe(781);
+    expect(frame.thicknessQ).toBe(750);
     expect(codes(frame.issues)).toEqual(['detached-pieces']);
     expect(dimension.scoreQ).toBe(750); // 900 band, -150 for two strays
   });
@@ -296,22 +313,20 @@ describe('silhouette — detached-pieces', () => {
     // Per-frame issues come out in *emission* order, which is the order the conditions are
     // evaluated in; the aggregator sorts by severity before anything is read. Asserted
     // separately below, because which one you read matters.
-    expect(codes(frame.issues)).toEqual([
-      'detached-pieces',
-      'thin-profile',
-      'fragmented-silhouette',
-    ]);
+    //
+    // The largest mass is a 5x5 square and it is alone 785, so `thin-profile` is silent and
+    // the fragmentation is priced once, by the two codes that name it. The whole-mask reading
+    // put this at 259 and charged -400 for what the table reads as -300.
+    expect(frame.compactnessQ).toBe(785);
+    expect(frame.thicknessQ).toBe(313);
+    expect(codes(frame.issues)).toEqual(['detached-pieces', 'fragmented-silhouette']);
     const blocking = frame.issues.filter(isBlocking);
     expect(blocking.map((i) => i.code)).toEqual(['fragmented-silhouette']);
-    // Base 250, then -150 -100 -150 = -400, and the result clamps at 0 rather than -150.
+    // Base 250, then -150 -150 = -300, and the result clamps at 0 rather than -50.
     expect(dimension.scoreQ).toBe(0);
     expect(dimension.verdict).toContain('no dominant mass');
     // Severity first, so a reader of the head of the list reads what blocks.
-    expect(codes(dimension.issues)).toEqual([
-      'fragmented-silhouette',
-      'detached-pieces',
-      'thin-profile',
-    ]);
+    expect(codes(dimension.issues)).toEqual(['fragmented-silhouette', 'detached-pieces']);
   });
 
   it('does not fire at exactly 2% stray, because the comparison is strict', () => {
@@ -367,7 +382,10 @@ describe('silhouette — interior-hole', () => {
     expect(frame.holeCount).toBe(1);
     expect(frame.holeAreas).toEqual([64]);
     // A 36 px ring really is thin as well as holed, so both conditions fire. Recorded
-    // rather than worked around: a ring is a 1px shape, and `thin-profile` is right.
+    // rather than worked around: a ring is a 1px shape, and `thin-profile` is right. The
+    // price is now 700 rather than 800 because the 1px wall has an inscribed square of 1px
+    // against a 16px canvas — profileQ 63, under the deep band — and §4.1's -100 becomes -200
+    // for a shape this thin without changing which subjects fire.
     expect(codes(frame.issues)).toEqual(['interior-hole', 'thin-profile']);
     const hole = frame.issues[0];
     expect(hole.code).toBe('interior-hole');
@@ -375,7 +393,9 @@ describe('silhouette — interior-hole', () => {
     expect(hole.rect).toEqual({ x: 4, y: 4, w: 8, h: 8 });
     expect(hole.message).toContain('deliberately hollow asset');
     expect(frame.compactnessQ).toBeLessThan(300);
-    expect(dimension.scoreQ).toBe(800); // 1000 - 100 - 100
+    expect(frame.thicknessPx).toBe(1);
+    expect(frame.thicknessQ).toBe(63);
+    expect(dimension.scoreQ).toBe(700); // 1000 - 100 - 200
   });
 
   it('catches a deliberate eye and a deliberate handle, both of which the spec calls defects', () => {
@@ -395,6 +415,11 @@ describe('silhouette — interior-hole', () => {
       w: 1,
       h: 1,
     });
+    // **A 1 px nick is now half the price of a window** (§4.1's own anchors: a nick is a 4, a
+    // window is a 2), and this is the discriminating case for it — 1/144 of the subject, so the
+    // ratio clause is nowhere near firing and only the `area <= 3` clause can. Before the split
+    // this cost the same -100 as a 36 px window, on shapes 288 per-mille apart.
+    expect(codes(eyeFrame.issues)).toEqual(['interior-hole']);
 
     // A handle: a 3x3 loop attached to a body, so its interior is a hole and its outer
     // side is a 1px protrusion. The hole is 1 px, so the `area <= 3` clause fires rather
@@ -428,7 +453,12 @@ describe('silhouette — interior-hole', () => {
     const mask = new Uint8Array(9 * 9);
     for (let y = 2; y < 7; y++) for (let x = 2; x < 7; x++) mask[y * 9 + x] = 1;
     mask[3 * 9 + 4] = 0; // sealed 1px pocket, fully enclosed on all four sides
-    expect(interiorHoles(mask, 9, 9)).toEqual([{ area: 1, bounds: { x: 4, y: 3, w: 1, h: 1 } }]);
+    // `seed` is the pocket's first pixel in row-major scan order, and it is carried because
+    // `subjectMask` needs a seed and `bounds` cannot supply one — two components can share a
+    // bounding box, and the earlier one in the scan is not necessarily the one asked for.
+    expect(interiorHoles(mask, 9, 9)).toEqual([
+      { area: 1, bounds: { x: 4, y: 3, w: 1, h: 1 }, seed: 3 * 9 + 4 },
+    ]);
   });
 });
 
@@ -465,15 +495,24 @@ describe('silhouette — subject-undersized', () => {
   it('reports a subject occupying a small fraction of a large canvas', () => {
     // 10x10 inside 64x64. Both edges are under a quarter of the canvas, which is the
     // `||` in §3.7's test rather than the `&&` a reader might expect.
+    //
+    // **And it is now also thin**, which is the one place the two canvas-relative codes
+    // overlap: for a square subject the inscribed square IS the short side, so thicknessQ
+    // and spanQ are both 156 and the sprite is reported twice for the same fact. Stated rather
+    // than engineered away — the alternative is special-casing square subjects out of one of
+    // the two gates, which would make a shape's square-ness decide whether a defect is
+    // reported. profileQ 156 is above the deep band, so the cost is the ordinary -100.
     const { frames, dimension } = measure(rectSprite(64, 64, { x: 27, y: 27, w: 10, h: 10 }));
     const frame = only2(frames);
     expect(frame.bounds).toEqual({ x: 27, y: 27, w: 10, h: 10 });
     expect(frame.spanQ).toBe(156);
-    expect(codes(frame.issues)).toEqual(['subject-undersized']);
-    const issue = only(frame.issues);
-    expect(issue.severity).toBe(0.3);
-    expect(isBlocking(issue)).toBe(false);
-    expect(dimension.scoreQ).toBe(900); // 1000 - 100
+    expect(frame.thicknessQ).toBe(156);
+    expect(codes(frame.issues)).toEqual(['thin-profile', 'subject-undersized']);
+    for (const issue of frame.issues) {
+      expect(issue.severity).toBe(0.3);
+      expect(isBlocking(issue)).toBe(false);
+    }
+    expect(dimension.scoreQ).toBe(800); // 1000 - 100 - 100
   });
 
   it('stays silent at exactly a quarter of an edge, because the test is a strict `<`', () => {
@@ -489,24 +528,36 @@ describe('silhouette — subject-undersized', () => {
 describe('silhouette — thin-profile', () => {
   it('catches a 1px line, which is the case edgePixels could never have caught', () => {
     // A 28x1 line. With the old edge-pixel denominator this is the *most* compact thing
-    // imaginable and scored 3900 on a 0..1 scale; with the transition perimeter it is 104,
-    // which is what `thin-profile` exists to say.
+    // imaginable and scored 3900 on a 0..1 scale; with the transition perimeter it is 105,
+    // which is what `thin-profile` exists to say. And the scale-aware reading says something
+    // the quotient cannot: 1px of inscribed square against a 32px canvas is thicknessQ 31,
+    // which is not a shape that has run out of compactness but a shape with no room in it.
     const line = spriteWhere(32, 32, (x, y) => (y === 16 && x >= 2 && x < 30 ? 255 : 0));
     const { frames, dimension } = measure(line);
     const frame = only2(frames);
     expect(frame.N).toBe(28);
     expect(frame.perimeter).toBe(58);
     expect(frame.compactnessQ).toBe(105);
+    expect(frame.thicknessPx).toBe(1);
+    expect(frame.thicknessQ).toBe(31);
+    expect(frame.profileQ).toBe(31);
     expect(codes(frame.issues)).toEqual(['thin-profile', 'subject-undersized']);
     expect(frame.issues[0].severity).toBe(0.3);
-    expect(dimension.scoreQ).toBe(800); // 1000 - 100 - 100
+    // profileQ 31 is under the deep band, so -200, plus the -100 of `subject-undersized`.
+    expect(dimension.scoreQ).toBe(700);
   });
 
-  it('does not call a 5px plus thin, and shows the edge-pixel denominator it replaced', () => {
-    // The 5-pixel plus is the spec's own worked example for why edge pixels were wrong. It
-    // has 5 edge pixels and 12 boundary transitions, so the old denominator returns 2513 on
-    // a 0..1000 scale — the most compact shape imaginable, over twice its own ceiling —
-    // while the transition count returns 436, which is what the shape is actually worth.
+  it('does call a 5px plus thin, which nothing caught before T-022', () => {
+    // The 5-pixel plus is the spec's own worked example for the `edgePixels` bug. It has 5 edge
+    // pixels and 12 boundary transitions, so the old denominator returns 2513 on a 0..1000
+    // scale — the most compact shape imaginable, over twice its own ceiling — and the
+    // transition count returns 436, which is what the shape is actually worth.
+    //
+    // The third number is the finding. Its compactnessQ of 436 is comfortably above §4.1's
+    // gate, so before T-022 the shape §4.1 uses to illustrate a thin subject was reported by
+    // this dimension as *not* thin. Every limb of a plus sign is one pixel wide, so its
+    // inscribed square is 1px against a 16px canvas: thicknessQ 63, profileQ 63, and the deep
+    // band. `subject-undersized` fires too, for the 3x3 box in a 16x16 frame.
     const plus = spriteWhere(16, 16, (x, y) => {
       const arm = (x === 8 && y >= 7 && y < 10) || (y === 8 && x >= 7 && x < 10);
       return arm ? 255 : 0;
@@ -518,8 +569,14 @@ describe('silhouette — thin-profile', () => {
     expect(frame.compactnessQ).toBe(436);
     // The old quantity, for the record: 4 * 355 * 1000 * 5 / (113 * 5 * 5).
     expect(Math.floor((4 * 355 * 1000 * 5) / (113 * 5 * 5))).toBe(2513);
-    expect(codes(frame.issues)).toEqual(['subject-undersized']);
-    expect(dimension.scoreQ).toBe(900);
+    // And the third quantity, which is a pixel count and so is not a ratio of anything: a plus
+    // has no 2x2 block anywhere in it, so the largest inscribed square is 1.
+    const plusMask = buildSolidMask(createQualityContext(plus).composite[0], 16, 16).mask;
+    expect(inscribedSquareSide(plusMask, 16, 16, { x: 7, y: 7, w: 3, h: 3 })).toBe(1);
+    expect(frame.thicknessPx).toBe(1);
+    expect(frame.thicknessQ).toBe(63);
+    expect(codes(frame.issues)).toEqual(['thin-profile', 'subject-undersized']);
+    expect(dimension.scoreQ).toBe(700); // 1000 - 200 - 100
   });
 
   it('never returns a compactness above 1000, for a disc or anything else', () => {
@@ -534,8 +591,18 @@ describe('silhouette — thin-profile', () => {
     expect(frame.compactnessQ).toBe(646);
     expect(frame.compactnessQ).toBeLessThanOrEqual(1000);
     expect(frame.compactnessQ).toBeGreaterThan(300);
+    // The scale-aware reading on the same shape, and the bias it carries: a maximal inscribed
+    // square in a digital disc of radius 15.5 is 22px, not the 31px diameter, so `thicknessQ`
+    // reads about a third under the shape's real room. Recorded rather than tuned away — the
+    // two columns are printed side by side for exactly this reason, and §4.1's gate on a disc
+    // is unaffected either way because the compactness reading is the smaller of the two.
+    expect(frame.thicknessPx).toBe(22);
+    expect(frame.thicknessQ).toBe(688);
+    expect(frame.profileQ).toBe(646);
+    expect(frame.issues).toEqual([]);
   });
 });
+
 
 /** Area of the filled disc {@link discSprite} builds, counted rather than assumed. */
 function discArea(size: number): number {
@@ -881,6 +948,213 @@ function only2(frames: readonly SilhouetteFrame[]): SilhouetteFrame {
   expect(frames).toHaveLength(1);
   return frames[0];
 }
+
+/**
+ * The two readings, and the split between them.
+ *
+ * T-021 measured two defects in the same quantity. One was that `compactnessQ` ran on the whole
+ * mask, so a subject paid for its own strays. The other was that it is scale-invariant, so a
+ * knife and a magnified knife are indistinguishable — and §3.3's own `Dmax` paragraph says so
+ * in advance, naming the argument that fixes it, which §4.1 never applied.
+ *
+ * These tests are the answer, in the shape the questions were asked:
+ *
+ *   - **the subject, not the mask** — the same drawing with and without a stray;
+ *   - **the room, not the drawing** — the same drawing on two canvases;
+ *   - **and the limit, stated** — the same drawing at two resolutions, which is *not* separated,
+ *     because a document carries no display size and inventing one would be worse than the gap.
+ */
+describe('the subject is measured, not the whole mask', () => {
+  /** A 12x12 body, optionally with a 3x3 speck four pixels away. */
+  const withSpeck = (speck: boolean): Sprite =>
+    spriteWhere(22, 18, (x, y) => {
+      const body = x >= 3 && x < 15 && y >= 3 && y < 15;
+      const dot = speck && x >= 17 && x < 20 && y >= 6 && y < 9;
+      return body || dot ? 255 : 0;
+    });
+
+  it('scores the body the same either way, which is the whole of the fix', () => {
+    const alone = only2(measureSilhouette(createQualityContext(withSpeck(false))));
+    const specked = only2(measureSilhouette(createQualityContext(withSpeck(true))));
+
+    // The measurement the gate reads is **identical**. Before T-022 the speck's own perimeter
+    // dragged it to 534, and the only difference between these two sprites was whether the
+    // subject was being charged for something beside it.
+    expect(alone.N).toBe(144);
+    expect(specked.N).toBe(153);
+    expect(specked.compactnessQ).toBe(alone.compactnessQ);
+    expect(specked.subjectPerimeter).toBe(alone.subjectPerimeter);
+    expect(specked.thicknessQ).toBe(alone.thicknessQ);
+    expect(specked.profileQ).toBe(alone.profileQ);
+    // The whole mask's perimeter, on the other hand, *does* move — which is the drift guard on
+    // the change. Equal exactly when the sprite is one component, different exactly when the
+    // subject has strays, and never equal to zero by accident.
+    expect(alone.subjectPerimeter).toBe(48);
+    expect(alone.perimeter).toBe(48);
+    expect(specked.subjectPerimeter).toBe(48);
+    expect(specked.perimeter).toBe(60);
+    // And the *score* differs, by exactly `detached-pieces` and nothing else: -75 of a 900 band.
+    expect(alone.scoreQ).toBe(1000);
+    expect(specked.scoreQ).toBe(825);
+    expect(codes(specked.issues)).toEqual(['detached-pieces']);
+  });
+
+  it('isolates the subject, and a component is recoverable from its seed rather than its box', () => {
+    // Two components sharing a bounding box is the case that forces `seed` onto the record:
+    // a 3x3 block at (2,2) and a 3x3 block at (2,4) both have bounds of 3x4 once you take the
+    // union, and the earlier one in scan order is not the one a caller necessarily wants.
+    const context = createQualityContext(
+      spriteWhere(9, 9, (x, y) => {
+        const low = x >= 2 && x < 5 && y >= 2 && y < 5;
+        const high = x >= 2 && x < 5 && y >= 4 && y < 7; // overlaps row 4, so one component
+        return low || high ? 255 : 0;
+      }),
+    );
+    const { mask } = buildSolidMask(context.composite[0], 9, 9);
+    const [only] = connectedComponents(mask, 9, 9, 4);
+    expect(only.area).toBe(15);
+    expect(only.seed).toBe(2 * 9 + 2);
+    // And the isolated subject has the same area and boundary as the mask it came from.
+    const isolated = subjectMask(mask, 9, 9, only);
+    expect(boundaryPerimeter(isolated, 9, 9)).toBe(boundaryPerimeter(mask, 9, 9));
+    expect(connectedComponents(isolated, 9, 9, 4)).toHaveLength(1);
+  });
+});
+
+describe('thicknessQ: the room, which compactnessQ does not have', () => {
+  /** The same 28x3 band, on whatever canvas it is asked for. */
+  const band = (size: number): Sprite =>
+    spriteWhere(size, size, (x, y) =>
+      x >= Math.floor((size - 28) / 2) && x < Math.floor((size - 28) / 2) + 28 &&
+      y >= Math.floor((size - 3) / 2) && y < Math.floor((size - 3) / 2) + 3
+        ? 255
+        : 0,
+    );
+
+  it('separates a knife from a horizon, which is the case §4.1 could not tell', () => {
+    const small = only2(measureSilhouette(createQualityContext(band(32))));
+    const huge = only2(measureSilhouette(createQualityContext(band(1024))));
+
+    // **The shape descriptor is right not to move.** 84 pixels, 62 of boundary, the same
+    // drawing: 275 either way, and a gate that separated these two would be a gate about the
+    // canvas wearing a shape descriptor's name.
+    expect(small.N).toBe(84);
+    expect(huge.N).toBe(84);
+    expect(small.compactnessQ).toBe(275);
+    expect(huge.compactnessQ).toBe(275);
+    expect(small.subjectPerimeter).toBe(62);
+    expect(huge.subjectPerimeter).toBe(62);
+    // The scale-aware reading is the one that sees the difference, and it sees it by 91.
+    expect(small.thicknessPx).toBe(3);
+    expect(huge.thicknessPx).toBe(3);
+    expect(small.thicknessQ).toBe(94);
+    expect(huge.thicknessQ).toBe(3);
+    expect(small.profileQ).toBe(94);
+    expect(huge.profileQ).toBe(3);
+    // Both are a 3px band and both are too thin to read, so both fire, and both are below the
+    // deep band. The knife is a better sprite than a horizon and the *score* cannot say so:
+    // it is a step function and both are deep in the same step. That is a gate question and
+    // this is the number that a gate conversation should be argued from.
+    expect(codes(small.issues)).toEqual(['thin-profile', 'subject-undersized']);
+    expect(codes(huge.issues)).toEqual(['thin-profile', 'subject-undersized']);
+    expect(small.scoreQ).toBe(700);
+    expect(huge.scoreQ).toBe(700);
+  });
+
+  it('does NOT separate the same drawing at two resolutions, and that limit is stated', () => {
+    // The knife, magnified 32x, on a canvas magnified 32x. Every measurement is identical and
+    // every one of them should be: any ratio of two lengths in one sprite is invariant under
+    // uniform magnification. A 3px knife and a 96px knife are different objects to a player,
+    // and telling them apart needs a target resolution — which a `.pixel` document does not
+    // carry and which this pipeline must not invent.
+    const magnified = spriteWhere(1024, 1024, (x, y) =>
+      x >= 64 && x < 960 && y >= 464 && y < 560 ? 255 : 0,
+    );
+    const frame = only2(measureSilhouette(createQualityContext(magnified)));
+    expect(frame.thicknessPx).toBe(96);
+    expect(frame.compactnessQ).toBe(275);
+    // thicknessPx is the one column where they are 32x apart, and it is a pixel count rather
+    // than a ratio — which is exactly why it is on the record separately.
+    expect(frame.thicknessQ).toBe(94);
+    expect(frame.profileQ).toBe(94);
+    expect(frame.scoreQ).toBe(700);
+  });
+
+  it('reads a punched hole as lost interior room, not as a smaller sprite', () => {
+    // The same 20x20 body with and without a hole, which is the measurement noticing something
+    // the span cannot: the subject is exactly as big in both, and there is measurably less room
+    // inside it once a pixel is taken out. A 1px nick costs 6px of inscribed square; a 6x6
+    // window costs 11.
+    const body = (hole: readonly [number, number, number] | null): Sprite =>
+      spriteWhere(24, 24, (x, y) => {
+        const on = x >= 2 && x < 22 && y >= 2 && y < 22;
+        if (!on) return 0;
+        if (hole === null) return 255;
+        const [hx, hy, hw] = hole;
+        return x >= hx && x < hx + hw && y >= hy && y < hy + hw ? 0 : 255;
+      });
+    const solid = only2(measureSilhouette(createQualityContext(body(null))));
+    const nick = only2(measureSilhouette(createQualityContext(body([7, 7, 1]))));
+    const window = only2(measureSilhouette(createQualityContext(body([7, 7, 6]))));
+    // Identical bounds, identical span, identical N except for the hole's own pixels.
+    expect(nick.bounds).toEqual(solid.bounds);
+    expect(window.bounds).toEqual(solid.bounds);
+    expect(nick.spanQ).toBe(solid.spanQ);
+    expect(solid.thicknessPx).toBe(20);
+    expect(nick.thicknessPx).toBe(14);
+    expect(window.thicknessPx).toBe(9);
+    // So the hole clause now separates on three quantities instead of one, and the compactness
+    // gap of 288 the corpus measured is joined by a thickness gap of 208.
+    expect(nick.thicknessQ - window.thicknessQ).toBe(208);
+    expect(nick.compactnessQ - window.compactnessQ).toBe(288);
+  });
+
+  it('is a pixel count against a canvas, computed with integer division and no epsilon', () => {
+    // The unit, the two guards, and the exact boundaries, so a future change to the rounding
+    // shows up here rather than as a one-case drift in the baseline.
+    expect(thicknessQ(3, 32, 32)).toBe(94); // 3000/32 = 93.75 -> 94
+    expect(thicknessQ(3, 32, 32)).toBe(rhu(3000, 32));
+    expect(thicknessQ(1, 16, 16)).toBe(63); // 1000/16 = 62.5 -> 63, round half up
+    expect(thicknessQ(0, 16, 16)).toBe(0);
+    // A non-square canvas divides by its SHORT side, because that is the dimension a subject
+    // has to fit across in both directions.
+    expect(thicknessQ(16, 64, 24)).toBe(667);
+    // Clamped at 1000 so a subject thicker than its canvas cannot exceed the scale, and
+    // guarded against a zero-sized canvas rather than dividing by it.
+    expect(thicknessQ(64, 16, 16)).toBe(1000);
+    expect(thicknessQ(4, 0, 16)).toBe(0);
+    for (const px of [0, 1, 2, 3, 7, 16, 31, 64, 1024]) {
+      for (const size of [1, 7, 16, 32, 1024, 4096]) {
+        const value = thicknessQ(px, size, size);
+        expect(Number.isInteger(value), `thicknessQ(${px}, ${size})`).toBe(true);
+        expect(value).toBeGreaterThanOrEqual(0);
+        expect(value).toBeLessThanOrEqual(1000);
+      }
+    }
+  });
+
+  it('inscribes the largest square, which is a max and so ignores a slender limb', () => {
+    // The DP is a rolling row over the subject's own bounds, so both halves of that matter are
+    // worth pinning: a body with a 1px antenna reads the body, and a 20x20 body with a 6x6
+    // window in it reads 14.
+    const rect = (w: number, h: number): Uint8Array => {
+      const mask = new Uint8Array(32 * 32);
+      for (let y = 5; y < 5 + h; y++) for (let x = 5; x < 5 + w; x++) mask[y * 32 + x] = 1;
+      return mask;
+    };
+    const bounds = { x: 5, y: 5, w: 20, h: 20 };
+    expect(inscribedSquareSide(rect(20, 20), 32, 32, bounds)).toBe(20);
+    expect(inscribedSquareSide(rect(20, 6), 32, 32, { x: 5, y: 5, w: 20, h: 6 })).toBe(6);
+    expect(inscribedSquareSide(rect(1, 20), 32, 32, { x: 5, y: 5, w: 1, h: 20 })).toBe(1);
+    expect(inscribedSquareSide(new Uint8Array(32 * 32), 32, 32, bounds)).toBe(0);
+    // And the blindness, stated: a 20x20 body with a 1px antenna beside it is still 20, because
+    // a MAX describes where a shape has room rather than where it is thin. §3.3's argument is
+    // about room for a terminator, and a 1px appendage is `noise`'s and `outline`'s business.
+    const antenna = rect(20, 20);
+    antenna[5 * 32 + 1] = 1;
+    expect(inscribedSquareSide(antenna, 32, 32, bounds)).toBe(20);
+  });
+});
 
 describe('§3.3 convexCorner is a concave-corner counter — measured, not argued', () => {
   it('counts 0 on a disc, which is the claim §4.2 says is "roughly half" of the outline', () => {

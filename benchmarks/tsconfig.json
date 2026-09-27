@@ -1,20 +1,21 @@
 {
   // Typechecking for the corpus harness.
   //
-  // NOT wired into `pnpm typecheck`, and that is a real gap rather than an oversight: no
-  // tsconfig included `benchmarks/`, so the harness was untyped by CI until this file existed.
-  // It was added because running it once immediately found a type error in `report.ts` that
-  // vitest had transpiled straight past, which is exactly the failure a harness nobody checks
-  // accumulates. Run it by hand:
-  //
-  //   node node_modules/typescript/lib/tsc.js -p benchmarks/tsconfig.json
-  //
-  // Wiring it into the root `typecheck` script is the same work T-093 does for
-  // `scripts/npm-index.ts`, and belongs to that task rather than to this one.
+  // **Run by `pnpm typecheck` since T-022**, the same way `tsconfig.npm.json` covers
+  // `scripts/`. It was added by T-021 as a manual check and T-021 recorded the reason: running it
+  // once immediately found a type error in `report.ts` that vitest had transpiled straight
+  // past, which is the failure a harness nobody checks accumulates. A check that only runs when
+  // a human remembers to run it is a comment about typechecking, not a check — so this is wired
+  // in, and `packages/core/test/quality-corpus.test.ts` asserts it is *still* wired in, because
+  // deleting a `tsc` invocation from a package.json is a silent change to CI that no other test
+  // would notice.
   //
   // `../packages/core/src/gifenc.d.ts` is listed because the harness imports core by *source*
   // path rather than by package name - see the note in `corpus/build.ts` - and that ambient
   // declaration ships alongside core's source rather than in its published types.
+  //
+  // `noEmit` is already set here, so the root script passes no flag; that is deliberate, so the
+  // project is runnable on its own with `tsc -p benchmarks/tsconfig.json`.
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,

@@ -1,4 +1,5 @@
 import { buildSolidMask, silhouetteAnalyzer } from './silhouette.js';
+import { valueAnalyzer } from './value.js';
 import {
   assertReportInvariants,
   DEFAULT_QUALITY_WEIGHTS,
@@ -304,9 +305,20 @@ export interface QualityDimensionRegistration {
  * Each new dimension is one line, plus a `guide` in the spec:
  * `palette` (T-014), `noise` (T-015), `outline` (T-016, with
  * {@link requiresReadableSubject}), `motion` (T-017, with {@link motionApplicability}).
+ *
+ * **`value` registers with no `applies` at all**, and that is a decision rather than an omission.
+ * {@link requiresReadableSubject} is the one precondition in this file and it exists because a
+ * full-bleed scene has no subject to read a *shape* out of — its alpha boundary is the frame, so
+ * `borderTouch` is 4 and the measurement reads as a defect. `value` asks a different question and
+ * a full-bleed scene answers it perfectly well: a landscape *is* built from value planes, a
+ * horizon is a plane, and a mountain lit from the upper left has a terminator that either follows
+ * its ridge or cuts across it. The reason §4.2 lists no precondition is therefore load-bearing
+ * and not an oversight, and the ten full-bleed scenes in `artwork/` are the evidence: they are
+ * exactly the documents this dimension has something to say about.
  */
 export const DEFAULT_DIMENSIONS: readonly QualityDimensionRegistration[] = [
   { id: 'silhouette', analyze: silhouetteAnalyzer, applies: requiresReadableSubject },
+  { id: 'value', analyze: valueAnalyzer },
 ];
 
 /**
@@ -554,3 +566,4 @@ function rectKey(issue: QualityIssue): string {
 export * from './context.js';
 export * from './silhouette.js';
 export * from './types.js';
+export * from './value.js';

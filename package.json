@@ -49,7 +49,7 @@
     "build": "pnpm run build:libs && pnpm run build:app",
     "build:npm": "node scripts/build-npm-package.mjs",
     "prepare-release": "node scripts/prepare-release.mjs",
-    "typecheck": "pnpm run build:libs && pnpm -r run typecheck && tsc -p tsconfig.npm.json --noEmit",
+    "typecheck": "pnpm run build:libs && pnpm -r run typecheck && tsc -p tsconfig.npm.json --noEmit && tsc -p benchmarks/tsconfig.json",
     "test": "pnpm run build:libs && pnpm -r run test",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && pnpm -r exec node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "prepack": "pnpm run build:npm",

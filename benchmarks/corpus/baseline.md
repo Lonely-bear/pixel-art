@@ -5,200 +5,327 @@
 > is a diff in this file, reviewed like any other change; to accept a move, run the test
 > with `UPDATE_CORPUS=1`.
 
-Corpus version 1. Controlled subjects with declared defects, plus this repository's own artwork. Covers every failure mode T-012 and T-018 found, aimed rather than exhaustive: negative controls, the 1px-margin trap, the 4-vs-8 connectivity decision, the compactnessQ gate, and the multi-frame rules. Every expectation here is derived by hand from docs/EVALUATION.md and the declared geometry of the case, never copied out of the pipeline's own output.
+Corpus version 2. Controlled subjects with declared defects, plus this repository's own artwork. Covers every failure mode T-012, T-018 and T-013 found, aimed rather than exhaustive: negative controls, the 1px-margin trap, the 4-vs-8 connectivity decision, the compactnessQ gate, the multi-frame rules, and §4.2 in two parts — the form-conformance term as a straight band against a form-following contour, a level set against both and a straight terminator on a straight-edged form, then one case per single-code defect in §4.2's issue table, so that a hue-carried form, a crushed shadow and a blown highlight are each something a case says they mean. Every expectation here is derived by hand from docs/EVALUATION.md and the declared geometry of the case, never copied out of the pipeline's own output.
 
-**38 synthetic** (ground truth by construction) · **12 real** (unlabelled) · **3 human** (awaiting a rater). Algorithmic labels cannot calibrate an algorithm — `docs/EVALUATION.md` §6.1 — so the synthetic tier detects and regression-guards, and only the human tier speaks to the aesthetic axis.
+**48 synthetic** (ground truth by construction) · **12 real** (unlabelled) · **3 human** (awaiting a rater). Algorithmic labels cannot calibrate an algorithm — `docs/EVALUATION.md` §6.1 — so the synthetic tier detects and regression-guards, and only the human tier speaks to the aesthetic axis.
 
 ## 1 · Cases
 
-| case                                                 | tier      | expected codes                                       | actual codes                                         | exp verdict | act verdict | scoreQ   | status          |
-| ---------------------------------------------------- | --------- | ---------------------------------------------------- | ---------------------------------------------------- | ----------- | ----------- | -------- | --------------- |
-| control/clean-blob-16                                | synthetic | -                                                    | -                                                    | pass        | pass        | 1000     | pass            |
-| control/clean-figure-20                              | synthetic | -                                                    | -                                                    | pass        | pass        | 1000     | pass            |
-| control/clean-union-16                               | synthetic | -                                                    | -                                                    | pass        | pass        | 1000     | pass            |
-| control/clean-banner-64x24                           | synthetic | -                                                    | -                                                    | -           | pass        | 1000     | pass            |
-| control/partial-alpha-glow-28x24                     | synthetic | -                                                    | -                                                    | -           | pass        | 1000     | pass            |
-| control/outline-ring-32                              | synthetic | -                                                    | -                                                    | -           | pass        | 1000     | pass            |
-| connectivity/diagonal-bridge-16                      | synthetic | fragmented-silhouette, detached-pieces, thin-profile | detached-pieces, fragmented-silhouette, thin-profile | -           | fail        | 0        | pass            |
-| connectivity/corner-touching-16                      | synthetic | detached-pieces                                      | detached-pieces                                      | -           | fail        | 475      | pass            |
-| connectivity/background-diagonal-leak-9              | synthetic | -                                                    | -                                                    | -           | pass        | 1000     | pass            |
-| connectivity/contour-staircase-24                    | synthetic | fragmented-silhouette, detached-pieces, thin-profile | detached-pieces, fragmented-silhouette, thin-profile | -           | fail        | 0        | pass            |
-| defect/detached-pieces-22                            | synthetic | detached-pieces                                      | detached-pieces                                      | -           | pass        | 825      | pass            |
-| defect/fragmented-hat-20                             | synthetic | detached-pieces                                      | detached-pieces                                      | -           | warn        | 675      | pass            |
-| defect/three-masses-20                               | synthetic | fragmented-silhouette, detached-pieces, thin-profile | detached-pieces, fragmented-silhouette, thin-profile | fail        | fail        | 0        | pass            |
-| defect/interior-hole-speck-24                        | synthetic | interior-hole                                        | interior-hole                                        | -           | pass        | 900      | pass            |
-| defect/interior-hole-window-24                       | synthetic | interior-hole                                        | interior-hole                                        | -           | pass        | 900      | pass            |
-| defect/hollow-keyhole-20                             | synthetic | interior-hole, thin-profile                          | interior-hole, thin-profile                          | -           | pass        | 800      | pass            |
-| defect/shape-clipped-32                              | synthetic | shape-clipped                                        | shape-clipped                                        | fail        | fail        | 800      | pass            |
-| defect/subject-undersized-64                         | synthetic | subject-undersized                                   | subject-undersized                                   | -           | pass        | 900      | pass            |
-| defect/empty-canvas-16                               | synthetic | empty-frame                                          | empty-frame                                          | fail        | fail        | 1000     | pass            |
-| bleed/full-bleed-scene-32                            | synthetic | -                                                    | -                                                    | fail        | fail        | excluded | pass            |
-| bleed/one-pixel-guard-32                             | synthetic | -                                                    | -                                                    | -           | fail        | excluded | pass            |
-| bleed/two-pixel-margin-32                            | synthetic | -                                                    | -                                                    | pass        | pass        | 1000     | pass            |
-| motion/worst-frame-wins-16                           | synthetic | fragmented-silhouette, detached-pieces, thin-profile | detached-pieces, fragmented-silhouette, thin-profile | fail        | fail        | 0        | pass            |
-| motion/frames-identical-16                           | synthetic | frames-identical                                     | frames-identical                                     | pass        | pass        | 1000     | pass            |
-| motion/blank-frame-16                                | synthetic | empty-frame                                          | empty-frame                                          | fail        | fail        | 1000     | pass            |
-| sweep/rect-30x28                                     | synthetic | -                                                    | -                                                    | -           | pass        | 1000     | pass            |
-| sweep/rect-28x28                                     | synthetic | -                                                    | -                                                    | -           | pass        | 1000     | pass            |
-| sweep/rect-30x20                                     | synthetic | -                                                    | -                                                    | -           | pass        | 1000     | pass            |
-| sweep/rect-30x15                                     | synthetic | -                                                    | -                                                    | -           | pass        | 1000     | pass            |
-| sweep/rect-30x10                                     | synthetic | -                                                    | -                                                    | -           | pass        | 1000     | pass            |
-| sweep/rect-30x8                                      | synthetic | -                                                    | -                                                    | -           | pass        | 1000     | pass            |
-| sweep/rect-30x6                                      | synthetic | -                                                    | -                                                    | -           | pass        | 1000     | pass            |
-| sweep/rect-30x5                                      | synthetic | -                                                    | -                                                    | -           | pass        | 1000     | pass            |
-| sweep/rect-30x4                                      | synthetic | -                                                    | -                                                    | -           | pass        | 1000     | pass            |
-| sweep/rect-28x3                                      | synthetic | thin-profile                                         | thin-profile                                         | -           | pass        | 900      | pass            |
-| sweep/rect-30x3                                      | synthetic | thin-profile                                         | thin-profile                                         | -           | pass        | 900      | pass            |
-| sweep/rect-34x3                                      | synthetic | thin-profile                                         | thin-profile                                         | -           | pass        | 900      | pass            |
-| sweep/rect-30x2                                      | synthetic | thin-profile                                         | thin-profile                                         | -           | pass        | 900      | pass            |
-| artwork/autumn-dusk-lake-256.pixel                   | real      | not asserted                                         | -                                                    | -           | fail        | excluded | pass            |
-| artwork/dusk-lake-valley-agent.pixel                 | real      | not asserted                                         | -                                                    | -           | fail        | excluded | pass            |
-| artwork/dusk-lake-valley-agent2.pixel                | real      | not asserted                                         | -                                                    | -           | fail        | excluded | pass            |
-| artwork/dusk-lake-valley-v2.pixel                    | real      | not asserted                                         | -                                                    | -           | fail        | excluded | pass            |
-| artwork/dusk-lake-valley-v3.pixel                    | real      | not asserted                                         | -                                                    | -           | fail        | excluded | pass            |
-| artwork/dusk-lake-valley.pixel                       | real      | not asserted                                         | -                                                    | -           | fail        | excluded | pass            |
-| artwork/moonlit-alpine-lake-fast.pixel               | real      | not asserted                                         | -                                                    | -           | fail        | excluded | pass            |
-| artwork/moonlit-alpine-lake.pixel                    | real      | not asserted                                         | -                                                    | -           | fail        | excluded | pass            |
-| artwork/sunset-lighthouse-512-baseline-model-a.pixel | real      | not asserted                                         | -                                                    | -           | fail        | excluded | pass            |
-| artwork/sunset-lighthouse-512.pixel                  | real      | not asserted                                         | -                                                    | -           | fail        | excluded | pass            |
-| artwork/verify/lantern-keeper.pixel                  | real      | not asserted                                         | interior-hole, thin-profile                          | -           | pass        | 800      | pass            |
-| app/icon.png                                         | real      | not asserted                                         | -                                                    | -           | pass        | 1000     | pass            |
-| human/item-16                                        | human     | not asserted                                         | withheld from raters                                 | -           | -           | -        | awaiting-rating |
-| human/tile-32                                        | human     | not asserted                                         | withheld from raters                                 | -           | -           | -        | awaiting-rating |
-| human/scene-64                                       | human     | not asserted                                         | withheld from raters                                 | -           | -           | -        | awaiting-rating |
+| case                                                 | tier      | expected codes                                                                       | actual codes                                                                         | exp verdict | act verdict | scoreQ   | status          |
+| ---------------------------------------------------- | --------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ | ----------- | ----------- | -------- | --------------- |
+| control/clean-blob-16                                | synthetic | -                                                                                    | -                                                                                    | pass        | pass        | 1000     | pass            |
+| control/clean-figure-20                              | synthetic | -                                                                                    | -                                                                                    | pass        | pass        | 1000     | pass            |
+| control/clean-union-16                               | synthetic | -                                                                                    | -                                                                                    | pass        | pass        | 1000     | pass            |
+| control/clean-banner-64x24                           | synthetic | -                                                                                    | -                                                                                    | -           | pass        | 1000     | pass            |
+| control/partial-alpha-glow-28x24                     | synthetic | -                                                                                    | -                                                                                    | -           | pass        | 1000     | pass            |
+| control/outline-ring-32                              | synthetic | -                                                                                    | -                                                                                    | -           | pass        | 1000     | pass            |
+| connectivity/diagonal-bridge-16                      | synthetic | detached-pieces, flat-value, fragmented-silhouette, narrow-value-range, thin-profile | detached-pieces, flat-value, fragmented-silhouette, narrow-value-range, thin-profile | -           | fail        | 0        | pass            |
+| connectivity/corner-touching-16                      | synthetic | detached-pieces, flat-value, narrow-value-range                                      | detached-pieces, flat-value, narrow-value-range                                      | -           | fail        | 475      | pass            |
+| connectivity/background-diagonal-leak-9              | synthetic | -                                                                                    | -                                                                                    | -           | pass        | 1000     | pass            |
+| connectivity/contour-staircase-24                    | synthetic | detached-pieces, flat-value, fragmented-silhouette, narrow-value-range, thin-profile | detached-pieces, flat-value, fragmented-silhouette, narrow-value-range, thin-profile | -           | fail        | 0        | pass            |
+| defect/detached-pieces-22                            | synthetic | detached-pieces, flat-value, narrow-value-range                                      | detached-pieces, flat-value, narrow-value-range                                      | -           | fail        | 825      | pass            |
+| defect/fragmented-hat-20                             | synthetic | detached-pieces, flat-value, narrow-value-range                                      | detached-pieces, flat-value, narrow-value-range                                      | -           | fail        | 675      | pass            |
+| defect/three-masses-20                               | synthetic | detached-pieces, flat-value, fragmented-silhouette, narrow-value-range               | detached-pieces, flat-value, fragmented-silhouette, narrow-value-range               | fail        | fail        | 0        | pass            |
+| defect/interior-hole-speck-24                        | synthetic | flat-value, interior-hole, narrow-value-range                                        | flat-value, interior-hole, narrow-value-range                                        | -           | fail        | 950      | pass            |
+| defect/interior-hole-window-24                       | synthetic | flat-value, interior-hole, narrow-value-range                                        | flat-value, interior-hole, narrow-value-range                                        | -           | fail        | 900      | pass            |
+| defect/hollow-keyhole-20                             | synthetic | flat-value, interior-hole, narrow-value-range, thin-profile                          | flat-value, interior-hole, narrow-value-range, thin-profile                          | -           | fail        | 700      | pass            |
+| defect/shape-clipped-32                              | synthetic | flat-value, narrow-value-range, shape-clipped                                        | flat-value, narrow-value-range, shape-clipped                                        | fail        | fail        | 800      | pass            |
+| defect/subject-undersized-64                         | synthetic | flat-value, narrow-value-range, subject-undersized, thin-profile                     | flat-value, narrow-value-range, subject-undersized, thin-profile                     | -           | fail        | 800      | pass            |
+| defect/empty-canvas-16                               | synthetic | empty-frame                                                                          | empty-frame                                                                          | fail        | fail        | 1000     | pass            |
+| bleed/full-bleed-scene-32                            | synthetic | -                                                                                    | -                                                                                    | warn        | warn        | excluded | pass            |
+| bleed/one-pixel-guard-32                             | synthetic | -                                                                                    | -                                                                                    | -           | warn        | excluded | pass            |
+| bleed/two-pixel-margin-32                            | synthetic | -                                                                                    | -                                                                                    | pass        | pass        | 1000     | pass            |
+| motion/worst-frame-wins-16                           | synthetic | detached-pieces, flat-value, fragmented-silhouette, narrow-value-range               | detached-pieces, flat-value, fragmented-silhouette, narrow-value-range               | fail        | fail        | 0        | pass            |
+| motion/frames-identical-16                           | synthetic | flat-value, frames-identical, narrow-value-range                                     | flat-value, frames-identical, narrow-value-range                                     | fail        | fail        | 1000     | pass            |
+| motion/blank-frame-16                                | synthetic | empty-frame, flat-value, narrow-value-range                                          | empty-frame, flat-value, narrow-value-range                                          | fail        | fail        | 1000     | pass            |
+| sweep/rect-30x28                                     | synthetic | -                                                                                    | -                                                                                    | -           | pass        | 1000     | pass            |
+| sweep/rect-28x28                                     | synthetic | -                                                                                    | -                                                                                    | -           | pass        | 1000     | pass            |
+| sweep/rect-30x20                                     | synthetic | -                                                                                    | -                                                                                    | -           | pass        | 1000     | pass            |
+| sweep/rect-30x15                                     | synthetic | -                                                                                    | -                                                                                    | -           | pass        | 1000     | pass            |
+| sweep/rect-30x10                                     | synthetic | -                                                                                    | -                                                                                    | -           | pass        | 1000     | pass            |
+| sweep/rect-30x8                                      | synthetic | -                                                                                    | -                                                                                    | -           | pass        | 1000     | pass            |
+| sweep/rect-30x6                                      | synthetic | -                                                                                    | -                                                                                    | -           | pass        | 1000     | pass            |
+| sweep/rect-30x5                                      | synthetic | -                                                                                    | -                                                                                    | -           | pass        | 1000     | pass            |
+| sweep/rect-30x4                                      | synthetic | -                                                                                    | -                                                                                    | -           | pass        | 1000     | pass            |
+| sweep/rect-28x3                                      | synthetic | flat-value, narrow-value-range, thin-profile                                         | flat-value, narrow-value-range, thin-profile                                         | -           | fail        | 900      | pass            |
+| sweep/rect-30x3                                      | synthetic | flat-value, narrow-value-range, thin-profile                                         | flat-value, narrow-value-range, thin-profile                                         | -           | fail        | 900      | pass            |
+| sweep/rect-34x3                                      | synthetic | flat-value, narrow-value-range, thin-profile                                         | flat-value, narrow-value-range, thin-profile                                         | -           | fail        | 900      | pass            |
+| sweep/rect-30x2                                      | synthetic | flat-value, narrow-value-range, thin-profile                                         | flat-value, narrow-value-range, thin-profile                                         | -           | fail        | 900      | pass            |
+| sweep/band-28x3-on-32                                | synthetic | flat-value, narrow-value-range, subject-undersized, thin-profile                     | flat-value, narrow-value-range, subject-undersized, thin-profile                     | -           | fail        | 700      | pass            |
+| sweep/band-28x3-on-1024                              | synthetic | flat-value, narrow-value-range, subject-undersized, thin-profile                     | flat-value, narrow-value-range, subject-undersized, thin-profile                     | -           | fail        | 700      | pass            |
+| sweep/band-896x96-on-1024                            | synthetic | flat-value, narrow-value-range, subject-undersized, thin-profile                     | flat-value, narrow-value-range, subject-undersized, thin-profile                     | -           | fail        | 700      | pass            |
+| artwork/autumn-dusk-lake-256.pixel                   | real      | not asserted                                                                         | -                                                                                    | -           | pass        | excluded | pass            |
+| artwork/dusk-lake-valley-agent.pixel                 | real      | not asserted                                                                         | -                                                                                    | -           | pass        | excluded | pass            |
+| artwork/dusk-lake-valley-agent2.pixel                | real      | not asserted                                                                         | -                                                                                    | -           | pass        | excluded | pass            |
+| artwork/dusk-lake-valley-v2.pixel                    | real      | not asserted                                                                         | hue-carries-form, key-light-inconsistent                                             | -           | warn        | excluded | pass            |
+| artwork/dusk-lake-valley-v3.pixel                    | real      | not asserted                                                                         | -                                                                                    | -           | pass        | excluded | pass            |
+| artwork/dusk-lake-valley.pixel                       | real      | not asserted                                                                         | -                                                                                    | -           | pass        | excluded | pass            |
+| artwork/moonlit-alpine-lake-fast.pixel               | real      | not asserted                                                                         | key-light-inconsistent                                                               | -           | pass        | excluded | pass            |
+| artwork/moonlit-alpine-lake.pixel                    | real      | not asserted                                                                         | -                                                                                    | -           | pass        | excluded | pass            |
+| artwork/sunset-lighthouse-512-baseline-model-a.pixel | real      | not asserted                                                                         | key-light-inconsistent                                                               | -           | pass        | excluded | pass            |
+| artwork/sunset-lighthouse-512.pixel                  | real      | not asserted                                                                         | -                                                                                    | -           | pass        | excluded | pass            |
+| artwork/verify/lantern-keeper.pixel                  | real      | not asserted                                                                         | interior-hole, key-light-inconsistent, thin-profile                                  | -           | pass        | 800      | pass            |
+| app/icon.png                                         | real      | not asserted                                                                         | -                                                                                    | -           | pass        | 1000     | pass            |
+| human/item-16                                        | human     | not asserted                                                                         | withheld from raters                                                                 | -           | -           | -        | awaiting-rating |
+| human/tile-32                                        | human     | not asserted                                                                         | withheld from raters                                                                 | -           | -           | -        | awaiting-rating |
+| human/scene-64                                       | human     | not asserted                                                                         | withheld from raters                                                                 | -           | -           | -        | awaiting-rating |
+| value/straight-diagonal-32                           | synthetic | plane-crosses-form                                                                   | plane-crosses-form                                                                   | fail        | fail        | 1000     | pass            |
+| value/nested-contour-32                              | synthetic | -                                                                                    | -                                                                                    | pass        | pass        | 1000     | pass            |
+| value/level-set-32                                   | synthetic | -                                                                                    | -                                                                                    | pass        | pass        | 1000     | pass            |
+| value/hard-surface-terminator-32                     | synthetic | -                                                                                    | -                                                                                    | pass        | pass        | 1000     | pass            |
+| value/hue-carries-form-32                            | synthetic | flat-value, hue-carries-form, key-light-inconsistent, narrow-value-range             | flat-value, hue-carries-form, key-light-inconsistent, narrow-value-range             | fail        | fail        | 1000     | pass            |
+| value/shadow-crushed-32                              | synthetic | shadow-crushed                                                                       | shadow-crushed                                                                       | fail        | fail        | 1000     | pass            |
+| value/highlight-blown-32                             | synthetic | highlight-blown                                                                      | highlight-blown                                                                      | pass        | pass        | 1000     | pass            |
 
 ## 2 · Measurements, per frame
 
 Every §3.3 quantity, recorded whether or not the case asserts it. An expectation is only written where the value is derivable from the specification and the declared geometry; everything else is a transcript, and the two are not confused.
 
-| case                                                 | f | canvas    | N      | comps | shareQ | perim | edgePx | compactQ | holes | edges | spanQ | margin | cCorners | scoreQ |
-| ---------------------------------------------------- | - | --------- | ------ | ----- | ------ | ----- | ------ | -------- | ----- | ----- | ----- | ------ | -------- | ------ |
-| control/clean-blob-16                                | 0 | 16x16     | 80     | 1     | 1000   | 36    | 32     | 776      | 0     | 0     | 500   | 3      | 0        | 1000   |
-| control/clean-figure-20                              | 0 | 20x18     | 120    | 1     | 1000   | 60    | 52     | 419      | 0     | 0     | 600   | 2      | 0        | 1000   |
-| control/clean-union-16                               | 0 | 32x32     | 252    | 1     | 1000   | 90    | 77     | 391      | 0     | 0     | 500   | 4      | 0        | 1000   |
-| control/clean-banner-64x24                           | 0 | 64x24     | 768    | 1     | 1000   | 128   | 124    | 589      | 0     | 0     | 667   | 4      | 0        | 1000   |
-| control/partial-alpha-glow-28x24                     | 0 | 28x24     | 144    | 1     | 1000   | 48    | 44     | 785      | 0     | 0     | 429   | 4      | 0        | 1000   |
-| control/outline-ring-32                              | 0 | 32x32     | 256    | 1     | 1000   | 72    | 48     | 621      | 0     | 0     | 563   | 7      | 0        | 1000   |
-| connectivity/diagonal-bridge-16                      | 0 | 16x16     | 12     | 12    | 83     | 48    | 12     | 65       | 0     | 0     | 750   | 2      | 0        | 0      |
-| connectivity/corner-touching-16                      | 0 | 16x16     | 50     | 2     | 500    | 40    | 32     | 393      | 0     | 0     | 625   | 2      | 0        | 475    |
-| connectivity/background-diagonal-leak-9              | 0 | 9x9       | 23     | 1     | 1000   | 24    | 17     | 502      | 0     | 0     | 556   | 2      | 0        | 1000   |
-| connectivity/contour-staircase-24                    | 0 | 24x24     | 18     | 18    | 56     | 72    | 18     | 44       | 0     | 0     | 750   | 3      | 0        | 0      |
-| defect/detached-pieces-22                            | 0 | 22x18     | 153    | 2     | 941    | 60    | 52     | 534      | 0     | 0     | 667   | 2      | 0        | 825    |
-| defect/fragmented-hat-20                             | 0 | 20x20     | 120    | 2     | 800    | 62    | 54     | 392      | 0     | 0     | 600   | 2      | 0        | 675    |
-| defect/three-masses-20                               | 0 | 20x16     | 60     | 3     | 417    | 54    | 42     | 259      | 0     | 0     | 313   | 2      | 0        | 0      |
-| defect/interior-hole-speck-24                        | 0 | 24x24     | 399    | 1     | 1000   | 84    | 80     | 711      | 1     | 0     | 833   | 2      | 0        | 900    |
-| defect/interior-hole-window-24                       | 0 | 24x24     | 364    | 1     | 1000   | 104   | 100    | 423      | 1     | 0     | 833   | 2      | 0        | 900    |
-| defect/hollow-keyhole-20                             | 0 | 20x20     | 80     | 1     | 1000   | 80    | 76     | 157      | 1     | 0     | 600   | 4      | 0        | 800    |
-| defect/shape-clipped-32                              | 0 | 32x32     | 928    | 1     | 1000   | 122   | 118    | 783      | 0     | 3     | 906   | 0      | 0        | 800    |
-| defect/subject-undersized-64                         | 0 | 64x64     | 144    | 1     | 1000   | 48    | 44     | 785      | 0     | 0     | 188   | 26     | 0        | 900    |
-| defect/empty-canvas-16                               | 0 | 16x16     | 0      | 0     | 0      | 0     | 0      | 0        | 0     | 0     | 0     | -      | 0        | 1000   |
-| bleed/full-bleed-scene-32                            | 0 | 32x32     | 1024   | 1     | 1000   | 128   | 124    | 785      | 0     | 4     | 1000  | 0      | 0        | 800    |
-| bleed/one-pixel-guard-32                             | 0 | 32x32     | 992    | 1     | 1000   | 126   | 122    | 785      | 0     | 3     | 969   | 0      | 0        | 800    |
-| bleed/two-pixel-margin-32                            | 0 | 32x32     | 784    | 1     | 1000   | 112   | 108    | 785      | 0     | 0     | 875   | 2      | 0        | 1000   |
-| motion/worst-frame-wins-16                           | 0 | 16x16     | 64     | 1     | 1000   | 32    | 28     | 785      | 0     | 0     | 500   | 4      | 0        | 1000   |
-| motion/worst-frame-wins-16                           | 1 | 16x16     | 54     | 3     | 463    | 48    | 36     | 295      | 0     | 0     | 688   | 2      | 0        | 0      |
-| motion/frames-identical-16                           | 0 | 16x16     | 64     | 1     | 1000   | 32    | 28     | 785      | 0     | 0     | 500   | 4      | 0        | 1000   |
-| motion/frames-identical-16                           | 1 | 16x16     | 64     | 1     | 1000   | 32    | 28     | 785      | 0     | 0     | 500   | 4      | 0        | 1000   |
-| motion/frames-identical-16                           | 2 | 16x16     | 64     | 1     | 1000   | 32    | 28     | 785      | 0     | 0     | 500   | 4      | 0        | 1000   |
-| motion/blank-frame-16                                | 0 | 16x16     | 64     | 1     | 1000   | 32    | 28     | 785      | 0     | 0     | 500   | 4      | 0        | 1000   |
-| motion/blank-frame-16                                | 1 | 16x16     | 0      | 0     | 0      | 0     | 0      | 0        | 0     | 0     | 0     | -      | 0        | 1000   |
-| sweep/rect-30x28                                     | 0 | 34x32     | 840    | 1     | 1000   | 116   | 112    | 784      | 0     | 0     | 875   | 2      | 0        | 1000   |
-| sweep/rect-28x28                                     | 0 | 32x32     | 784    | 1     | 1000   | 112   | 108    | 785      | 0     | 0     | 875   | 2      | 0        | 1000   |
-| sweep/rect-30x20                                     | 0 | 34x24     | 600    | 1     | 1000   | 100   | 96     | 754      | 0     | 0     | 833   | 2      | 0        | 1000   |
-| sweep/rect-30x15                                     | 0 | 34x19     | 450    | 1     | 1000   | 90    | 86     | 698      | 0     | 0     | 789   | 2      | 0        | 1000   |
-| sweep/rect-30x10                                     | 0 | 34x14     | 300    | 1     | 1000   | 80    | 76     | 589      | 0     | 0     | 714   | 2      | 0        | 1000   |
-| sweep/rect-30x8                                      | 0 | 34x12     | 240    | 1     | 1000   | 76    | 72     | 522      | 0     | 0     | 667   | 2      | 0        | 1000   |
-| sweep/rect-30x6                                      | 0 | 34x10     | 180    | 1     | 1000   | 72    | 68     | 436      | 0     | 0     | 600   | 2      | 0        | 1000   |
-| sweep/rect-30x5                                      | 0 | 34x9      | 150    | 1     | 1000   | 70    | 66     | 385      | 0     | 0     | 556   | 2      | 0        | 1000   |
-| sweep/rect-30x4                                      | 0 | 34x8      | 120    | 1     | 1000   | 68    | 64     | 326      | 0     | 0     | 500   | 2      | 0        | 1000   |
-| sweep/rect-28x3                                      | 0 | 32x7      | 84     | 1     | 1000   | 62    | 58     | 275      | 0     | 0     | 429   | 2      | 0        | 900    |
-| sweep/rect-30x3                                      | 0 | 34x7      | 90     | 1     | 1000   | 66    | 62     | 260      | 0     | 0     | 429   | 2      | 0        | 900    |
-| sweep/rect-34x3                                      | 0 | 38x7      | 102    | 1     | 1000   | 74    | 70     | 234      | 0     | 0     | 429   | 2      | 0        | 900    |
-| sweep/rect-30x2                                      | 0 | 34x6      | 60     | 1     | 1000   | 64    | 60     | 184      | 0     | 0     | 333   | 2      | 0        | 900    |
-| artwork/autumn-dusk-lake-256.pixel                   | 0 | 256x256   | 65536  | 1     | 1000   | 1024  | 1020   | 785      | 0     | 4     | 1000  | 0      | 0        | 800    |
-| artwork/dusk-lake-valley-agent.pixel                 | 0 | 256x256   | 65297  | 1     | 1000   | 1532  | 1527   | 350      | 15    | 4     | 1000  | 0      | 0        | 700    |
-| artwork/dusk-lake-valley-agent2.pixel                | 0 | 256x256   | 65536  | 1     | 1000   | 1024  | 1020   | 785      | 0     | 4     | 1000  | 0      | 0        | 800    |
-| artwork/dusk-lake-valley-v2.pixel                    | 0 | 256x256   | 65409  | 1     | 1000   | 1282  | 1278   | 500      | 2     | 4     | 1000  | 0      | 0        | 800    |
-| artwork/dusk-lake-valley-v3.pixel                    | 0 | 256x256   | 65536  | 1     | 1000   | 1024  | 1020   | 785      | 0     | 4     | 1000  | 0      | 0        | 800    |
-| artwork/dusk-lake-valley.pixel                       | 0 | 256x256   | 65536  | 1     | 1000   | 1024  | 1020   | 785      | 0     | 4     | 1000  | 0      | 0        | 800    |
-| artwork/moonlit-alpine-lake-fast.pixel               | 0 | 64x64     | 4096   | 1     | 1000   | 256   | 252    | 785      | 0     | 4     | 1000  | 0      | 0        | 800    |
-| artwork/moonlit-alpine-lake.pixel                    | 0 | 64x64     | 4096   | 1     | 1000   | 256   | 252    | 785      | 0     | 4     | 1000  | 0      | 0        | 800    |
-| artwork/sunset-lighthouse-512-baseline-model-a.pixel | 0 | 512x512   | 262144 | 1     | 1000   | 2048  | 2044   | 785      | 0     | 4     | 1000  | 0      | 0        | 800    |
-| artwork/sunset-lighthouse-512.pixel                  | 0 | 512x512   | 262144 | 1     | 1000   | 2048  | 2044   | 785      | 0     | 4     | 1000  | 0      | 0        | 800    |
-| artwork/verify/lantern-keeper.pixel                  | 0 | 32x32     | 432    | 1     | 1000   | 142   | 101    | 269      | 1     | 0     | 813   | 1      | 0        | 800    |
-| app/icon.png                                         | 0 | 1024x1024 | 878544 | 1     | 1000   | 3840  | 3312   | 749      | 0     | 0     | 938   | 32     | 0        | 1000   |
+| case                                                 | f | canvas    | N      | comps | shareQ | perim | subjPerim | edgePx | compactQ | thkPx | thkQ | profQ | holes | edges | spanQ | margin | cCorners | stairCorn | scoreQ |
+| ---------------------------------------------------- | - | --------- | ------ | ----- | ------ | ----- | --------- | ------ | -------- | ----- | ---- | ----- | ----- | ----- | ----- | ------ | -------- | --------- | ------ |
+| control/clean-blob-16                                | 0 | 16x16     | 80     | 1     | 1000   | 36    | 36        | 32     | 776      | 8     | 500  | 500   | 0     | 0     | 500   | 3      | 0        | 4         | 1000   |
+| control/clean-figure-20                              | 0 | 20x18     | 120    | 1     | 1000   | 60    | 60        | 52     | 419      | 6     | 333  | 333   | 0     | 0     | 600   | 2      | 0        | 8         | 1000   |
+| control/clean-union-16                               | 0 | 32x32     | 252    | 1     | 1000   | 90    | 90        | 77     | 391      | 10    | 313  | 313   | 0     | 0     | 500   | 4      | 0        | 13        | 1000   |
+| control/clean-banner-64x24                           | 0 | 64x24     | 768    | 1     | 1000   | 128   | 128       | 124    | 589      | 16    | 667  | 589   | 0     | 0     | 667   | 4      | 0        | 4         | 1000   |
+| control/partial-alpha-glow-28x24                     | 0 | 28x24     | 144    | 1     | 1000   | 48    | 48        | 44     | 785      | 12    | 500  | 500   | 0     | 0     | 429   | 4      | 0        | 4         | 1000   |
+| control/outline-ring-32                              | 0 | 32x32     | 256    | 1     | 1000   | 72    | 72        | 48     | 621      | 12    | 375  | 375   | 0     | 0     | 563   | 7      | 0        | 24        | 1000   |
+| connectivity/diagonal-bridge-16                      | 0 | 16x16     | 12     | 12    | 83     | 48    | 4         | 12     | 785      | 1     | 63   | 63    | 0     | 0     | 750   | 2      | 0        | 12        | 0      |
+| connectivity/corner-touching-16                      | 0 | 16x16     | 50     | 2     | 500    | 40    | 20        | 32     | 785      | 5     | 313  | 313   | 0     | 0     | 625   | 2      | 0        | 8         | 475    |
+| connectivity/background-diagonal-leak-9              | 0 | 9x9       | 23     | 1     | 1000   | 24    | 24        | 17     | 502      | 3     | 333  | 333   | 0     | 0     | 556   | 2      | 0        | 5         | 1000   |
+| connectivity/contour-staircase-24                    | 0 | 24x24     | 18     | 18    | 56     | 72    | 4         | 18     | 785      | 1     | 42   | 42    | 0     | 0     | 750   | 3      | 0        | 18        | 0      |
+| defect/detached-pieces-22                            | 0 | 22x18     | 153    | 2     | 941    | 60    | 48        | 52     | 785      | 12    | 667  | 667   | 0     | 0     | 667   | 2      | 0        | 8         | 825    |
+| defect/fragmented-hat-20                             | 0 | 20x20     | 120    | 2     | 800    | 62    | 40        | 54     | 754      | 8     | 400  | 400   | 0     | 0     | 600   | 2      | 0        | 8         | 675    |
+| defect/three-masses-20                               | 0 | 20x16     | 60     | 3     | 417    | 54    | 20        | 42     | 785      | 5     | 313  | 313   | 0     | 0     | 313   | 2      | 0        | 12        | 0      |
+| defect/interior-hole-speck-24                        | 0 | 24x24     | 399    | 1     | 1000   | 84    | 84        | 80     | 711      | 14    | 583  | 583   | 1     | 0     | 833   | 2      | 0        | 4         | 950    |
+| defect/interior-hole-window-24                       | 0 | 24x24     | 364    | 1     | 1000   | 104   | 104       | 100    | 423      | 9     | 375  | 375   | 1     | 0     | 833   | 2      | 0        | 4         | 900    |
+| defect/hollow-keyhole-20                             | 0 | 20x20     | 80     | 1     | 1000   | 80    | 80        | 76     | 157      | 2     | 100  | 100   | 1     | 0     | 600   | 4      | 0        | 4         | 700    |
+| defect/shape-clipped-32                              | 0 | 32x32     | 928    | 1     | 1000   | 122   | 122       | 118    | 783      | 29    | 906  | 783   | 0     | 3     | 906   | 0      | 0        | 4         | 800    |
+| defect/subject-undersized-64                         | 0 | 64x64     | 144    | 1     | 1000   | 48    | 48        | 44     | 785      | 12    | 188  | 188   | 0     | 0     | 188   | 26     | 0        | 4         | 800    |
+| defect/empty-canvas-16                               | 0 | 16x16     | 0      | 0     | 0      | 0     | 0         | 0      | 0        | 0     | 0    | 0     | 0     | 0     | 0     | -      | 0        | 0         | 1000   |
+| bleed/full-bleed-scene-32                            | 0 | 32x32     | 1024   | 1     | 1000   | 128   | 128       | 124    | 785      | 32    | 1000 | 785   | 0     | 4     | 1000  | 0      | 0        | 4         | 800    |
+| bleed/one-pixel-guard-32                             | 0 | 32x32     | 992    | 1     | 1000   | 126   | 126       | 122    | 785      | 31    | 969  | 785   | 0     | 3     | 969   | 0      | 0        | 4         | 800    |
+| bleed/two-pixel-margin-32                            | 0 | 32x32     | 784    | 1     | 1000   | 112   | 112       | 108    | 785      | 28    | 875  | 785   | 0     | 0     | 875   | 2      | 0        | 4         | 1000   |
+| motion/worst-frame-wins-16                           | 0 | 16x16     | 64     | 1     | 1000   | 32    | 32        | 28     | 785      | 8     | 500  | 500   | 0     | 0     | 500   | 4      | 0        | 4         | 1000   |
+| motion/worst-frame-wins-16                           | 1 | 16x16     | 54     | 3     | 463    | 48    | 20        | 36     | 785      | 5     | 313  | 313   | 0     | 0     | 688   | 2      | 0        | 12        | 0      |
+| motion/frames-identical-16                           | 0 | 16x16     | 64     | 1     | 1000   | 32    | 32        | 28     | 785      | 8     | 500  | 500   | 0     | 0     | 500   | 4      | 0        | 4         | 1000   |
+| motion/frames-identical-16                           | 1 | 16x16     | 64     | 1     | 1000   | 32    | 32        | 28     | 785      | 8     | 500  | 500   | 0     | 0     | 500   | 4      | 0        | 4         | 1000   |
+| motion/frames-identical-16                           | 2 | 16x16     | 64     | 1     | 1000   | 32    | 32        | 28     | 785      | 8     | 500  | 500   | 0     | 0     | 500   | 4      | 0        | 4         | 1000   |
+| motion/blank-frame-16                                | 0 | 16x16     | 64     | 1     | 1000   | 32    | 32        | 28     | 785      | 8     | 500  | 500   | 0     | 0     | 500   | 4      | 0        | 4         | 1000   |
+| motion/blank-frame-16                                | 1 | 16x16     | 0      | 0     | 0      | 0     | 0         | 0      | 0        | 0     | 0    | 0     | 0     | 0     | 0     | -      | 0        | 0         | 1000   |
+| sweep/rect-30x28                                     | 0 | 34x32     | 840    | 1     | 1000   | 116   | 116       | 112    | 784      | 28    | 875  | 784   | 0     | 0     | 875   | 2      | 0        | 4         | 1000   |
+| sweep/rect-28x28                                     | 0 | 32x32     | 784    | 1     | 1000   | 112   | 112       | 108    | 785      | 28    | 875  | 785   | 0     | 0     | 875   | 2      | 0        | 4         | 1000   |
+| sweep/rect-30x20                                     | 0 | 34x24     | 600    | 1     | 1000   | 100   | 100       | 96     | 754      | 20    | 833  | 754   | 0     | 0     | 833   | 2      | 0        | 4         | 1000   |
+| sweep/rect-30x15                                     | 0 | 34x19     | 450    | 1     | 1000   | 90    | 90        | 86     | 698      | 15    | 789  | 698   | 0     | 0     | 789   | 2      | 0        | 4         | 1000   |
+| sweep/rect-30x10                                     | 0 | 34x14     | 300    | 1     | 1000   | 80    | 80        | 76     | 589      | 10    | 714  | 589   | 0     | 0     | 714   | 2      | 0        | 4         | 1000   |
+| sweep/rect-30x8                                      | 0 | 34x12     | 240    | 1     | 1000   | 76    | 76        | 72     | 522      | 8     | 667  | 522   | 0     | 0     | 667   | 2      | 0        | 4         | 1000   |
+| sweep/rect-30x6                                      | 0 | 34x10     | 180    | 1     | 1000   | 72    | 72        | 68     | 436      | 6     | 600  | 436   | 0     | 0     | 600   | 2      | 0        | 4         | 1000   |
+| sweep/rect-30x5                                      | 0 | 34x9      | 150    | 1     | 1000   | 70    | 70        | 66     | 385      | 5     | 556  | 385   | 0     | 0     | 556   | 2      | 0        | 4         | 1000   |
+| sweep/rect-30x4                                      | 0 | 34x8      | 120    | 1     | 1000   | 68    | 68        | 64     | 326      | 4     | 500  | 326   | 0     | 0     | 500   | 2      | 0        | 4         | 1000   |
+| sweep/rect-28x3                                      | 0 | 32x7      | 84     | 1     | 1000   | 62    | 62        | 58     | 275      | 3     | 429  | 275   | 0     | 0     | 429   | 2      | 0        | 4         | 900    |
+| sweep/rect-30x3                                      | 0 | 34x7      | 90     | 1     | 1000   | 66    | 66        | 62     | 260      | 3     | 429  | 260   | 0     | 0     | 429   | 2      | 0        | 4         | 900    |
+| sweep/rect-34x3                                      | 0 | 38x7      | 102    | 1     | 1000   | 74    | 74        | 70     | 234      | 3     | 429  | 234   | 0     | 0     | 429   | 2      | 0        | 4         | 900    |
+| sweep/rect-30x2                                      | 0 | 34x6      | 60     | 1     | 1000   | 64    | 64        | 60     | 184      | 2     | 333  | 184   | 0     | 0     | 333   | 2      | 0        | 4         | 900    |
+| sweep/band-28x3-on-32                                | 0 | 32x32     | 84     | 1     | 1000   | 62    | 62        | 58     | 275      | 3     | 94   | 94    | 0     | 0     | 94    | 2      | 0        | 4         | 700    |
+| sweep/band-28x3-on-1024                              | 0 | 1024x1024 | 84     | 1     | 1000   | 62    | 62        | 58     | 275      | 3     | 3    | 3     | 0     | 0     | 3     | 498    | 0        | 4         | 700    |
+| sweep/band-896x96-on-1024                            | 0 | 1024x1024 | 86016  | 1     | 1000   | 1984  | 1984      | 1980   | 275      | 96    | 94   | 94    | 0     | 0     | 94    | 64     | 0        | 4         | 700    |
+| artwork/autumn-dusk-lake-256.pixel                   | 0 | 256x256   | 65536  | 1     | 1000   | 1024  | 1024      | 1020   | 785      | 256   | 1000 | 785   | 0     | 4     | 1000  | 0      | 0        | 4         | 800    |
+| artwork/dusk-lake-valley-agent.pixel                 | 0 | 256x256   | 65297  | 1     | 1000   | 1532  | 1532      | 1527   | 350      | 147   | 574  | 350   | 15    | 4     | 1000  | 0      | 0        | 4         | 750    |
+| artwork/dusk-lake-valley-agent2.pixel                | 0 | 256x256   | 65536  | 1     | 1000   | 1024  | 1024      | 1020   | 785      | 256   | 1000 | 785   | 0     | 4     | 1000  | 0      | 0        | 4         | 800    |
+| artwork/dusk-lake-valley-v2.pixel                    | 0 | 256x256   | 65409  | 1     | 1000   | 1282  | 1282      | 1278   | 500      | 168   | 656  | 500   | 2     | 4     | 1000  | 0      | 0        | 4         | 800    |
+| artwork/dusk-lake-valley-v3.pixel                    | 0 | 256x256   | 65536  | 1     | 1000   | 1024  | 1024      | 1020   | 785      | 256   | 1000 | 785   | 0     | 4     | 1000  | 0      | 0        | 4         | 800    |
+| artwork/dusk-lake-valley.pixel                       | 0 | 256x256   | 65536  | 1     | 1000   | 1024  | 1024      | 1020   | 785      | 256   | 1000 | 785   | 0     | 4     | 1000  | 0      | 0        | 4         | 800    |
+| artwork/moonlit-alpine-lake-fast.pixel               | 0 | 64x64     | 4096   | 1     | 1000   | 256   | 256       | 252    | 785      | 64    | 1000 | 785   | 0     | 4     | 1000  | 0      | 0        | 4         | 800    |
+| artwork/moonlit-alpine-lake.pixel                    | 0 | 64x64     | 4096   | 1     | 1000   | 256   | 256       | 252    | 785      | 64    | 1000 | 785   | 0     | 4     | 1000  | 0      | 0        | 4         | 800    |
+| artwork/sunset-lighthouse-512-baseline-model-a.pixel | 0 | 512x512   | 262144 | 1     | 1000   | 2048  | 2048      | 2044   | 785      | 512   | 1000 | 785   | 0     | 4     | 1000  | 0      | 0        | 4         | 800    |
+| artwork/sunset-lighthouse-512.pixel                  | 0 | 512x512   | 262144 | 1     | 1000   | 2048  | 2048      | 2044   | 785      | 512   | 1000 | 785   | 0     | 4     | 1000  | 0      | 0        | 4         | 800    |
+| artwork/verify/lantern-keeper.pixel                  | 0 | 32x32     | 432    | 1     | 1000   | 142   | 142       | 101    | 269      | 12    | 375  | 269   | 1     | 0     | 813   | 1      | 0        | 39        | 800    |
+| app/icon.png                                         | 0 | 1024x1024 | 878544 | 1     | 1000   | 3840  | 3840      | 3312   | 749      | 828   | 809  | 749   | 0     | 0     | 938   | 32     | 0        | 528       | 1000   |
+| value/straight-diagonal-32                           | 0 | 32x32     | 398    | 1     | 1000   | 94    | 94        | 58     | 566      | 15    | 469  | 469   | 0     | 0     | 688   | 2      | 0        | 36        | 1000   |
+| value/nested-contour-32                              | 0 | 32x32     | 398    | 1     | 1000   | 94    | 94        | 58     | 566      | 15    | 469  | 469   | 0     | 0     | 688   | 2      | 0        | 36        | 1000   |
+| value/level-set-32                                   | 0 | 32x32     | 398    | 1     | 1000   | 94    | 94        | 58     | 566      | 15    | 469  | 469   | 0     | 0     | 688   | 2      | 0        | 36        | 1000   |
+| value/hard-surface-terminator-32                     | 0 | 32x32     | 480    | 1     | 1000   | 88    | 88        | 84     | 779      | 20    | 625  | 625   | 0     | 0     | 625   | 4      | 0        | 4         | 1000   |
+| value/hue-carries-form-32                            | 0 | 32x32     | 398    | 1     | 1000   | 94    | 94        | 58     | 566      | 15    | 469  | 469   | 0     | 0     | 688   | 2      | 0        | 36        | 1000   |
+| value/shadow-crushed-32                              | 0 | 32x32     | 398    | 1     | 1000   | 94    | 94        | 58     | 566      | 15    | 469  | 469   | 0     | 0     | 688   | 2      | 0        | 36        | 1000   |
+| value/highlight-blown-32                             | 0 | 32x32     | 398    | 1     | 1000   | 94    | 94        | 58     | 566      | 15    | 469  | 469   | 0     | 0     | 688   | 2      | 0        | 36        | 1000   |
+
+`cCorners` is §3.3's `convexCorner` implemented as its table clause reads, which counts
+**concave** corners and reads 0 on every convex shape in the corpus — including all twelve
+committed assets in `artwork/`. `stairCorn` is the corrected predicate §4.2's curvature gate
+actually needs: a pixel on a convex 45-degree staircase. Both are on every row because the
+repository currently carries one §3.3 name with two definitions, and the next revision of
+§3.3 has to retire one of them against a number rather than an argument.
+
+## 2b · `value`, and the form term it exists for
+
+Worst frame, per case. `spanQ` is §4.2's **specified** form term — the spread of `dist`
+along a plane boundary — and this build records it and does not score it. It reads high on
+artwork that is correct, for a geometric reason rather than a matter of taste: a translated
+contour necessarily runs from the silhouette's own edge out to its deepest reach, so its
+spread is as large as the body is deep, while a true inset has a spread near zero. That is
+the level-set bias, and the column is here so the evidence for the score stays in a committed
+file rather than in an argument. `crossesQ` is what this build scores: 0 is a plane that
+follows the form, 1000 is a plane that slices it.
+
+`curvedQ` and `reachQ` are §4.2's two gates, on the same row, and they are the reason the
+form term reads 1000 on **all twelve** of this repository's real assets. `curvedQ` counts
+`edgePixel`s within Chebyshev 3 of the plane, and a full-bleed subject has no edge pixel
+except the canvas frame — so it is 0 on all ten committed scenes, and `reachQ` is under its
+500 floor on all ten for the same reason. A straight shadow band across a curved mountain is
+therefore excused today. The fix is a local-curvature source that does not come from the
+silhouette, which is a **new §3.3 quantity** rather than a patch, so it is recorded here and
+in `DECLARED_QUANTITIES` and not invented from inside a dimension.
+
+`keyLight` is the other column to read with the artwork in hand: §4.2 samples two ninths of
+`bounds` and subtracts the means, which is a statement about a lit subject. In a landscape
+those corners are different materials, and the check fires on three of the ten scenes.
+
+`shadowQ` and `highlightQ` are the shares §4.2's two tone-extreme codes are about — 30/100 of
+the solid pixels at or below Lq 12, and 10/100 at or above Lq 243 — so a reader can see how far
+a subject is from either threshold rather than only whether it crossed it.
+
+| case                                                 | f | value | toneQ | formQ | buckets | range | planes | bounds | crossesQ | bendQ | curvedQ gate | reachQ gate | spanQ unscored | Dmax | keyLight       | hueOnlyQ       | shadowQ | highlightQ |
+| ---------------------------------------------------- | - | ----- | ----- | ----- | ------- | ----- | ------ | ------ | -------- | ----- | ------------ | ----------- | -------------- | ---- | -------------- | -------------- | ------- | ---------- |
+| control/clean-blob-16                                | 0 | 700   | 400   | 1000  | 2       | 167   | 2      | 1      | 0        | 0     | 0            | 800         | 750            | 3    | 167            | 0              | 0       | 0          |
+| control/clean-figure-20                              | 0 | 700   | 400   | 1000  | 2       | 167   | 4      | 3      | 0        | 0     | 0            | 500         | 500            | 3    | 111            | 0              | 0       | 0          |
+| control/clean-union-16                               | 0 | 700   | 400   | 1000  | 2       | 167   | 6      | 4      | 0        | 0     | 42           | 739         | 875            | 7    | 105            | 0              | 0       | 0          |
+| control/clean-banner-64x24                           | 0 | 700   | 400   | 1000  | 2       | 65    | 2      | 1      | 0        | 0     | 0            | 333         | 875            | 7    | 65             | 0              | 0       | 0          |
+| control/partial-alpha-glow-28x24                     | 0 | 700   | 400   | 1000  | 2       | 119   | 2      | 1      | 0        | 0     | 0            | 1000        | 833            | 5    | 119            | 0              | 0       | 0          |
+| control/outline-ring-32                              | 0 | 810   | 620   | 1000  | 3       | 198   | 2      | 1      | 0        | 1000  | 452          | 889         | 222            | 8    | 38             | 0              | 0       | 0          |
+| connectivity/diagonal-bridge-16                      | 0 | 175   | 150   | 1000  | 1       | 0     | 0      | 0      | -        | -     | -            | -           | -              | 0    | not measurable | not measurable | 0       | 0          |
+| connectivity/corner-touching-16                      | 0 | 175   | 150   | 1000  | 1       | 0     | 2      | 0      | -        | -     | -            | -           | -              | 2    | not measurable | 0              | 0       | 0          |
+| connectivity/background-diagonal-leak-9              | 0 | 700   | 400   | 1000  | 2       | 167   | 2      | 0      | -        | -     | -            | -           | -              | 1    | 167            | 0              | 0       | 0          |
+| connectivity/contour-staircase-24                    | 0 | 175   | 150   | 1000  | 1       | 0     | 0      | 0      | -        | -     | -            | -           | -              | 0    | not measurable | not measurable | 0       | 0          |
+| defect/detached-pieces-22                            | 0 | 175   | 150   | 1000  | 1       | 0     | 2      | 0      | -        | -     | -            | -           | -              | 5    | not measurable | 0              | 0       | 0          |
+| defect/fragmented-hat-20                             | 0 | 175   | 150   | 1000  | 1       | 0     | 2      | 0      | -        | -     | -            | -           | -              | 3    | not measurable | 0              | 0       | 0          |
+| defect/three-masses-20                               | 0 | 175   | 150   | 1000  | 1       | 0     | 3      | 0      | -        | -     | -            | -           | -              | 2    | not measurable | 0              | 0       | 0          |
+| defect/interior-hole-speck-24                        | 0 | 175   | 150   | 1000  | 1       | 0     | 1      | 0      | -        | -     | -            | -           | -              | 9    | not measurable | 0              | 0       | 0          |
+| defect/interior-hole-window-24                       | 0 | 175   | 150   | 1000  | 1       | 0     | 1      | 0      | -        | -     | -            | -           | -              | 5    | not measurable | 0              | 0       | 0          |
+| defect/hollow-keyhole-20                             | 0 | 175   | 150   | 1000  | 1       | 0     | 1      | 0      | -        | -     | -            | -           | -              | 1    | not measurable | 0              | 0       | 0          |
+| defect/shape-clipped-32                              | 0 | 175   | 150   | 1000  | 1       | 0     | 1      | 0      | -        | -     | -            | -           | -              | 14   | not measurable | 0              | 0       | 0          |
+| defect/subject-undersized-64                         | 0 | 175   | 150   | 1000  | 1       | 0     | 1      | 0      | -        | -     | -            | -           | -              | 5    | not measurable | 0              | 0       | 0          |
+| bleed/full-bleed-scene-32                            | 0 | 700   | 400   | 1000  | 2       | 148   | 2      | 1      | 0        | 0     | 0            | 1000        | 938            | 15   | 148            | 0              | 0       | 0          |
+| bleed/one-pixel-guard-32                             | 0 | 700   | 400   | 1000  | 2       | 148   | 2      | 1      | 0        | 0     | 0            | 969         | 938            | 15   | 148            | 0              | 0       | 0          |
+| bleed/two-pixel-margin-32                            | 0 | 700   | 400   | 1000  | 2       | 148   | 2      | 1      | 0        | 0     | 0            | 1000        | 929            | 13   | 148            | 0              | 0       | 0          |
+| motion/worst-frame-wins-16                           | 0 | 175   | 150   | 1000  | 1       | 0     | 1      | 0      | -        | -     | -            | -           | -              | 3    | not measurable | 0              | 0       | 0          |
+| motion/frames-identical-16                           | 0 | 175   | 150   | 1000  | 1       | 0     | 1      | 0      | -        | -     | -            | -           | -              | 3    | not measurable | 0              | 0       | 0          |
+| motion/blank-frame-16                                | 0 | 175   | 150   | 1000  | 1       | 0     | 1      | 0      | -        | -     | -            | -           | -              | 3    | not measurable | 0              | 0       | 0          |
+| sweep/rect-30x28                                     | 0 | 700   | 400   | 1000  | 2       | 167   | 2      | 1      | 0        | 0     | 0            | 933         | 929            | 13   | 167            | 0              | 0       | 0          |
+| sweep/rect-28x28                                     | 0 | 700   | 400   | 1000  | 2       | 167   | 2      | 1      | 0        | 0     | 0            | 1000        | 929            | 13   | 167            | 0              | 0       | 0          |
+| sweep/rect-30x20                                     | 0 | 700   | 400   | 1000  | 2       | 167   | 2      | 1      | 0        | 0     | 0            | 667         | 900            | 9    | 167            | 0              | 0       | 0          |
+| sweep/rect-30x15                                     | 0 | 700   | 400   | 1000  | 2       | 167   | 2      | 1      | 0        | 0     | 0            | 500         | 875            | 7    | 167            | 0              | 0       | 0          |
+| sweep/rect-30x10                                     | 0 | 700   | 400   | 1000  | 2       | 167   | 2      | 1      | 0        | 0     | 0            | 333         | 800            | 4    | 167            | 0              | 0       | 0          |
+| sweep/rect-30x8                                      | 0 | 700   | 400   | 1000  | 2       | 167   | 2      | 1      | 0        | 0     | 0            | 267         | 750            | 3    | 167            | 0              | 0       | 0          |
+| sweep/rect-30x6                                      | 0 | 700   | 400   | 1000  | 2       | 167   | 2      | 1      | 0        | 0     | 0            | 200         | 667            | 2    | 167            | 0              | 0       | 0          |
+| sweep/rect-30x5                                      | 0 | 700   | 400   | 1000  | 2       | 167   | 2      | 1      | 0        | 0     | 0            | 167         | 667            | 2    | 167            | 0              | 0       | 0          |
+| sweep/rect-30x4                                      | 0 | 700   | 400   | 1000  | 2       | 167   | 2      | 1      | 0        | 0     | 0            | 133         | 500            | 1    | 167            | 0              | 0       | 0          |
+| sweep/rect-28x3                                      | 0 | 175   | 150   | 1000  | 1       | 0     | 1      | 0      | -        | -     | -            | -           | -              | 1    | not measurable | 0              | 0       | 0          |
+| sweep/rect-30x3                                      | 0 | 175   | 150   | 1000  | 1       | 0     | 1      | 0      | -        | -     | -            | -           | -              | 1    | not measurable | 0              | 0       | 0          |
+| sweep/rect-34x3                                      | 0 | 175   | 150   | 1000  | 1       | 0     | 1      | 0      | -        | -     | -            | -           | -              | 1    | not measurable | 0              | 0       | 0          |
+| sweep/rect-30x2                                      | 0 | 175   | 150   | 1000  | 1       | 0     | 1      | 0      | -        | -     | -            | -           | -              | 0    | not measurable | 0              | 0       | 0          |
+| sweep/band-28x3-on-32                                | 0 | 175   | 150   | 1000  | 1       | 0     | 1      | 0      | -        | -     | -            | -           | -              | 1    | not measurable | 0              | 0       | 0          |
+| sweep/band-28x3-on-1024                              | 0 | 175   | 150   | 1000  | 1       | 0     | 1      | 0      | -        | -     | -            | -           | -              | 1    | not measurable | 0              | 0       | 0          |
+| sweep/band-896x96-on-1024                            | 0 | 175   | 150   | 1000  | 1       | 0     | 1      | 0      | -        | -     | -            | -           | -              | 47   | not measurable | 0              | 0       | 0          |
+| artwork/autumn-dusk-lake-256.pixel                   | 0 | 950   | 900   | 1000  | 13      | 226   | 152    | 145    | 0        | 667   | 0            | 98          | 117            | 127  | 83             | 4              | 0       | 9          |
+| artwork/dusk-lake-valley-agent.pixel                 | 0 | 950   | 900   | 1000  | 12      | 212   | 136    | 264    | 0        | 600   | 0            | 20          | 44             | 90   | -5             | 16             | 0       | 0          |
+| artwork/dusk-lake-valley-agent2.pixel                | 0 | 950   | 900   | 1000  | 12      | 202   | 144    | 251    | 0        | 1000  | 0            | 43          | 39             | 127  | 17             | 20             | 0       | 0          |
+| artwork/dusk-lake-valley-v2.pixel                    | 0 | 750   | 900   | 1000  | 11      | 228   | 73     | 118    | 0        | 800   | 0            | 20          | 20             | 100  | 10             | 113            | 0       | 0          |
+| artwork/dusk-lake-valley-v3.pixel                    | 0 | 950   | 900   | 1000  | 13      | 227   | 163    | 294    | 0        | 1000  | 0            | 117         | 31             | 127  | -4             | 25             | 0       | 0          |
+| artwork/dusk-lake-valley.pixel                       | 0 | 950   | 900   | 1000  | 14      | 227   | 198    | 317    | 0        | 1000  | 0            | 117         | 31             | 127  | -4             | 22             | 0       | 0          |
+| artwork/moonlit-alpine-lake-fast.pixel               | 0 | 850   | 900   | 1000  | 11      | 210   | 55     | 63     | 0        | 667   | 0            | 94          | 31             | 31   | 6              | 20             | 0       | 0          |
+| artwork/moonlit-alpine-lake.pixel                    | 0 | 950   | 900   | 1000  | 13      | 219   | 50     | 53     | 0        | 667   | 0            | 172         | 125            | 31   | -7             | 25             | 0       | 0          |
+| artwork/sunset-lighthouse-512-baseline-model-a.pixel | 0 | 850   | 900   | 1000  | 15      | 218   | 214    | 481    | 0        | 667   | 0            | 25          | 8              | 255  | 10             | 11             | 0       | 0          |
+| artwork/sunset-lighthouse-512.pixel                  | 0 | 950   | 900   | 1000  | 16      | 230   | 2971   | 1008   | 0        | 333   | 0            | 8           | 4              | 255  | 66             | 14             | 0       | 2          |
+| artwork/verify/lantern-keeper.pixel                  | 0 | 850   | 900   | 1000  | 13      | 214   | 14     | 5      | 0        | 0     | 385          | 138         | 125            | 7    | 1              | 25             | 0       | 0          |
+| app/icon.png                                         | 0 | 950   | 900   | 1000  | 12      | 176   | 22     | 26     | 0        | 1000  | 0            | 308         | 590            | 479  | -1             | 34             | 63      | 0          |
+| value/straight-diagonal-32                           | 0 | 500   | 900   | 100   | 5       | 148   | 5      | 4      | 1000     | 0     | 750          | 600         | 909            | 10   | 148            | 0              | 0       | 0          |
+| value/nested-contour-32                              | 0 | 825   | 900   | 750   | 5       | 148   | 5      | 4      | 333      | 667   | 857          | 600         | 545            | 10   | 119            | 0              | 0       | 0          |
+| value/level-set-32                                   | 0 | 950   | 900   | 1000  | 5       | 148   | 5      | 4      | 0        | 1000  | 610          | 960         | 91             | 10   | -20            | 0              | 0       | 0          |
+| value/hard-surface-terminator-32                     | 0 | 950   | 900   | 1000  | 5       | 148   | 5      | 4      | 0        | 0     | 65           | 833         | 200            | 9    | 121            | 0              | 0       | 0          |
+| value/hue-carries-form-32                            | 0 | 125   | 150   | 1000  | 1       | 2     | 1      | 0      | -        | -     | -            | -           | -              | 10   | 2              | 111            | 0       | 0          |
+| value/shadow-crushed-32                              | 0 | 610   | 620   | 900   | 3       | 184   | 3      | 2      | 227      | 0     | 800          | 720         | 727            | 10   | 142            | 0              | 774     | 0          |
+| value/highlight-blown-32                             | 0 | 675   | 900   | 750   | 5       | 182   | 5      | 4      | 333      | 667   | 857          | 600         | 545            | 10   | 153            | 0              | 0       | 399        |
 
 ## 3 · Applicability
 
 `evaluate` records `not-implemented` for every dimension that has no analyzer, so the aggregator's own predicates are called directly as well. The middle two columns are what the precondition says; the right-hand one is only the reasons that are *not* `not-implemented`, because those five are the same on every row and would bury the two that are not.
 
-| case                                                 | requiresReadableSubject | motionApplicability | exclusions with a reason | blocking              |
-| ---------------------------------------------------- | ----------------------- | ------------------- | ------------------------ | --------------------- |
-| control/clean-blob-16                                | applicable              | single-frame        | -                        | -                     |
-| control/clean-figure-20                              | applicable              | single-frame        | -                        | -                     |
-| control/clean-union-16                               | applicable              | single-frame        | -                        | -                     |
-| control/clean-banner-64x24                           | applicable              | single-frame        | -                        | -                     |
-| control/partial-alpha-glow-28x24                     | applicable              | single-frame        | -                        | -                     |
-| control/outline-ring-32                              | applicable              | single-frame        | -                        | -                     |
-| connectivity/diagonal-bridge-16                      | applicable              | single-frame        | -                        | fragmented-silhouette |
-| connectivity/corner-touching-16                      | applicable              | single-frame        | -                        | -                     |
-| connectivity/background-diagonal-leak-9              | applicable              | single-frame        | -                        | -                     |
-| connectivity/contour-staircase-24                    | applicable              | single-frame        | -                        | fragmented-silhouette |
-| defect/detached-pieces-22                            | applicable              | single-frame        | -                        | -                     |
-| defect/fragmented-hat-20                             | applicable              | single-frame        | -                        | -                     |
-| defect/three-masses-20                               | applicable              | single-frame        | -                        | fragmented-silhouette |
-| defect/interior-hole-speck-24                        | applicable              | single-frame        | -                        | -                     |
-| defect/interior-hole-window-24                       | applicable              | single-frame        | -                        | -                     |
-| defect/hollow-keyhole-20                             | applicable              | single-frame        | -                        | -                     |
-| defect/shape-clipped-32                              | applicable              | single-frame        | -                        | shape-clipped         |
-| defect/subject-undersized-64                         | applicable              | single-frame        | -                        | -                     |
-| defect/empty-canvas-16                               | applicable              | single-frame        | -                        | empty-frame           |
-| bleed/full-bleed-scene-32                            | no-subject              | single-frame        | silhouette=no-subject    | -                     |
-| bleed/one-pixel-guard-32                             | no-subject              | single-frame        | silhouette=no-subject    | -                     |
-| bleed/two-pixel-margin-32                            | applicable              | single-frame        | -                        | -                     |
-| motion/worst-frame-wins-16                           | applicable              | applicable          | -                        | fragmented-silhouette |
-| motion/frames-identical-16                           | applicable              | no-motion-content   | -                        | -                     |
-| motion/blank-frame-16                                | applicable              | applicable          | -                        | empty-frame           |
-| sweep/rect-30x28                                     | applicable              | single-frame        | -                        | -                     |
-| sweep/rect-28x28                                     | applicable              | single-frame        | -                        | -                     |
-| sweep/rect-30x20                                     | applicable              | single-frame        | -                        | -                     |
-| sweep/rect-30x15                                     | applicable              | single-frame        | -                        | -                     |
-| sweep/rect-30x10                                     | applicable              | single-frame        | -                        | -                     |
-| sweep/rect-30x8                                      | applicable              | single-frame        | -                        | -                     |
-| sweep/rect-30x6                                      | applicable              | single-frame        | -                        | -                     |
-| sweep/rect-30x5                                      | applicable              | single-frame        | -                        | -                     |
-| sweep/rect-30x4                                      | applicable              | single-frame        | -                        | -                     |
-| sweep/rect-28x3                                      | applicable              | single-frame        | -                        | -                     |
-| sweep/rect-30x3                                      | applicable              | single-frame        | -                        | -                     |
-| sweep/rect-34x3                                      | applicable              | single-frame        | -                        | -                     |
-| sweep/rect-30x2                                      | applicable              | single-frame        | -                        | -                     |
-| artwork/autumn-dusk-lake-256.pixel                   | no-subject              | single-frame        | silhouette=no-subject    | -                     |
-| artwork/dusk-lake-valley-agent.pixel                 | no-subject              | single-frame        | silhouette=no-subject    | -                     |
-| artwork/dusk-lake-valley-agent2.pixel                | no-subject              | single-frame        | silhouette=no-subject    | -                     |
-| artwork/dusk-lake-valley-v2.pixel                    | no-subject              | single-frame        | silhouette=no-subject    | -                     |
-| artwork/dusk-lake-valley-v3.pixel                    | no-subject              | single-frame        | silhouette=no-subject    | -                     |
-| artwork/dusk-lake-valley.pixel                       | no-subject              | single-frame        | silhouette=no-subject    | -                     |
-| artwork/moonlit-alpine-lake-fast.pixel               | no-subject              | single-frame        | silhouette=no-subject    | -                     |
-| artwork/moonlit-alpine-lake.pixel                    | no-subject              | single-frame        | silhouette=no-subject    | -                     |
-| artwork/sunset-lighthouse-512-baseline-model-a.pixel | no-subject              | single-frame        | silhouette=no-subject    | -                     |
-| artwork/sunset-lighthouse-512.pixel                  | no-subject              | single-frame        | silhouette=no-subject    | -                     |
-| artwork/verify/lantern-keeper.pixel                  | applicable              | single-frame        | -                        | -                     |
-| app/icon.png                                         | applicable              | single-frame        | -                        | -                     |
+| case                                                 | requiresReadableSubject | motionApplicability | exclusions with a reason | blocking                                      |
+| ---------------------------------------------------- | ----------------------- | ------------------- | ------------------------ | --------------------------------------------- |
+| control/clean-blob-16                                | applicable              | single-frame        | -                        | -                                             |
+| control/clean-figure-20                              | applicable              | single-frame        | -                        | -                                             |
+| control/clean-union-16                               | applicable              | single-frame        | -                        | -                                             |
+| control/clean-banner-64x24                           | applicable              | single-frame        | -                        | -                                             |
+| control/partial-alpha-glow-28x24                     | applicable              | single-frame        | -                        | -                                             |
+| control/outline-ring-32                              | applicable              | single-frame        | -                        | -                                             |
+| connectivity/diagonal-bridge-16                      | applicable              | single-frame        | -                        | fragmented-silhouette, flat-value             |
+| connectivity/corner-touching-16                      | applicable              | single-frame        | -                        | flat-value                                    |
+| connectivity/background-diagonal-leak-9              | applicable              | single-frame        | -                        | -                                             |
+| connectivity/contour-staircase-24                    | applicable              | single-frame        | -                        | fragmented-silhouette, flat-value             |
+| defect/detached-pieces-22                            | applicable              | single-frame        | -                        | flat-value                                    |
+| defect/fragmented-hat-20                             | applicable              | single-frame        | -                        | flat-value                                    |
+| defect/three-masses-20                               | applicable              | single-frame        | -                        | fragmented-silhouette, flat-value             |
+| defect/interior-hole-speck-24                        | applicable              | single-frame        | -                        | flat-value                                    |
+| defect/interior-hole-window-24                       | applicable              | single-frame        | -                        | flat-value                                    |
+| defect/hollow-keyhole-20                             | applicable              | single-frame        | -                        | flat-value                                    |
+| defect/shape-clipped-32                              | applicable              | single-frame        | -                        | shape-clipped, flat-value                     |
+| defect/subject-undersized-64                         | applicable              | single-frame        | -                        | flat-value                                    |
+| defect/empty-canvas-16                               | applicable              | single-frame        | -                        | empty-frame                                   |
+| bleed/full-bleed-scene-32                            | no-subject              | single-frame        | silhouette=no-subject    | -                                             |
+| bleed/one-pixel-guard-32                             | no-subject              | single-frame        | silhouette=no-subject    | -                                             |
+| bleed/two-pixel-margin-32                            | applicable              | single-frame        | -                        | -                                             |
+| motion/worst-frame-wins-16                           | applicable              | applicable          | -                        | fragmented-silhouette, flat-value, flat-value |
+| motion/frames-identical-16                           | applicable              | no-motion-content   | -                        | flat-value                                    |
+| motion/blank-frame-16                                | applicable              | applicable          | -                        | empty-frame, flat-value                       |
+| sweep/rect-30x28                                     | applicable              | single-frame        | -                        | -                                             |
+| sweep/rect-28x28                                     | applicable              | single-frame        | -                        | -                                             |
+| sweep/rect-30x20                                     | applicable              | single-frame        | -                        | -                                             |
+| sweep/rect-30x15                                     | applicable              | single-frame        | -                        | -                                             |
+| sweep/rect-30x10                                     | applicable              | single-frame        | -                        | -                                             |
+| sweep/rect-30x8                                      | applicable              | single-frame        | -                        | -                                             |
+| sweep/rect-30x6                                      | applicable              | single-frame        | -                        | -                                             |
+| sweep/rect-30x5                                      | applicable              | single-frame        | -                        | -                                             |
+| sweep/rect-30x4                                      | applicable              | single-frame        | -                        | -                                             |
+| sweep/rect-28x3                                      | applicable              | single-frame        | -                        | flat-value                                    |
+| sweep/rect-30x3                                      | applicable              | single-frame        | -                        | flat-value                                    |
+| sweep/rect-34x3                                      | applicable              | single-frame        | -                        | flat-value                                    |
+| sweep/rect-30x2                                      | applicable              | single-frame        | -                        | flat-value                                    |
+| sweep/band-28x3-on-32                                | applicable              | single-frame        | -                        | flat-value                                    |
+| sweep/band-28x3-on-1024                              | applicable              | single-frame        | -                        | flat-value                                    |
+| sweep/band-896x96-on-1024                            | applicable              | single-frame        | -                        | flat-value                                    |
+| artwork/autumn-dusk-lake-256.pixel                   | no-subject              | single-frame        | silhouette=no-subject    | -                                             |
+| artwork/dusk-lake-valley-agent.pixel                 | no-subject              | single-frame        | silhouette=no-subject    | -                                             |
+| artwork/dusk-lake-valley-agent2.pixel                | no-subject              | single-frame        | silhouette=no-subject    | -                                             |
+| artwork/dusk-lake-valley-v2.pixel                    | no-subject              | single-frame        | silhouette=no-subject    | -                                             |
+| artwork/dusk-lake-valley-v3.pixel                    | no-subject              | single-frame        | silhouette=no-subject    | -                                             |
+| artwork/dusk-lake-valley.pixel                       | no-subject              | single-frame        | silhouette=no-subject    | -                                             |
+| artwork/moonlit-alpine-lake-fast.pixel               | no-subject              | single-frame        | silhouette=no-subject    | -                                             |
+| artwork/moonlit-alpine-lake.pixel                    | no-subject              | single-frame        | silhouette=no-subject    | -                                             |
+| artwork/sunset-lighthouse-512-baseline-model-a.pixel | no-subject              | single-frame        | silhouette=no-subject    | -                                             |
+| artwork/sunset-lighthouse-512.pixel                  | no-subject              | single-frame        | silhouette=no-subject    | -                                             |
+| artwork/verify/lantern-keeper.pixel                  | applicable              | single-frame        | -                        | -                                             |
+| app/icon.png                                         | applicable              | single-frame        | -                        | -                                             |
+| value/straight-diagonal-32                           | applicable              | single-frame        | -                        | plane-crosses-form                            |
+| value/nested-contour-32                              | applicable              | single-frame        | -                        | -                                             |
+| value/level-set-32                                   | applicable              | single-frame        | -                        | -                                             |
+| value/hard-surface-terminator-32                     | applicable              | single-frame        | -                        | -                                             |
+| value/hue-carries-form-32                            | applicable              | single-frame        | -                        | flat-value                                    |
+| value/shadow-crushed-32                              | applicable              | single-frame        | -                        | shadow-crushed                                |
+| value/highlight-blown-32                             | applicable              | single-frame        | -                        | -                                             |
 
 ## 4 · `compactnessQ` across every subject
 
-The gate is **300** (§4.1's `compactnessQ < 300`). **10** measured subject frames fall below it and **42** reach it. No gate is moved by this file.
+The gate is **300** (§4.1's `compactnessQ < 300`). **9** measured subject frames fall below it and **53** reach it. No gate is moved by this file.
 
 | compactnessQ | samples |
 | ------------ | ------- |
-| 0..99        | 2       |
+| 0..99        | 0       |
 | 100..199     | 2       |
-| 200..299     | 6       |
-| 300..399     | 6       |
+| 200..299     | 7       |
+| 300..399     | 4       |
 | 400..499     | 3       |
-| 500..599     | 6       |
+| 500..599     | 11      |
 | 600..699     | 2       |
-| 700..799     | 25      |
+| 700..799     | 33      |
 | 800..899     | 0       |
 | 900..1000    | 0       |
 
@@ -206,57 +333,61 @@ The gate is **300** (§4.1's `compactnessQ < 300`). **10** measured subject fram
 
 The only real character sprite in this repository, and the measurement the whole calibration argument turns on. It measures **compactnessQ 269** against a gate of 300.
 
-- **7** of **52** measured subject frames score below it.
-- The nearest samples either side are `sweep/rect-30x3` at **260** and `sweep/rect-28x3` at **275**, so the gate would have to fall between 260 and 275 to admit it without admitting its neighbour as well.
+- **4** of **62** measured subject frames score below it.
+- The nearest samples either side are `sweep/rect-30x3` at **260** and `sweep/band-28x3-on-1024` at **275**, so the gate would have to fall between 260 and 275 to admit it without admitting its neighbour as well.
 
 ### What each candidate gate would do
 
 Lowering the gate can only *release* subjects, never penalise new ones, so the price of admitting this sprite is exactly the `released` column. Raising it does the reverse. **This file moves no gate**; it produces the numbers a move would be argued from.
 
-| gate            | penalised | released by lowering here                                                                                                                                                      | newly penalised by raising here |
-| --------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------- |
-| 200             | 4         | sweep/rect-34x3 (234), defect/three-masses-20 (259), sweep/rect-30x3 (260), artwork/verify/lantern-keeper.pixel (269), sweep/rect-28x3 (275), motion/worst-frame-wins-16 (295) | -                               |
-| 250             | 5         | defect/three-masses-20 (259), sweep/rect-30x3 (260), artwork/verify/lantern-keeper.pixel (269), sweep/rect-28x3 (275), motion/worst-frame-wins-16 (295)                        | -                               |
-| 260             | 6         | sweep/rect-30x3 (260), artwork/verify/lantern-keeper.pixel (269), sweep/rect-28x3 (275), motion/worst-frame-wins-16 (295)                                                      | -                               |
-| 269             | 7         | artwork/verify/lantern-keeper.pixel (269), sweep/rect-28x3 (275), motion/worst-frame-wins-16 (295)                                                                             | -                               |
-| 275             | 8         | sweep/rect-28x3 (275), motion/worst-frame-wins-16 (295)                                                                                                                        | -                               |
-| **300** (today) | 10        | -                                                                                                                                                                              | -                               |
+| gate            | penalised | released by lowering here                                                                                                                                                                                   | newly penalised by raising here |
+| --------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| 200             | 2         | sweep/rect-34x3 (234), sweep/rect-30x3 (260), artwork/verify/lantern-keeper.pixel (269), sweep/band-28x3-on-1024 (275), sweep/band-28x3-on-32 (275), sweep/band-896x96-on-1024 (275), sweep/rect-28x3 (275) | -                               |
+| 250             | 3         | sweep/rect-30x3 (260), artwork/verify/lantern-keeper.pixel (269), sweep/band-28x3-on-1024 (275), sweep/band-28x3-on-32 (275), sweep/band-896x96-on-1024 (275), sweep/rect-28x3 (275)                        | -                               |
+| 260             | 3         | sweep/rect-30x3 (260), artwork/verify/lantern-keeper.pixel (269), sweep/band-28x3-on-1024 (275), sweep/band-28x3-on-32 (275), sweep/band-896x96-on-1024 (275), sweep/rect-28x3 (275)                        | -                               |
+| 269             | 4         | artwork/verify/lantern-keeper.pixel (269), sweep/band-28x3-on-1024 (275), sweep/band-28x3-on-32 (275), sweep/band-896x96-on-1024 (275), sweep/rect-28x3 (275)                                               | -                               |
+| 275             | 5         | sweep/band-28x3-on-1024 (275), sweep/band-28x3-on-32 (275), sweep/band-896x96-on-1024 (275), sweep/rect-28x3 (275)                                                                                          | -                               |
+| **300** (today) | 9         | -                                                                                                                                                                                                           | -                               |
 
 ### Every sample, ascending
 
 | compactnessQ | case                                                 | tier      | frame | verdict of `evaluate` |
 | ------------ | ---------------------------------------------------- | --------- | ----- | --------------------- |
-| 44           | connectivity/contour-staircase-24                    | synthetic | 0     | measured              |
-| 65           | connectivity/diagonal-bridge-16                      | synthetic | 0     | measured              |
 | 157          | defect/hollow-keyhole-20                             | synthetic | 0     | measured              |
 | 184          | sweep/rect-30x2                                      | synthetic | 0     | measured              |
 | 234          | sweep/rect-34x3                                      | synthetic | 0     | measured              |
-| 259          | defect/three-masses-20                               | synthetic | 0     | measured              |
 | 260          | sweep/rect-30x3                                      | synthetic | 0     | measured              |
 | 269          | artwork/verify/lantern-keeper.pixel                  | real      | 0     | measured              |
+| 275          | sweep/band-28x3-on-1024                              | synthetic | 0     | measured              |
+| 275          | sweep/band-28x3-on-32                                | synthetic | 0     | measured              |
+| 275          | sweep/band-896x96-on-1024                            | synthetic | 0     | measured              |
 | 275          | sweep/rect-28x3                                      | synthetic | 0     | measured              |
-| 295          | motion/worst-frame-wins-16                           | synthetic | 1     | measured              |
 | 326          | sweep/rect-30x4                                      | synthetic | 0     | measured              |
 | 350          | artwork/dusk-lake-valley-agent.pixel                 | real      | 0     | excluded: no-subject  |
 | 385          | sweep/rect-30x5                                      | synthetic | 0     | measured              |
 | 391          | control/clean-union-16                               | synthetic | 0     | measured              |
-| 392          | defect/fragmented-hat-20                             | synthetic | 0     | measured              |
-| 393          | connectivity/corner-touching-16                      | synthetic | 0     | measured              |
 | 419          | control/clean-figure-20                              | synthetic | 0     | measured              |
 | 423          | defect/interior-hole-window-24                       | synthetic | 0     | measured              |
 | 436          | sweep/rect-30x6                                      | synthetic | 0     | measured              |
 | 500          | artwork/dusk-lake-valley-v2.pixel                    | real      | 0     | excluded: no-subject  |
 | 502          | connectivity/background-diagonal-leak-9              | synthetic | 0     | measured              |
 | 522          | sweep/rect-30x8                                      | synthetic | 0     | measured              |
-| 534          | defect/detached-pieces-22                            | synthetic | 0     | measured              |
+| 566          | value/highlight-blown-32                             | synthetic | 0     | measured              |
+| 566          | value/hue-carries-form-32                            | synthetic | 0     | measured              |
+| 566          | value/level-set-32                                   | synthetic | 0     | measured              |
+| 566          | value/nested-contour-32                              | synthetic | 0     | measured              |
+| 566          | value/shadow-crushed-32                              | synthetic | 0     | measured              |
+| 566          | value/straight-diagonal-32                           | synthetic | 0     | measured              |
 | 589          | control/clean-banner-64x24                           | synthetic | 0     | measured              |
 | 589          | sweep/rect-30x10                                     | synthetic | 0     | measured              |
 | 621          | control/outline-ring-32                              | synthetic | 0     | measured              |
 | 698          | sweep/rect-30x15                                     | synthetic | 0     | measured              |
 | 711          | defect/interior-hole-speck-24                        | synthetic | 0     | measured              |
 | 749          | app/icon.png                                         | real      | 0     | measured              |
+| 754          | defect/fragmented-hat-20                             | synthetic | 0     | measured              |
 | 754          | sweep/rect-30x20                                     | synthetic | 0     | measured              |
 | 776          | control/clean-blob-16                                | synthetic | 0     | measured              |
+| 779          | value/hard-surface-terminator-32                     | synthetic | 0     | measured              |
 | 783          | defect/shape-clipped-32                              | synthetic | 0     | measured              |
 | 784          | sweep/rect-30x28                                     | synthetic | 0     | measured              |
 | 785          | artwork/autumn-dusk-lake-256.pixel                   | real      | 0     | excluded: no-subject  |
@@ -270,33 +401,152 @@ Lowering the gate can only *release* subjects, never penalise new ones, so the p
 | 785          | bleed/full-bleed-scene-32                            | synthetic | 0     | excluded: no-subject  |
 | 785          | bleed/one-pixel-guard-32                             | synthetic | 0     | excluded: no-subject  |
 | 785          | bleed/two-pixel-margin-32                            | synthetic | 0     | measured              |
+| 785          | connectivity/contour-staircase-24                    | synthetic | 0     | measured              |
+| 785          | connectivity/corner-touching-16                      | synthetic | 0     | measured              |
+| 785          | connectivity/diagonal-bridge-16                      | synthetic | 0     | measured              |
 | 785          | control/partial-alpha-glow-28x24                     | synthetic | 0     | measured              |
+| 785          | defect/detached-pieces-22                            | synthetic | 0     | measured              |
 | 785          | defect/subject-undersized-64                         | synthetic | 0     | measured              |
+| 785          | defect/three-masses-20                               | synthetic | 0     | measured              |
 | 785          | motion/blank-frame-16                                | synthetic | 0     | measured              |
 | 785          | motion/frames-identical-16                           | synthetic | 0     | measured              |
 | 785          | motion/frames-identical-16                           | synthetic | 1     | measured              |
 | 785          | motion/frames-identical-16                           | synthetic | 2     | measured              |
 | 785          | motion/worst-frame-wins-16                           | synthetic | 0     | measured              |
+| 785          | motion/worst-frame-wins-16                           | synthetic | 1     | measured              |
 | 785          | sweep/rect-28x28                                     | synthetic | 0     | measured              |
+
+## 4b · `thicknessQ` — the scale-aware reading, and its own gate
+
+`compactnessQ` is a **shape** descriptor and is scale-invariant on purpose: a 32×32 square and a 1024×1024 square are the same drawing and score the same, and a measurement that separated them would be measuring the canvas. What it cannot see is the sprite's own size, which is what §3.3's `Dmax` paragraph is about — "a 3px-wide blade and a 30px-wide cloak do not have the same room to put a curved terminator in" — and which §4.1 never applied. So the two are reported as **two numbers** rather than merged: merging a shape descriptor with a scale reading produces a number whose meaning depends on which of the two the reader had in mind.
+
+`thicknessQ = min(1000, rhu(1000 * thicknessPx, min(W, H)))`, where `thicknessPx` is the subject's largest inscribed axis-aligned square. **The gate is **250**, and it is T-022's own number** — §4.1 has no thickness row at all. It is transcribed from §3.7's `span < 0.25` ("a subject must occupy a quarter of the room") rather than picked, and **7** measured subject frames fall below it while **55** reach it. No gate is moved by this file.
+
+| thicknessQ | samples |
+| ---------- | ------- |
+| 0..99      | 5       |
+| 100..199   | 2       |
+| 200..299   | 0       |
+| 300..399   | 10      |
+| 400..499   | 10      |
+| 500..599   | 11      |
+| 600..699   | 6       |
+| 700..799   | 2       |
+| 800..899   | 5       |
+| 900..1000  | 11      |
+
+### How much room the declared-clean subjects have above each gate
+
+A control firing is the one corpus failure nobody can argue with, and the number that decides a gate is not "how many subjects fall below" but "how close does the cleanest clean work come". The sweep members and the `bleed` cases are `clean-control` members too, so this column is every subject the corpus declares free of injected defects, closest first — and the margin is the distance from the gate to the tightest of them. A gate with three per-mille of margin on a declared-clean subject is a gate waiting for the next corpus member. Both gates are shown so neither is chosen on a count the other one is comfortable with.
+
+| gate             | subjects below | tightest declared-clean subject | margin                      |
+| ---------------- | -------------- | ------------------------------- | --------------------------- |
+| compactnessQ 300 | 9              | sweep/rect-30x4 at 326          | 26 per-mille above the gate |
+| thicknessQ 250   | 7              | control/clean-union-16 at 313   | 63 per-mille above the gate |
+
+### What each candidate thickness gate would do
+
+Derived from the distribution rather than invented, the same way §4's candidates are. `DERIVED_POLICY.thicknessQ` in `format.ts` holds the adopted number and the reason.
+
+| thicknessQ gate   | penalised |
+| ----------------- | --------- |
+| 200               | 7         |
+| **250** (adopted) | 7         |
+| 300               | 7         |
+| 400               | 17        |
+
+### Every sample, ascending — with the absolute count beside the ratio
+
+`thicknessPx` is the same measurement in **pixels** and the two answer different questions: a 28×3 band on 32² and a 896×96 band on 1024² are the same drawing at two resolutions, both read 94, and a 3px and a 96px knife are a 32× difference in this column. They are not separated, and the corpus says so rather than hiding it — any ratio of two lengths in the same sprite is invariant under uniform magnification, and separating them would need a target resolution, which a document does not carry.
+
+| thicknessQ | thicknessPx | profileQ | case                                                 | tier      | frame |
+| ---------- | ----------- | -------- | ---------------------------------------------------- | --------- | ----- |
+| 3          | 3           | 3        | sweep/band-28x3-on-1024                              | synthetic | 0     |
+| 42         | 1           | 42       | connectivity/contour-staircase-24                    | synthetic | 0     |
+| 63         | 1           | 63       | connectivity/diagonal-bridge-16                      | synthetic | 0     |
+| 94         | 3           | 94       | sweep/band-28x3-on-32                                | synthetic | 0     |
+| 94         | 96          | 94       | sweep/band-896x96-on-1024                            | synthetic | 0     |
+| 100        | 2           | 100      | defect/hollow-keyhole-20                             | synthetic | 0     |
+| 188        | 12          | 188      | defect/subject-undersized-64                         | synthetic | 0     |
+| 313        | 5           | 313      | connectivity/corner-touching-16                      | synthetic | 0     |
+| 313        | 10          | 313      | control/clean-union-16                               | synthetic | 0     |
+| 313        | 5           | 313      | defect/three-masses-20                               | synthetic | 0     |
+| 313        | 5           | 313      | motion/worst-frame-wins-16                           | synthetic | 1     |
+| 333        | 3           | 333      | connectivity/background-diagonal-leak-9              | synthetic | 0     |
+| 333        | 6           | 333      | control/clean-figure-20                              | synthetic | 0     |
+| 333        | 2           | 184      | sweep/rect-30x2                                      | synthetic | 0     |
+| 375        | 12          | 269      | artwork/verify/lantern-keeper.pixel                  | real      | 0     |
+| 375        | 12          | 375      | control/outline-ring-32                              | synthetic | 0     |
+| 375        | 9           | 375      | defect/interior-hole-window-24                       | synthetic | 0     |
+| 400        | 8           | 400      | defect/fragmented-hat-20                             | synthetic | 0     |
+| 429        | 3           | 275      | sweep/rect-28x3                                      | synthetic | 0     |
+| 429        | 3           | 260      | sweep/rect-30x3                                      | synthetic | 0     |
+| 429        | 3           | 234      | sweep/rect-34x3                                      | synthetic | 0     |
+| 469        | 15          | 469      | value/highlight-blown-32                             | synthetic | 0     |
+| 469        | 15          | 469      | value/hue-carries-form-32                            | synthetic | 0     |
+| 469        | 15          | 469      | value/level-set-32                                   | synthetic | 0     |
+| 469        | 15          | 469      | value/nested-contour-32                              | synthetic | 0     |
+| 469        | 15          | 469      | value/shadow-crushed-32                              | synthetic | 0     |
+| 469        | 15          | 469      | value/straight-diagonal-32                           | synthetic | 0     |
+| 500        | 8           | 500      | control/clean-blob-16                                | synthetic | 0     |
+| 500        | 12          | 500      | control/partial-alpha-glow-28x24                     | synthetic | 0     |
+| 500        | 8           | 500      | motion/blank-frame-16                                | synthetic | 0     |
+| 500        | 8           | 500      | motion/frames-identical-16                           | synthetic | 0     |
+| 500        | 8           | 500      | motion/frames-identical-16                           | synthetic | 1     |
+| 500        | 8           | 500      | motion/frames-identical-16                           | synthetic | 2     |
+| 500        | 8           | 500      | motion/worst-frame-wins-16                           | synthetic | 0     |
+| 500        | 4           | 326      | sweep/rect-30x4                                      | synthetic | 0     |
+| 556        | 5           | 385      | sweep/rect-30x5                                      | synthetic | 0     |
+| 574        | 147         | 350      | artwork/dusk-lake-valley-agent.pixel                 | real      | 0     |
+| 583        | 14          | 583      | defect/interior-hole-speck-24                        | synthetic | 0     |
+| 600        | 6           | 436      | sweep/rect-30x6                                      | synthetic | 0     |
+| 625        | 20          | 625      | value/hard-surface-terminator-32                     | synthetic | 0     |
+| 656        | 168         | 500      | artwork/dusk-lake-valley-v2.pixel                    | real      | 0     |
+| 667        | 16          | 589      | control/clean-banner-64x24                           | synthetic | 0     |
+| 667        | 12          | 667      | defect/detached-pieces-22                            | synthetic | 0     |
+| 667        | 8           | 522      | sweep/rect-30x8                                      | synthetic | 0     |
+| 714        | 10          | 589      | sweep/rect-30x10                                     | synthetic | 0     |
+| 789        | 15          | 698      | sweep/rect-30x15                                     | synthetic | 0     |
+| 809        | 828         | 749      | app/icon.png                                         | real      | 0     |
+| 833        | 20          | 754      | sweep/rect-30x20                                     | synthetic | 0     |
+| 875        | 28          | 785      | bleed/two-pixel-margin-32                            | synthetic | 0     |
+| 875        | 28          | 785      | sweep/rect-28x28                                     | synthetic | 0     |
+| 875        | 28          | 784      | sweep/rect-30x28                                     | synthetic | 0     |
+| 906        | 29          | 783      | defect/shape-clipped-32                              | synthetic | 0     |
+| 969        | 31          | 785      | bleed/one-pixel-guard-32                             | synthetic | 0     |
+| 1000       | 256         | 785      | artwork/autumn-dusk-lake-256.pixel                   | real      | 0     |
+| 1000       | 256         | 785      | artwork/dusk-lake-valley-agent2.pixel                | real      | 0     |
+| 1000       | 256         | 785      | artwork/dusk-lake-valley-v3.pixel                    | real      | 0     |
+| 1000       | 256         | 785      | artwork/dusk-lake-valley.pixel                       | real      | 0     |
+| 1000       | 64          | 785      | artwork/moonlit-alpine-lake-fast.pixel               | real      | 0     |
+| 1000       | 64          | 785      | artwork/moonlit-alpine-lake.pixel                    | real      | 0     |
+| 1000       | 512         | 785      | artwork/sunset-lighthouse-512-baseline-model-a.pixel | real      | 0     |
+| 1000       | 512         | 785      | artwork/sunset-lighthouse-512.pixel                  | real      | 0     |
+| 1000       | 32          | 785      | bleed/full-bleed-scene-32                            | synthetic | 0     |
 
 ## 5 · Per-dimension score distribution
 
-| dimension  | n  | min | median | max  | values                                                                                                                                                               |
-| ---------- | -- | --- | ------ | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| silhouette | 38 | 0   | 1000   | 1000 | 0 0 0 0 475 675 800 800 800 825 900 900 900 900 900 900 900 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 |
+| dimension  | n  | min | median | max  | values                                                                                                                                                                                                                                           |
+| ---------- | -- | --- | ------ | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| silhouette | 48 | 0   | 1000   | 1000 | 0 0 0 0 475 675 700 700 700 700 800 800 800 825 900 900 900 900 900 950 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000                              |
+| value      | 60 | 125 | 700    | 1000 | 125 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 500 610 675 700 700 700 700 700 700 700 700 700 700 700 700 700 700 700 700 700 700 750 810 825 850 850 850 950 950 950 950 950 950 950 950 950 950 1000 |
 
 Dimensions with no analyzer are absent from every report and so are absent from this table; that is the `not-implemented` bookkeeping working, not a gap in the corpus.
 
 ## 6 · Contrast pairs (§6.2)
 
-A matched pair differing in exactly one property is the only mechanism in this project that catches a measurement which is confidently, correlatively and completely wrong. The size of the gap is the thing worth reviewing: §6.2 calls a pair that separates by 0.02 "passing the test and still wrong". Three gaps per pair, because they say different things: the **scoreQ** gap is what a report delivers, the **raw** gap is what the measurement produced even where the aggregator refused to deliver it, and the **compactnessQ** gap is the dimension's own measurement, which is usually an order of magnitude larger than the score because the penalty is a step function.
+A matched pair differing in exactly one property is the only mechanism in this project that catches a measurement which is confidently, correlatively and completely wrong. The size of the gap is the thing worth reviewing: §6.2 calls a pair that separates by 0.02 "passing the test and still wrong". **Six** gaps per pair, because they say different things: the **scoreQ** gap is what a report delivers, the **raw** gap is what the measurement produced even where the aggregator refused to deliver it, **compactnessQ** is the shape reading, **thicknessQ** the scale-aware one, **profileQ** the worse of the two, and **valueQ** the second dimension's own. The last is why a `value` pair is legible at all: without it the straight band and the form-following contour differ by 385 per-mille and the table says five zeros, which reads as a measurement that cannot tell them apart.
 
-| group                      | members                                                                                                                                                                                                                                                                      | scoreQ gap | raw gap | compactnessQ gap |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ------- | ---------------- |
-| silhouette/line-vs-filled  | control/clean-blob-16 [measured, scoreQ 1000, raw 1000, cq 776] · connectivity/diagonal-bridge-16 [measured, scoreQ 0, raw 0, cq 65]                                                                                                                                         | 1000       | 1000    | 711              |
-| silhouette/hole-clause     | defect/interior-hole-speck-24 [measured, scoreQ 900, raw 900, cq 711] · defect/interior-hole-window-24 [measured, scoreQ 900, raw 900, cq 423]                                                                                                                               | 0          | 0       | 288              |
-| silhouette/margin-guard    | defect/shape-clipped-32 [measured, scoreQ 800, raw 800, cq 783] · bleed/full-bleed-scene-32 [no-subject, scoreQ -, raw 800, cq 785] · bleed/one-pixel-guard-32 [no-subject, scoreQ -, raw 800, cq 785] · bleed/two-pixel-margin-32 [measured, scoreQ 1000, raw 1000, cq 785] | 200        | 200     | 2                |
-| silhouette/thickness-sweep | sweep/rect-30x28 [measured, scoreQ 1000, raw 1000, cq 784] · sweep/rect-30x2 [measured, scoreQ 900, raw 900, cq 184]                                                                                                                                                         | 100        | 100     | 600              |
+| group                                 | members                                                                                                                                                                                                                                                                                                                                       | scoreQ gap | raw gap | compactnessQ gap | thicknessQ gap | profileQ gap | valueQ gap |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ------- | ---------------- | -------------- | ------------ | ---------- |
+| silhouette/line-vs-filled             | control/clean-blob-16 [measured, scoreQ 1000, raw 1000, cq 776, tq 500, vq 700] · connectivity/diagonal-bridge-16 [measured, scoreQ 0, raw 0, cq 785, tq 63, vq 175]                                                                                                                                                                          | 1000       | 1000    | 9                | 437            | 437          | 525        |
+| silhouette/hole-clause                | defect/interior-hole-speck-24 [measured, scoreQ 950, raw 950, cq 711, tq 583, vq 175] · defect/interior-hole-window-24 [measured, scoreQ 900, raw 900, cq 423, tq 375, vq 175]                                                                                                                                                                | 50         | 50      | 288              | 208            | 208          | 0          |
+| silhouette/margin-guard               | defect/shape-clipped-32 [measured, scoreQ 800, raw 800, cq 783, tq 906, vq 175] · bleed/full-bleed-scene-32 [no-subject, scoreQ -, raw 800, cq 785, tq 1000, vq 700] · bleed/one-pixel-guard-32 [no-subject, scoreQ -, raw 800, cq 785, tq 969, vq 700] · bleed/two-pixel-margin-32 [measured, scoreQ 1000, raw 1000, cq 785, tq 875, vq 700] | 200        | 200     | 2                | 125            | 2            | 525        |
+| silhouette/thickness-sweep            | sweep/rect-30x28 [measured, scoreQ 1000, raw 1000, cq 784, tq 875, vq 700] · sweep/rect-30x2 [measured, scoreQ 900, raw 900, cq 184, tq 333, vq 175]                                                                                                                                                                                          | 100        | 100     | 600              | 542            | 600          | 525        |
+| silhouette/scale-room                 | sweep/band-28x3-on-32 [measured, scoreQ 700, raw 700, cq 275, tq 94, vq 175] · sweep/band-28x3-on-1024 [measured, scoreQ 700, raw 700, cq 275, tq 3, vq 175]                                                                                                                                                                                  | 0          | 0       | 0                | 91             | 91           | 0          |
+| silhouette/scale-magnification        | sweep/band-28x3-on-32 [measured, scoreQ 700, raw 700, cq 275, tq 94, vq 175] · sweep/band-896x96-on-1024 [measured, scoreQ 700, raw 700, cq 275, tq 94, vq 175]                                                                                                                                                                               | 0          | 0       | 0                | 0              | 0            | 0          |
+| value/straight-band-vs-form-following | value/straight-diagonal-32 [measured, scoreQ 1000, raw 1000, cq 566, tq 469, vq 500] · value/nested-contour-32 [measured, scoreQ 1000, raw 1000, cq 566, tq 469, vq 825]                                                                                                                                                                      | 0          | 0       | 0                | 0              | 0            | 325        |
+| value/headroom                        | value/nested-contour-32 [measured, scoreQ 1000, raw 1000, cq 566, tq 469, vq 825] · value/highlight-blown-32 [measured, scoreQ 1000, raw 1000, cq 566, tq 469, vq 675]                                                                                                                                                                        | 0          | 0       | 0                | 0              | 0            | 150        |
 
 ## 7 · Human-rated tier
 
@@ -308,36 +558,74 @@ A matched pair differing in exactly one property is the only mechanism in this p
 | human/tile-32  | 32x32  | 1      | 3       | 0       |
 | human/scene-64 | 64x64  | 1      | 3       | 0       |
 
-## 8 · §3.3 quantities: implemented, and still in conflict
+## 8 · Thresholds: transcribed, and derived
 
-| name         | status        | adopted here                                                                                    | needed by                                 |
-| ------------ | ------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| N            | implemented   | -                                                                                               | silhouette, value, noise, outline, motion |
-| components   | implemented   | 4-connectivity for the subject; 8-connectivity for the background, holes 4-connected.           | silhouette, noise                         |
-| edgePixels   | implemented   | A count of boundary pixels, never a length.                                                     | outline                                   |
-| perimeter    | implemented   | Count of 4-adjacent (solid, transparent) pairs, with outside-the-canvas transparent.            | silhouette, value                         |
-| holes        | implemented   | Background counted with 8-connectivity, holes with 4-connectivity.                              | silhouette                                |
-| dist / Dmax  | unimplemented | 4-connected multi-source BFS from every edgePixel, +1 per step (the prose).                     | value, outline, noise                     |
-| convexCorner | implemented   | Measured as §3.3 defines it, which counts concave corners and so reads 0 on every convex shape. | value                                     |
+`SPEC_GATES` in `format.ts` is a **transcription** of `docs/EVALUATION.md`, and a transcription is checkable where an import is not. `DERIVED_POLICY` is the other kind: numbers T-022 derived, kept in a record named for their owner because a gate that was picked rather than quoted is a gate somebody has to be accountable for. **This file moves neither**; the second block has no line in §4.1 at all.
+
+| number                     | value | where it comes from                                                                                                                                                                                                                         |
+| -------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SPEC_GATES.compactnessQ    | 300   | transcribed from docs/EVALUATION.md                                                                                                                                                                                                         |
+| SPEC_GATES.share           | 98    | transcribed from docs/EVALUATION.md                                                                                                                                                                                                         |
+| SPEC_GATES.strayRatio      | 2     | transcribed from docs/EVALUATION.md                                                                                                                                                                                                         |
+| SPEC_GATES.holeArea        | 1     | transcribed from docs/EVALUATION.md                                                                                                                                                                                                         |
+| SPEC_GATES.borderTouch     | 3     | transcribed from docs/EVALUATION.md                                                                                                                                                                                                         |
+| SPEC_GATES.span            | 25    | transcribed from docs/EVALUATION.md                                                                                                                                                                                                         |
+| DERIVED_POLICY.thicknessQ  | 250   | Transcribed from §3.7's `span < 0.25`, the specification's one statement about how much of the canvas a subject must occupy to count as present. Not a line of §4.1, and §4.1 has no row for a thickness gate at all.                       |
+| DERIVED_POLICY.profileDeep | 150   | A second step BELOW the existing `compactnessQ < 300`, so the trigger and the set of subjects that fire are unchanged. Grading anything above 150 is impossible without moving the gate, which TASKS.md forbids.                            |
+| DERIVED_POLICY.holeNick    | 50    | §4.1 prices both hole clauses at -100. The split comes from §4.1's own rating anchors: "4 — one mass, one small nick: a single 1-2 px hole" against "2 — ... several holes". A nick is half a window; the window keeps §4.1's -100 exactly. |
+
+## 9 · §3.3 quantities: implemented, and still in conflict
+
+| name         | status      | adopted here                                                                                                                                                                                                                                                                                                         | needed by                                 |
+| ------------ | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| N            | implemented | -                                                                                                                                                                                                                                                                                                                    | silhouette, value, noise, outline, motion |
+| components   | implemented | 4-connectivity for the subject; 8-connectivity for the background, holes 4-connected.                                                                                                                                                                                                                                | silhouette, noise                         |
+| edgePixels   | implemented | A count of boundary pixels, never a length.                                                                                                                                                                                                                                                                          | outline                                   |
+| perimeter    | implemented | Count of 4-adjacent (solid, transparent) pairs, with outside-the-canvas transparent.                                                                                                                                                                                                                                 | silhouette, value                         |
+| compactnessQ | implemented | Scale-invariant shape descriptor, and scale-invariant on purpose: measured over the LARGEST 4-connected component (the subject), never the whole mask, so a subject is not charged for the fragments beside it.                                                                                                      | silhouette                                |
+| thicknessPx  | implemented | Side of the subject's largest inscribed axis-aligned square, in pixels. NOT §3.3's `Dmax`, which is measured below on the prose reading, and deliberately not a redefinition of it.                                                                                                                                  | silhouette                                |
+| holes        | implemented | Background counted with 8-connectivity, holes with 4-connectivity.                                                                                                                                                                                                                                                   | silhouette                                |
+| dist / Dmax  | implemented | 4-connected multi-source BFS from every edgePixel, +1 per step (the prose), as `distField` in `quality/measure.ts`. `Dmax` is its max over the solid pixels and is on every `ValueFrame`, so `outline` (T-016) and `noise` (T-015) read the same field rather than re-running the BFS.                               | value, outline, noise                     |
+| convexCorner | implemented | Two, and the difference is load-bearing. `silhouette` measures §3.3's clause verbatim, which counts concave corners and so reads 0 on every convex shape; §4.2's curvature gate reads `countConvexStaircaseCorners`, a pixel on a convex 45-degree staircase, because §4.2's prose is about that and not about this. | silhouette, value                         |
+
+### `compactnessQ`
+
+§3.3 says: min(1000, rhu(4 * 355 * 1000 * N, 113 * perimeter * perimeter)). §4.1 does not say whether N and perimeter are the whole mask or the subject; T-021 measured the whole-mask reading and it is the second of the two defects T-022 fixed.
+
+This repository uses: Scale-invariant shape descriptor, and scale-invariant on purpose: measured over the LARGEST 4-connected component (the subject), never the whole mask, so a subject is not charged for the fragments beside it.
+
+**Discriminating case.** A 5x5 square, measured alone (785) and beside two other 5x5 squares it does not touch (259). The whole-mask reading scores the fragment; the subject reading does not.
+
+### `thicknessPx`
+
+§3.3 says: Not in §3.3. T-022 added it as the scale-aware reading §3.3's `Dmax` paragraph argues for — "Dmax doubles as the sprite's own scale ... a 3px-wide blade and a 30px-wide cloak do not have the same room to put a curved terminator in" — computed by the one method with no `dist` reading to choose between. `thicknessQ` is this against `min(W, H)`.
+
+This repository uses: Side of the subject's largest inscribed axis-aligned square, in pixels. NOT §3.3's `Dmax`, which is measured below on the prose reading, and deliberately not a redefinition of it.
+
+**Discriminating case.** A 28x3 band, drawn twice: centred on 32x32 and centred on 1024x1024. compactnessQ is 275 on both, which is the shape descriptor being right not to move — it is the same drawing — and thicknessQ is 94 against 3, with thicknessPx 3 in both. A maximal square is a per-side count rather than a half-thickness, so on a disc it reads about 30% under the diameter; that bias is stated rather than tuned away.
 
 ### `dist / Dmax`
 
 §3.3 says: Table: "the Chebyshev distance to the nearest non-solid pixel or to the canvas edge". Prose: "a multi-source BFS over the solid mask from every edgePixel, 4-connected, with +1 per step".
 
-This repository uses: 4-connected multi-source BFS from every edgePixel, +1 per step (the prose).
+This repository uses: 4-connected multi-source BFS from every edgePixel, +1 per step (the prose), as `distField` in `quality/measure.ts`. `Dmax` is its max over the solid pixels and is on every `ValueFrame`, so `outline` (T-016) and `noise` (T-015) read the same field rather than re-running the BFS.
 
-**Discriminating case.** A 3x3 solid block with ONE corner pixel removed. The pixel diagonally opposite the removed corner has all four of its orthogonal neighbours solid and one transparent diagonal, so the only transparent pixels it can see are diagonal: L-infinity reaches them in one step and L1 needs two.
+**Discriminating case.** Two shapes, and the reason there are two. A 5x5 block is the discriminating one: its centre is 3 from the nearest non-solid pixel in L-infinity, 3 in L1 (the two agree, because the nearest non-solid pixel is axis-aligned from the centre), and **2** through the solid mask from the nearest edge pixel — so it separates the prose from both of the others. The 3x3 block with ONE corner pixel removed, which T-021 shipped, does **not**: the pixel diagonally opposite the removed corner has all four orthogonal neighbours solid, so the only transparent pixels it can see are diagonal, and every reading that gets there in one step gets there in one step. Chebyshev 1, whole-grid 2, prose 1. §3.3 still defines `dist` twice, so the next revision of the spec has to pick one with all six numbers in front of it.
 
-| reading                           | value |
-| --------------------------------- | ----- |
-| Chebyshev (L-infinity, the table) | 1     |
-| 4-connected BFS (L1, the prose)   | 2     |
+| reading                                                                                                  | value |
+| -------------------------------------------------------------------------------------------------------- | ----- |
+| 5x5 block — Chebyshev (L-infinity, the table)                                                            | 3     |
+| 5x5 block — whole-grid BFS from every non-solid pixel (L1, unstated)                                     | 3     |
+| 5x5 block — BFS confined to the solid mask from every edgePixel (the prose, adopted)                     | 2     |
+| 3x3 block, one corner removed — Chebyshev (L-infinity, the table)                                        | 1     |
+| 3x3 block, one corner removed — whole-grid BFS from every non-solid pixel (L1, unstated)                 | 2     |
+| 3x3 block, one corner removed — BFS confined to the solid mask from every edgePixel (the prose, adopted) | 1     |
 
 ### `convexCorner`
 
 §3.3 says: p is solid, exactly 2 of its 4 orthogonal neighbours are solid, those 2 are adjacent, and the diagonal pixel between them is transparent. §4.2 then claims this is "the signature of a 45-degree staircase on a convex boundary".
 
-This repository uses: Measured as §3.3 defines it, which counts concave corners and so reads 0 on every convex shape.
+This repository uses: Two, and the difference is load-bearing. `silhouette` measures §3.3's clause verbatim, which counts concave corners and so reads 0 on every convex shape; §4.2's curvature gate reads `countConvexStaircaseCorners`, a pixel on a convex 45-degree staircase, because §4.2's prose is about that and not about this.
 
-**Discriminating case.** A 32x32 filled disc, a 16x16 square, a 3px-wide diagonal band: all three measure 0, and a 45-degree chamfer on a block also measures 0. Only a one-pixel nick cut diagonally outside a corner measures 1.
+**Discriminating case.** A 32x32 filled disc, a 16x16 square, a 3px-wide diagonal band: all three measure 0 under §3.3's clause, and a 45-degree chamfer on a block also measures 0. Only a one-pixel nick cut diagonally outside a corner measures 1. The corrected predicate reads 64, 4 and 46 on the same three shapes.
 

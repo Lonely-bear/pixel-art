@@ -75,23 +75,57 @@ const TYPECHECK_SCRIPT = (
 ).scripts.typecheck;
 
 /**
- * The `tsc -p <file>` project the root `typecheck` script runs.
+ * Every `tsc -p <file>` project the root `typecheck` script runs.
  *
  * The root script is the only thing that makes the coverage real, so it is the thing under
- * test. Reading it rather than assuming a filename is what lets the config be renamed
+ * test. Reading it rather than assuming a filename is what lets a config be renamed
  * without this guard becoming a lie. Throws rather than returning an empty list: a caller
  * that went on to run `tsc` against nothing would report a confusing second failure, and a
  * guard that cannot find its subject must say so once, clearly.
+ *
+ * **A list, and a second project, since T-022.** The root script names `tsconfig.npm.json` for
+ * this file and `benchmarks/tsconfig.json` for the corpus harness, so "exactly one" stopped being
+ * true the moment the corpus gained a gate — and this guard failed, correctly, at that moment.
+ * Widening it to a list would have been the easy fix and the wrong one: the number was doing real
+ * work, because "the entry is a root file of *a* wired project" is a weaker claim than "of *the*
+ * one" whenever a second project could start covering the entry and the first could quietly stop.
+ * {@link entryProject} restores the strength instead, by requiring that **exactly one** wired
+ * project lists the entry.
  */
-function wiredProject(): string {
+function wiredProjects(): string[] {
   const projects = [...TYPECHECK_SCRIPT.matchAll(/(?:^|\s)-p\s+(\S+)/g)].map((match) => match[1]);
-  if (projects.length !== 1) {
+  if (projects.length === 0) {
+    throw new Error(`no "tsc -p <file>" in the root typecheck script: ${TYPECHECK_SCRIPT}`);
+  }
+  return projects;
+}
+
+/** Root files of a project, from `--showConfig`. */
+function projectRoots(project: string): string[] {
+  const shown = tsc(['-p', project, '--showConfig']);
+  expect(shown.status, `${project} --showConfig failed:\n${shown.output}`).toBe(0);
+  return (JSON.parse(shown.output) as { files: string[] }).files;
+}
+
+/**
+ * The one wired project that lists `scripts/npm-index.ts` as a root file.
+ *
+ * **Exactly one, and the exclusivity is the assertion.** A project that lists it plus a second
+ * that also lists it means the coverage is ambiguous; a project that does not list it means the
+ * entry is compiled by nothing. Both are failures, and both are invisible from inside a green
+ * build — which is the accident this file exists because of.
+ */
+function entryProject(): string {
+  const covering = wiredProjects().filter((project) =>
+    projectRoots(project).some((file) => isSamePath(resolve(ROOT, file), ENTRY)),
+  );
+  if (covering.length !== 1) {
     throw new Error(
-      `expected exactly one "tsc -p <file>" in the root typecheck script, found ${projects.length} ` +
-        `in: ${TYPECHECK_SCRIPT}`,
+      `expected exactly one wired tsc project to list scripts/npm-index.ts, found ${covering.length} ` +
+        `of [${wiredProjects().join(', ')}]`,
     );
   }
-  return projects[0];
+  return covering[0];
 }
 
 /** The real `tsc`, resolved from the repository's own devDependency rather than from PATH. */
@@ -151,28 +185,29 @@ const PROBE_SOURCE = [
 
 describe('the published library entry is inside `pnpm typecheck`', () => {
   it('is a project the root typecheck script runs, and that project exists', () => {
-    const config = resolve(ROOT, wiredProject());
-    expect(
-      existsSync(config),
-      `the root typecheck script names ${relative(ROOT, config)}, which does not exist`,
-    ).toBe(true);
+    for (const project of wiredProjects()) {
+      const config = resolve(ROOT, project);
+      expect(
+        existsSync(config),
+        `the root typecheck script names ${relative(ROOT, config)}, which does not exist`,
+      ).toBe(true);
+    }
   });
 
-  it('is a root file of that project, so the project compiles it', () => {
-    const project = wiredProject();
-    const shown = tsc(['-p', project, '--showConfig']);
-    expect(shown.status, `${project} --showConfig failed:\n${shown.output}`).toBe(0);
-    const { files } = JSON.parse(shown.output) as { files: string[] };
+  it('is a root file of exactly one of them, so the project compiles it', () => {
     // A root file, not a transitive import: being pulled in by some other module would mean
     // the config could stop listing it and stay green, which is the regression being guarded.
+    // **Exactly one** of the wired projects, which is the claim that survives a second project
+    // being wired later: see `entryProject`.
+    const project = entryProject();
     expect(
-      files.filter((file) => isSamePath(resolve(ROOT, file), ENTRY)),
-      `${project} does not list scripts/npm-index.ts as a root file. Its roots are: ${files.join(', ')}`,
+      projectRoots(project).filter((file) => isSamePath(resolve(ROOT, file), ENTRY)),
+      `${project} does not list scripts/npm-index.ts as a root file`,
     ).not.toHaveLength(0);
   });
 
   it('is in the compiled program, and that program is clean today', () => {
-    const project = wiredProject();
+    const project = entryProject();
     const run = tsc(['-p', project, '--noEmit', '--listFiles']);
     expect(run.status, `${project} does not typecheck clean:\n${run.output}`).toBe(0);
     expect(
@@ -182,7 +217,7 @@ describe('the published library entry is inside `pnpm typecheck`', () => {
   });
 
   it('fails that project on a deliberate type error beside the entry', () => {
-    const project = wiredProject();
+    const project = entryProject();
     const probeName = relative(ROOT, PROBE);
     // Cleared before the write as well as after it, so an interrupted run heals on the next
     // one instead of leaving a permanent red build. Untracked, so it is never committed.
