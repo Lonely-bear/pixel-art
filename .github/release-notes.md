@@ -1,3 +1,11 @@
+<!--
+  The shared half of every Release page: where to get the build, and what to do on
+  first launch. The half that says what the release *is* is not here and must never
+  be added here — it is generated from the `## [X.Y.Z]` section of CHANGELOG.md and
+  CHANGELOG-ZH.md by scripts/release-notes.mjs, which the release workflow runs and
+  which refuses to produce notes for a version the changelog does not describe.
+-->
+
 ## Installing
 
 | Platform | File |

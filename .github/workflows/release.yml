@@ -218,8 +218,8 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      # Needed for .github/release-notes.md; the installers come from the
-      # artifacts below, not from a build on this runner.
+      # Needed for CHANGELOG.md and .github/release-notes.md; the installers come
+      # from the artifacts below, not from a build on this runner.
       - name: Check out repository
         uses: actions/checkout@v4
 
@@ -231,6 +231,16 @@ jobs:
 
       - name: List what will be published
         run: ls -lh artifacts
+
+      # The notes are the changelog. This used to publish one static file — the
+      # install table and a macOS note — so every release page read identically
+      # and the description of what the release *is* was never on it. GitHub's own
+      # --generate-notes could not fill that gap either: it enumerates merged pull
+      # requests, and this repository pushes commits straight to master.
+      - name: Build the release notes from the changelog
+        env:
+          TAG: ${{ github.ref_name }}
+        run: node scripts/release-notes.mjs "$TAG" > "$RUNNER_TEMP/release-notes.md"
 
       - name: Create the Release
         env:
@@ -258,14 +268,14 @@ jobs:
             exit 1
           fi
 
-          # --notes is prepended to the notes gh derives from the commits since
-          # the previous tag, so the page carries the download table and the
-          # change list together. The prose lives in a real file rather than a
-          # heredoc so it can be edited without touching this workflow.
+          # Everything in the file is generated, so there is nothing here to keep
+          # in step by hand, and nothing that can describe a release the changelog
+          # does not. --generate-notes is deliberately absent: it would prepend a
+          # commit list that is empty for a repository pushed straight to master,
+          # and the compare link it used to contribute is now part of the notes.
           gh release create "$TAG" \
             --title "dotloom-mcp $TAG" \
-            --notes-file .github/release-notes.md \
-            --generate-notes \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
             --verify-tag \
             "${installers[@]}"
 

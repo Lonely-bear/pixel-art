@@ -11,10 +11,13 @@
  *      electron-builder reads the installer version from — the app is a separate
  *      workspace package and would otherwise drift behind the published one;
  *   3. checks the changelog has a dated heading for the version, so
- *      `## [Unreleased]` cannot silently become what users download.
+ *      `## [Unreleased]` cannot silently become what users download, and that the
+ *      Chinese mirror has the same heading, because the Release page publishes
+ *      both and is generated from them.
  *
  *   node scripts/prepare-release.mjs v0.4.0
  */
+import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -56,6 +59,22 @@ if (!released.test(changelog)) {
   console.error(`CHANGELOG.md has no dated \`## [${pkg.version}] - YYYY-MM-DD\` section.`);
   console.error('Promote the Unreleased notes before tagging a release.');
   process.exit(1);
+}
+
+// The same section has to exist in the Chinese mirror, because
+// `scripts/release-notes.mjs` publishes both on the Release page and refuses to
+// build notes without it. Checking it here rather than only there is the point of
+// this script: the alternative is discovering a missing translation in the last
+// job of the release workflow, three platform builds later. A translation is a
+// small thing to ask for before tagging; a rebuilt release is not.
+const mirror = path.join(root, 'CHANGELOG-ZH.md');
+if (existsSync(mirror)) {
+  const chinese = await readFile(mirror, 'utf8');
+  if (!released.test(chinese)) {
+    console.error(`CHANGELOG-ZH.md has no dated \`## [${pkg.version}] - YYYY-MM-DD\` section.`);
+    console.error('The Release page publishes both languages, so translate the section before tagging.');
+    process.exit(1);
+  }
 }
 
 console.log(`Release ${tag} is ready to build.`);

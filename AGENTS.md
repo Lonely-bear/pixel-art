@@ -192,7 +192,10 @@ removed. Say so in your report rather than shipping it quietly.
 
 `scripts/prepare-release.mjs` refuses a tag that disagrees with the manifest or a changelog without
 a dated section. Commits use Conventional Commits with a scope: `feat(mcp): …`, `fix(app): …`.
-Release prose lives in `.github/release-notes.md`, not in a heredoc. Signing is opt-in via
+Release prose lives in `CHANGELOG.md`, not in a heredoc and not in
+`.github/release-notes.md` — that file is only the install table and the first-launch note, and
+`scripts/release-notes.mjs` joins it to the changelog section for the tag (English plus the
+`CHANGELOG-ZH.md` mirror) to produce the body the release workflow publishes. Signing is opt-in via
 `CSC_LINK` / `APPLE_*` secrets; with none set the build still succeeds, unsigned.
 
 ## Traps

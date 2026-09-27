@@ -179,6 +179,17 @@ All notable changes to dotloom-mcp are documented in this file.
 - **This changelog has a Chinese mirror.** [`CHANGELOG-ZH.md`](CHANGELOG-ZH.md) tracks
   it, and both files ship in the npm tarball. English is the source of truth; where the two
   disagree, the English one is correct and the Chinese one is the stale copy.
+- **The Release page now carries this changelog.** A GitHub Release body used to be one
+  static file — an install table and a first-launch note — so every release page read
+  identically, and the description of what the release *is* was nowhere on it. GitHub's own
+  `--generate-notes` could not fill that gap: it enumerates merged pull requests, and this
+  repository pushes commits straight to `master`. The release workflow now builds the notes
+  with `scripts/release-notes.mjs`, which joins that install section to the `## [X.Y.Z]`
+  section of `CHANGELOG.md` and to its `CHANGELOG-ZH.md` twin, collapsed behind a
+  `<details>`, and refuses to publish a version the changelog does not describe. The prose
+  is written once, in the file a contributor already has to edit, and the page cannot drift
+  away from it. This page was generated that way and rewritten in place; the workflow change
+  itself takes effect from the next tag.
 - The import menu entry is now labelled **Import PNG / .aseprite** in every language, so
   it says what it actually accepts.
 
