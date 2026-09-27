@@ -92,10 +92,15 @@ Things that will bite:
 
 ## The MCP tool surface is budgeted
 
-The advertised tool list is deliberately ~34 entry-point tools; the ~90 core commands are **not**
+The advertised tool list is deliberately 36 entry-point tools; the 94 core commands are **not**
 in it until a session touches one. `commands: 'lazy'` promotes a command to a first-class tool when
 it is looked up (`list_commands`/`describe_command`/`find_workflow`) or actually run
 (`apply_ops`/`run_script`), and announces the new list.
+
+> **These counts drift.** Measure them (`node scripts/mcp-call.mjs list` for tools,
+> `list_commands` for commands) rather than trusting any number written in prose — including the
+> ones here. They have been wrong in `AGENTS.md`, `artwork/README.md`, `CHANGELOG.md` and
+> `docs/REFERENCE.md` simultaneously.
 
 - A new **core command costs nothing** in the tool list. A new **session tool** (`addTool` in
   `packages/mcp/src/tools.ts`) eats a fixed budget: `tool-surface.test.ts` asserts
@@ -112,6 +117,31 @@ it is looked up (`list_commands`/`describe_command`/`find_workflow`) or actually
 - **A running MCP server caches `dist/` at startup.** Rebuilding does not change a live session —
   that is what `SKILL_FINGERPRINT` (published by `list_commands`) exists to detect. Restart the
   server after a build, or you are testing last week's code.
+
+## Do not show an agent a number to optimise
+
+A `quality_report` tool existed once and was **deleted in 0.3.1** (see `CHANGELOG.md`). The reason
+is the single most important design lesson in this repository:
+
+> A model, told the number was "clean", sanded a lake into a dark flat rectangle.
+
+Any score handed to an agent becomes the target instead of the artwork. That is Goodhart's law
+arriving on schedule, and it is why this project ships *procedural craft guidance*
+(`docs/EVALUATION.md`, `pixel://skill`) and a read-only perception channel (`read_grid`,
+`get_preview`) rather than a verdict.
+
+The replacement quality pipeline (`packages/core/src/quality/`) is being built with that in mind:
+
+- An **absent dimension is reported as unmeasured**, never as a number. A dimension with no
+  analyzer reports `not-implemented`, which is a claim about the build, not the artwork.
+- The benchmark corpus (`benchmarks/`) carries **negative controls** — clean work that must produce
+  no issues — because an analyzer that fires on clean art is worse than one that misses a defect.
+- The corpus **withholds the machine's scores from the human-rated section**, because a rater who
+  has seen the number is anchored to it.
+- `finalize_document` is where a quality gate belongs (refusing), not in a tool that advises.
+
+If you add a score an agent can see and move toward, you are re-introducing the thing that was
+removed. Say so in your report rather than shipping it quietly.
 
 ## Electron app specifics
 
