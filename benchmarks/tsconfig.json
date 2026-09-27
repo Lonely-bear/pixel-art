@@ -1,0 +1,25 @@
+{
+  // Typechecking for the corpus harness.
+  //
+  // NOT wired into `pnpm typecheck`, and that is a real gap rather than an oversight: no
+  // tsconfig included `benchmarks/`, so the harness was untyped by CI until this file existed.
+  // It was added because running it once immediately found a type error in `report.ts` that
+  // vitest had transpiled straight past, which is exactly the failure a harness nobody checks
+  // accumulates. Run it by hand:
+  //
+  //   node node_modules/typescript/lib/tsc.js -p benchmarks/tsconfig.json
+  //
+  // Wiring it into the root `typecheck` script is the same work T-093 does for
+  // `scripts/npm-index.ts`, and belongs to that task rather than to this one.
+  //
+  // `../packages/core/src/gifenc.d.ts` is listed because the harness imports core by *source*
+  // path rather than by package name - see the note in `corpus/build.ts` - and that ambient
+  // declaration ships alongside core's source rather than in its published types.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "..",
+    "types": ["node"]
+  },
+  "include": ["corpus/**/*.ts", "../packages/core/src/gifenc.d.ts"]
+}
