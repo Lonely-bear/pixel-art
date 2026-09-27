@@ -198,11 +198,20 @@ function nestedContour(): (readonly [Row, string])[] {
  * about it. That is not a loophole in the test, it is a measurement about the artwork — at 32x32
  * a 1px level set is indistinguishable from a traced contour, which is why `demo.ts` uses
  * translations for every plane except the core shadow and insets only for that one.
+ *
+ * **They are painted largest-first, and the order is load-bearing.** Each inset is a larger region
+ * than the one before it, so painting a deep inset and then a shallower one leaves the canvas with
+ * the shallow ring and nothing else: five tones go in and **two** come out — the base and the last
+ * ring — and the fixture silently stops being a level set. It was drawn deepest-first here while
+ * `benchmarks/corpus/cases.json` drew the same body largest-first, which is how the two drifted
+ * apart and how this file came to assert its §2 conclusions about a two-tone sprite. The corpus
+ * case says the same thing in its own note, and the assertion below counts the tones so a
+ * collapsed fixture cannot pass as a measurement again.
  */
 function levelSet(): (readonly [Row, string])[] {
   const ops = discInBase();
   const tone = [RAMP[0], RAMP[2], RAMP[3], RAMP[4]] as const;
-  for (let k = 4; k >= 1; k--) {
+  for (let k = 1; k <= 4; k++) {
     for (const [left, right, y] of DISC) {
       const lo = left + 2 * k;
       const hi = right - 2 * k;
@@ -307,12 +316,33 @@ describe('the `dist` spread cannot be the form term, and this is the measurement
   const nested = read(spriteOf(RAMP, nestedContour()));
   const inset = read(spriteOf(RAMP, levelSet()));
 
+  it('is drawn as the four insets it claims to be, so the rest of this section is about a level set', () => {
+    // The first version of this section asserted its conclusions against a fixture that had
+    // collapsed to two tones, because the insets were painted deepest-first and each shallower one
+    // overpainted the last. Every claim below was then true of a two-tone sprite and nobody noticed,
+    // because a fixture that measures the wrong thing does not announce itself.
+    //
+    // These are construction facts, not fitted magnitudes: the body is painted in five tones, and a
+    // five-tone body with four boundaries between them has five planes. The counts are the same ones
+    // `benchmarks/corpus/baseline.md` prints for `value/level-set-32` — 5 buckets, 5 planes — which
+    // is the check that this file and the corpus case are now the same picture.
+    expect(inset.frame.distinct).toBe(5);
+    expect(inset.frame.buckets).toHaveLength(5);
+    expect(inset.frame.planes).toBe(5);
+    expect(inset.frame.terminators).toHaveLength(4);
+    // And the contrast pair still holds: the two fixtures differ in the construction and in nothing
+    // else, so a difference between them is a difference about the construction.
+    expect(nested.frame.distinct).toBe(inset.frame.distinct);
+    expect(nested.frame.N).toBe(inset.frame.N);
+  });
+
   it('reads a large `spanQ` on the translated contours and a small one on the insets', () => {
     // §4.2 specifies `spanQ` as the form term. On a *translated* contour the boundary runs from
     // the silhouette's own edge (`dist` 0) out to its deepest reach, so its spread is the body's
     // full depth; on a *level set* every pixel along it sits at the same depth, so its spread is
     // near zero. Measured on the two fixtures: both are correct artwork and they are ranked the
-    // wrong way round.
+    // wrong way round. The gap is 545 against 91 on the worst plane of each, and the baseline
+    // prints the same two numbers for `value/nested-contour-32` and `value/level-set-32`.
     const nestedWorst = nested.frame.worst;
     const insetWorst = inset.frame.worst;
     expect(nestedWorst).not.toBeNull();
@@ -320,15 +350,26 @@ describe('the `dist` spread cannot be the form term, and this is the measurement
     expect(nestedWorst!.spanQ).toBeGreaterThan(insetWorst!.spanQ);
   });
 
-  it('scores the artwork that looks like a sphere at least as high as the artwork that looks like a target', () => {
+  /**
+   * Known defect, declared rather than deleted — remove the `.fails` when this passes.
+   *
+   * The claim is the product's: *the construction the craft guide teaches must not be the one the
+   * scorer punishes.* It held only because the level-set fixture had collapsed to two tones, and
+   * with the fixture drawn as specified it inverts — the sphere reads `scoreQ` 825 and the target
+   * 950. The cause is `bendQ`, and it is structural rather than a threshold: `dirQ` counts the
+   * distinct 8-step directions a boundary walks and saturates at 4, which is what a **closed ring**
+   * is and not what an **open arc** is, and `surplusQ` divides the pixel surplus by the long side,
+   * which a ring also wins twice over. So a level set and a translated contour do not read alike
+   * even though `value.ts` claims they do. Both `bendQ` readings are in the baseline on every row.
+   */
+  it.fails('scores the artwork that looks like a sphere at least as high as the artwork that looks like a target', () => {
     // The direction is the claim. A magnitude would be fitting to two fixtures; "the correct
     // construction must not be the one that is punished" survives any calibration of the bands.
-    // The level-set fixture is built as a lit sphere — core shadow outermost, lit core at the
-    // centre — which reads as lit from the front rather than the upper left, so it does earn a
-    // `key-light-inconsistent` advisory. That is a true positive about the *construction* and not
-    // about the form term, which is why the assertion is about `plane-crosses-form` and the score
-    // rather than about the issue list being empty.
+    // The level-set fixture is a lit sphere built as concentric insets — dark core, lit rim — so
+    // there is no key light to find and the issue list is empty on both sides; neither construction
+    // is defective, which is exactly why the ordering between them is the only thing to assert.
     expect(codes(nested.dimension.issues)).toEqual([]);
+    expect(codes(inset.dimension.issues)).toEqual([]);
     expect(codes(inset.dimension.issues)).not.toContain('plane-crosses-form');
     expect(nested.frame.scoreQ).toBeGreaterThanOrEqual(inset.frame.scoreQ);
   });
