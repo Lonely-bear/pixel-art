@@ -10,6 +10,33 @@ All notable changes to dotloom-mcp are documented in this file.
 
 ### Fixed
 
+- **Four committed scenes have no judged plane because their tone field is dithered, and the gate that
+  was supposed to be at fault is not.** The `reachQ` gate closes the last of the full-bleed scenes and
+  reads its denominator as the subject's bounding box, which on a full-bleed document is the whole canvas
+  — so a plane has to span half the picture to be judged. That is the same shape of error the previous two
+  entries fixed for curvature, and the obvious move is to normalise against the form the plane cuts
+  instead. **Measured, that move is wrong, and this entry records why rather than making it.**
+  Plane extents are small everywhere: median 6..10px against a body of 64..512, `p90` 16..33. On
+  `artwork/sunset-lighthouse-512.pixel` — 512², 1008 terminators — the **largest** plane is 110px where
+  the gate wants 256. A region-relative denominator opens 110 planes there, and they are water ripples
+  and sky sparks: a short plane inside a small region scores *high* on that ratio, so the change admits
+  texture rather than form.
+  Counting 4-connected same-bucket regions says what the pictures are: `lantern-keeper` has 8 regions per
+  bucket, `dusk-lake-valley-agent` 95, `autumn-dusk-lake-256` 519, and `sunset-lighthouse-512`
+  **2,880** — 46,079 regions, 98.8% of them 16 pixels or smaller, in a painting with 16 tones. A
+  hard-edged painting with 16 tones has tens of regions. That is a dithered and gradient tone field, and
+  §4.2's plane definition — both sides an area — finds no plane across a dithered transition at all, so
+  the sun's limb and the water's horizon there were never planes to gate.
+  `reachQ` turns out to be an accidental dither detector pointing the right way: the scenes it opens are
+  the least fragmented ones (95, 519 and 632 regions per bucket read `reachQ max` 1000, 1000 and 996, and
+  those are the three with a measured `formQ`), and the two most fragmented read 215 and 236. **So no gate
+  changed.** What is missing is the ability to *say* that a picture is dithered, and the quantity that
+  would is §3.3's `ditherMask` — specified, unimplemented, and declared as `noise`'s consumer. Until it
+  lands, the report's `gated` column gives `curvature` and `reach` as reasons on pictures whose real reason
+  is neither, and all four of those scenes have both gates closing something. The state is pinned by a
+  test, so a future change that suddenly judges them has to answer why: nothing about the pictures
+  changed.
+
 - **Whether a straight cut was caught depended on where it had been drawn.** The previous entry gave §4.2's
   curvature gate a second reference and stopped it being blind on a full-bleed document. It did not stop it
   being a coin toss. The gate asks whether the local form is round, and the second reference read a tone

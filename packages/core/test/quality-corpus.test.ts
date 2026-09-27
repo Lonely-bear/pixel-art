@@ -1241,6 +1241,82 @@ describe("this repository's own artwork, which is real and unlabelled", () => {
     }
   });
 
+  it('records that four scenes are blocked by a dithered tone field and NOT by `reachQ`, with the numbers', () => {
+    // **T-102 measured its own premise to be wrong, and this is the record of it.** The task was
+    // "`reachQ` blocks 7 of 10 full-bleed scenes". It does block them — but the reason is not that
+    // its denominator is the wrong scale, and changing the denominator makes things strictly worse.
+    //
+    // **What was measured, on the committed artwork.** Plane extents are small everywhere, including
+    // on the large scenes: median 6..10px against a `bodyExtent` of 64..512, and `p90` 16..33. On
+    // `artwork/sunset-lighthouse-512.pixel` — 512x512, 1008 terminators — the LARGEST plane is 110px
+    // against a gate that wants 256, so `reachQ max` reads 215 and nothing can clear it. A
+    // region-relative denominator would open 110 planes there. **Those 110 are water ripples and sky
+    // sparks, and opening them would be strictly worse**, because a short plane inside a small region
+    // scores HIGH on a region-relative ratio, which admits texture rather than form. That is the
+    // direction `splitQ` exists to damp downstream, and it is the wrong direction to admit at the gate.
+    //
+    // **What the tone field actually looks like.** Counting 4-connected same-bucket regions:
+    //
+    //     artwork/verify/lantern-keeper.pixel    13 buckets     101 regions      8 per bucket
+    //     artwork/dusk-lake-valley-agent.pixel   12 buckets   1,142 regions     95 per bucket
+    //     artwork/autumn-dusk-lake-256.pixel     13 buckets   6,751 regions    519 per bucket
+    //     artwork/sunset-lighthouse-512.pixel     16 buckets  46,079 regions  2,880 per bucket
+    //
+    // A hard-edged painting with 16 tones has tens of regions. This one has 46,079, and 98.8% of them
+    // are 16 pixels or smaller. **It is a dithered and gradient tone field**, and §4.2's plane
+    // definition — both sides an area, a region with three or more same-bucket 4-neighbours — finds
+    // no plane across a dithered transition at all. So the sun's limb and the water's horizon in that
+    // painting are not gated by `reachQ`; **they were never planes.**
+    //
+    // **And `reachQ` is accidentally a dither detector, pointing the right way.** The scenes it does
+    // open are the less fragmented ones: 95 and 519 and 632 regions per bucket read `reachQ max`
+    // 1000, 1000 and 996, and those are the three that `formQ` is measured on. The two most
+    // fragmented, 2,880 and 1,672, read 215 and 236. A gate that closes on fragments is doing its job.
+    //
+    // **So T-102 changes no gate.** The quantity that would *say* this rather than let the report infer
+    // it is §3.3's `ditherMask`, which is specified, unimplemented, and declared as `noise`'s
+    // consumer (T-015). Until it lands, the `gated` column reports `curvature` and `reach` on a
+    // picture whose real reason is neither, and that is recorded here rather than papered over.
+    //
+    // **The assertion is on the state we want pinned, not on the probe's numbers.** If a future change
+    // to `reachQ` suddenly judges these four, the test goes red and the diff has to answer why —
+    // which is the review this finding needs, since nothing about the pictures changed.
+    const blockedByDither = [
+      'artwork/dusk-lake-valley-agent2.pixel',
+      'artwork/moonlit-alpine-lake-fast.pixel',
+      'artwork/sunset-lighthouse-512-baseline-model-a.pixel',
+      'artwork/sunset-lighthouse-512.pixel',
+    ];
+    for (const id of blockedByDither) {
+      expect(row(id).value?.formQ, id).toBeNull();
+      expect(row(id).unmeasured, id).toEqual({ 'value.form': 'no-subject' });
+      // Every plane is gated, and on these four the gate that closes them all is `reach`. If a future
+      // revision moves them to `curvature` the reason has changed and the comment above is wrong.
+    }
+    // **The gate that closes them is not always the SAME gate, and that is part of what is being
+    // recorded.** The breakdown, verbatim from the baseline: agent2 `1 curvature, 250 reach`,
+    // moonlit-alpine-lake-fast `14 curvature, 49 reach`, lighthouse-baseline
+    // `267 curvature, 214 reach`, lighthouse `192 curvature, 816 reach`. Every one of the four has
+    // BOTH gates closing something, and on the two most fragmented scenes the curvature gate is
+    // closing more planes than reach is. So "reachQ blocks them" is true in the sense that no plane
+    // clears it, and false in the sense that it is not the only thing blocking them — which is why the
+    // assertion above is about the outcome (nothing judged) and not about a single cause. An earlier
+    // version of this test asserted `not.toContain("curvature")` and the corpus caught it against
+    // its own numbers.
+    //
+    // The three that ARE judged, as the control half: without it "all four are unmeasured" is also
+    // consistent with the curvature gate having gone blind again.
+    const judged = [
+      'artwork/autumn-dusk-lake-256.pixel',
+      'artwork/dusk-lake-valley-agent.pixel',
+      'artwork/dusk-lake-valley-v2.pixel',
+    ];
+    for (const id of judged) {
+      expect(row(id).value?.formQ, id).toBe(1000);
+      expect(row(id).unmeasured, id).toEqual({});
+    }
+  });
+
   it('catches a straight band across a curved dome, and the position it is drawn no longer decides', () => {
     // **This test was written to record a gap and it recorded one, which is why it is here rather
     // than in the corpus.** T-100 gave the curvature gate a second reference and the same straight

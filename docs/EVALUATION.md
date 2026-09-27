@@ -2158,12 +2158,43 @@ caught at one row and excused at another — now reads 333 against 420, both cle
 straight-band case is in the corpus and reports `plane-crosses-form`. Lowering `CURVATURE_GATE` was
 never the fix and §3.3 still says why: the box is at 93 and would have been admitted by another route.
 
-**Two gaps remain, and neither is curvature.** The first is `splitQ`: `crossesQ` is exactly `splitQ`
-whenever `bendQ` is 0, so a straight cut is *reported* only when §4.2 also judges it to bisect the
-form — which is the multiplier doing its documented job, not a hole, and it is why the corpus case
-puts its band at the dome's middle rather than at an arbitrary row. The second is `reachQ`, which is
-where the remaining seven full-bleed scenes are stuck: `sunset-lighthouse-512.pixel` has 1008
-terminators and all of them are gated.
+**One gap remains that is not curvature, and it is not `reachQ` either.** The first is `splitQ`:
+`crossesQ` is exactly `splitQ` whenever `bendQ` is 0, so a straight cut is *reported* only when
+§4.2 also judges it to bisect the form — which is the multiplier doing its documented job, not a
+hole, and it is why the corpus case puts its band at the dome's middle rather than at an arbitrary
+row.
+
+**The second was believed to be `reachQ` and is not.** Seven full-bleed scenes have no judged plane,
+and `reachQ` is what closes the last four of them, so the obvious reading is that its denominator is
+the wrong scale on a full-bleed document. **Measured, that reading is wrong, and acting on it would
+make things worse.** Plane extents are small everywhere: median 6..10px against a `bodyExtent` of
+64..512, `p90` 16..33. On `artwork/sunset-lighthouse-512.pixel` — 512², 1008 terminators — the
+**largest** plane is 110px where the gate wants 256, so `reachQ max` reads 215 and nothing can clear
+it. A region-relative denominator would open 110 planes there, and **those 110 are water ripples and
+sky sparks**: a short plane inside a small region scores *high* on a region-relative ratio, so the
+change admits texture rather than form. `splitQ` damps that downstream, which is the wrong place to
+rely on it.
+
+**What the tone field actually is, counted.** 4-connected same-bucket regions:
+`artwork/verify/lantern-keeper.pixel` 13 buckets / 101 regions (8 per bucket);
+`artwork/dusk-lake-valley-agent.pixel` 12 / 1,142 (95); `artwork/autumn-dusk-lake-256.pixel` 13 /
+6,751 (519); `artwork/sunset-lighthouse-512.pixel` 16 / **46,079 (2,880)**, of which 98.8% are 16
+pixels or smaller. A hard-edged painting with 16 tones has tens of regions. **That is a dithered and
+gradient tone field**, and §4.2's plane definition — both sides an area — finds no plane across a
+dithered transition at all. So the sun's limb and the water's horizon in that painting were **never
+planes**; they were not gated, they do not exist under this definition.
+
+**And `reachQ` is accidentally a dither detector, pointing the right way.** The scenes it opens are
+the least fragmented: 95, 519 and 632 regions per bucket read `reachQ max` 1000, 1000 and 996, and
+those are the three whose `formQ` is measured. The two most fragmented, 2,880 and 1,672, read 215
+and 236. A gate that closes on fragments is doing its job, and this is why **T-102 changed no gate**.
+
+**What is missing is the ability to SAY this rather than let the report infer it**, and the quantity
+that would is §3.3's `ditherMask` — specified, unimplemented, and declared as `noise`'s consumer.
+Until it lands, the `gated` column reports `curvature` and `reach` on pictures whose real reason is
+neither, and all four of those scenes have **both** gates closing something (lighthouse: 192 curvature,
+816 reach). That is recorded rather than papered over, and the state is pinned by a test so that a
+future change that suddenly judges them has to answer why — nothing about the pictures changed.
 
 The two real *subjects* in the corpus are not in this state: both have an outline, both have their
 planes gated by `reachQ` as fragments, and both report a measured `formQ` 1000.
