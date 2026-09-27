@@ -350,24 +350,19 @@ describe('the `dist` spread cannot be the form term, and this is the measurement
     expect(nestedWorst!.spanQ).toBeGreaterThan(insetWorst!.spanQ);
   });
 
-  /**
-   * Known defect, declared rather than deleted — remove the `.fails` when this passes.
-   *
-   * The claim is the product's: *the construction the craft guide teaches must not be the one the
-   * scorer punishes.* It held only because the level-set fixture had collapsed to two tones, and
-   * with the fixture drawn as specified it inverts — the sphere reads `scoreQ` 825 and the target
-   * 950. The cause is `bendQ`, and it is structural rather than a threshold: `dirQ` counts the
-   * distinct 8-step directions a boundary walks and saturates at 4, which is what a **closed ring**
-   * is and not what an **open arc** is, and `surplusQ` divides the pixel surplus by the long side,
-   * which a ring also wins twice over. So a level set and a translated contour do not read alike
-   * even though `value.ts` claims they do. Both `bendQ` readings are in the baseline on every row.
-   */
-  it.fails('scores the artwork that looks like a sphere at least as high as the artwork that looks like a target', () => {
+  it('scores the artwork that looks like a sphere at least as high as the artwork that looks like a target', () => {
     // The direction is the claim. A magnitude would be fitting to two fixtures; "the correct
     // construction must not be the one that is punished" survives any calibration of the bands.
     // The level-set fixture is a lit sphere built as concentric insets — dark core, lit rim — so
     // there is no key light to find and the issue list is empty on both sides; neither construction
     // is defective, which is exactly why the ordering between them is the only thing to assert.
+    //
+    // This failed until `dirQ` saturated at three orientations instead of dividing by the number
+    // of half-planes. An open boundary on a convex body cannot use the fourth without closing, so
+    // the old denominator read a maximally-turning arc at 667 and the ring around it at 1000, and
+    // the product's own taught construction came out 250 per-mille below the target-like one — on
+    // the same body, with the same five tones, the same five planes, and no defect on either side.
+    // A level set and a translated contour now read the same: `bendQ` 1000 and `crossesQ` 0 on both.
     expect(codes(nested.dimension.issues)).toEqual([]);
     expect(codes(inset.dimension.issues)).toEqual([]);
     expect(codes(inset.dimension.issues)).not.toContain('plane-crosses-form');

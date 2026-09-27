@@ -839,15 +839,29 @@ describe('the level-set control, and the one code that had no case', () => {
     expect(inset.value?.terminators).toBe(nested.value?.terminators);
     expect(inset.value?.buckets).toEqual(nested.value?.buckets);
     // **And the bias, as two numbers on one row of the generated report:** the unscored `spanQ`
-    // reads a third of what the translation reads, on the same boundary count.
+    // reads 91 here against 909 there, on the same boundary count. It used to read 545 there, and
+    // the reason it moved is the fix below: `worstSpanQ` is the span of the *worst* plane and the
+    // worst plane is chosen by `crossesQ`, so once all four boundaries read `crossesQ` 0 there is no
+    // worst plane any more and the selection falls to the outermost crescent. The bias the number
+    // exists to show got larger, not smaller — 91 against 909 rather than 91 against 545 — which is
+    // the only direction in which a change to the *scored* term should move an *unscored* one.
     expect(inset.value?.worstSpanQ).toBe(91);
-    expect(nested.value?.worstSpanQ).toBe(545);
+    expect(nested.value?.worstSpanQ).toBe(909);
     // The scored term agrees with itself on both: every boundary turns, so `bendQ` is at its
     // maximum and `crossesQ` is 0, on a level set and on a translation alike. That is the property
     // the term was redesigned around and the reason the level set is the control for it.
+    //
+    // **This assertion used to say 750 and its own comment said the sentence above.** The comment
+    // was right and the number was wrong: `dirQ` divided by the number of half-plane orientations
+    // rather than by the number of steps to saturation, so a closed ring read 1000 and a maximally
+    // turning open arc read 667, and the translation — `demo.ts`'s own construction, the one the
+    // craft guide teaches — came out 250 per-mille below the target-like ring on the same body with
+    // the same five tones and no defect on either side. The fixture could not catch it because
+    // `quality-value.test.ts` drew its own level set deepest-first and got two tones; this case was
+    // always right.
     expect(inset.value?.worstCrossesQ).toBe(0);
     expect(inset.value?.formQ).toBe(1000);
-    expect(nested.value?.formQ).toBe(750);
+    expect(nested.value?.formQ).toBe(1000);
     // **The insets are 2px apart, and that is the whole difference from the version that was
     // there before.** A 1px inset is a *line*: no pixel of it has three same-tone orthogonal
     // neighbours, so it is not a plane, and a 1px staircase is 8-connected and 4-disconnected, so
@@ -1394,9 +1408,15 @@ describe('the report', () => {
     // And the two `value` pairs, which is what the sixth gap column is for. Without `valueQ` the
     // acceptance pair read as five zeros while its two members differ by 325 per-mille on the
     // dimension that is the whole reason §4.2 exists.
+    //
+    // **The gap is 450 now, and it was 325.** Not a smaller effect, a larger one: the correct half
+    // of the pair stopped being charged 250 per-mille for reading as an arc rather than a ring, so
+    // the distance between "boundaries cut across the form" and "boundaries follow it" grew while
+    // the band table never moved. §6.2 asks for the size of the gap to be the thing worth
+    // reviewing, so this is the number to review and it moved the right way.
     const straight = groups.get('value/straight-band-vs-form-following')!;
-    expect([straight.gap, straight.valueGap]).toEqual([0, 325]);
-    expect(straight.members.map((m) => m.valueQ)).toEqual([500, 825]);
+    expect([straight.gap, straight.valueGap]).toEqual([0, 450]);
+    expect(straight.members.map((m) => m.valueQ)).toEqual([500, 950]);
     const headroom = groups.get('value/headroom')!;
     expect([headroom.gap, headroom.compactnessGap, headroom.thicknessGap, headroom.valueGap]).toEqual([
       0,

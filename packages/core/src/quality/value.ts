@@ -63,12 +63,16 @@ import type {
  *   - `bendQ` — how much the boundary turns, from two independent readings of the same idea taken
  *     at the **weaker** of the two, so that neither can talk the term into a wrong answer. The
  *     readings are the number of distinct 8-step directions the boundary walks (1 for a straight
- *     line whatever its slope, 3 for an L, 4 for a closed ring) and the pixel surplus over its
- *     bounding box (0 for a chord, 570 per-mille for a 90° arc, 1000 for a ring). Either alone is
- *     wrong in a way that lands on real artwork — a rasterised 45° staircase drawn two pixels wide
- *     is a solid staircase, and a one-pixel *boundary* of a gentle arc is locally straight — and
- *     both are translation-invariant by construction, which is the property a depth spread is
- *     not. A level set and a translated contour read identically; that is the point.
+ *     line whatever its slope, 2 for a shallow arc, 3 or more for a corner or a ring) and the pixel
+ *     surplus over its bounding box (0 for a chord, 570 per-mille for a 90° arc, 1000 for a ring).
+ *     Either alone is wrong in a way that lands on real artwork — a rasterised 45° staircase drawn
+ *     two pixels wide is a solid staircase, and a one-pixel *boundary* of a gentle arc is locally
+ *     straight — and both are translation-invariant by construction, which is the property a depth
+ *     spread is not. A level set and a translated contour read alike, and that is the point: the
+ *     ladder saturates at three orientations rather than four so that an arc and the ring around it
+ *     are the same reading, because an open boundary on a convex body structurally cannot use the
+ *     fourth orientation without closing. See `describeTerminator` for the measurement that
+ *     required the third orientation to be the saturation point.
  *   - `splitQ` — how evenly the plane divides the body it sits on, `min(area) / max(area)` of
  *     the two tone regions it separates. This is the clause that makes the term survive real
  *     artwork. A *crescent* has one thin side; a straight cut has two fat ones. A level set and
@@ -133,8 +137,24 @@ import type {
 const NEAR_RADIUS = 3;
 /** §4.2: "components of fewer than 4 pixels are discarded — a 2px step is a dither artefact". */
 const MIN_TERMINATOR = 4;
-/** §4.2's curvature gate, `cornerQ >= 250`, unchanged. */
+/** §4.2's curvature gate, `curvedQ >= 250`, unchanged from the `cornerQ` this replaced. */
 const CURVATURE_GATE = 250;
+/**
+ * The number of distinct half-plane orientations at which `dirQ` reads as fully bent.
+ *
+ * Four exist, and the ladder stops at three because an open boundary on a convex body cannot use
+ * the fourth without closing — right, down, left, up is a loop. Three orientations is where a
+ * boundary has stopped being a line and started tracking something, and a fourth is the same
+ * evidence with the ends joined rather than more of it. The measurement that forced the choice is
+ * in `describeTerminator`: normalising by four ranked `demo.ts`'s own translated contours
+ * (`formQ` 750) below a level-set ring's (1000) on the same body with the same five tones and no
+ * defect on either side.
+ *
+ * The ladder is `0 / 500 / 1000` over one / two / three orientations, so the denominator is
+ * `DIR_SATURATION - 1` and the numerator is clamped here rather than by the arithmetic: `rhu` is a
+ * bare ratio and the old denominator of 3 only ever landed on 1000 because 4 was the maximum.
+ */
+const DIR_SATURATION = 3;
 /**
  * A plane must reach at least this fraction of the subject's long side to be a cross-section.
  *
@@ -950,7 +970,32 @@ function describeTerminator(
   // reading is there to remove, and the failure they share is a **missed** straight cut, which is
   // the direction this dimension is allowed to fail in.
   const surplusQ = Math.max(0, Math.min(1000, rhu((pixels.length - extent) * 1000, extent)));
-  const dirQ = rhu((directions.size - 1) * 1000, 3);
+  // The denominator is 2, and the number it replaced was 3, and the reason is a loop.
+  //
+  // The half-plane collapse gives four orientations, and an **open** boundary on a convex body
+  // cannot use all four — going right, down, left, up closes it — so an arc saturates at three and
+  // a closed ring at four. Dividing by three therefore reads a maximally-turning arc at 667 and
+  // the ring that encloses it at 1000, which puts the product's own reference construction below
+  // the target-like one: `value/nested-contour-32` measured `formQ` 750 against
+  // `value/level-set-32`'s 1000, on the same body, with the same five tones, the same five planes
+  // and no defect on either side. The header below used to claim the two read identically. They did
+  // not, and the sentence was wrong because nobody had drawn the level set properly to check it —
+  // `benchmarks/corpus/cases.json` draws it largest-first, and the fixture in
+  // `packages/core/test/quality-value.test.ts` drew it deepest-first and got two tones.
+  //
+  // Three orientations is the point where a boundary has stopped being a line and started tracking
+  // something, so that is where the ladder saturates: one orientation is 0, two is 500, three or
+  // more is 1000. A fourth orientation is not more evidence of form-following than a third, it is
+  // the same evidence with the ends joined.
+  //
+  // The rejected alternative is recorded because it was the obvious one: "is this boundary locally
+  // parallel to the silhouette's own edge", which unifies the two constructions by definition — a
+  // level set and a translation are both offsets of the outline. Measured, it is worse than useless:
+  // a straight 45-degree cut across the round body scored 923 and the translated contour scored 0,
+  // because a chord is locally parallel to the outline over the middle of its run and a translation
+  // is parallel to a *shifted* copy of it. The idea is in the history because it is the next thing
+  // anyone will try.
+  const dirQ = rhu((Math.min(directions.size, DIR_SATURATION) - 1) * 1000, DIR_SATURATION - 1);
   const bendQ = Math.max(surplusQ, dirQ);
   const a = regions[pair[0]].area;
   const b = regions[pair[1]].area;

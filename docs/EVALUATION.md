@@ -625,70 +625,126 @@ figures it separates are the acceptance test for it.
 
 #### How the form term is measured
 
-The insight is that `dist` (§3.3) already answers the question. `dist(p)` is how deep inside
-the body a pixel sits. A **concentric** terminator is a *level set* of that field: every pixel
-along it is roughly the same distance from the silhouette edge, because it is tracking the
-contour. A **straight diagonal** cut across a rounded body is not — it enters at the edge
-where `dist` is 0, crosses the body, and leaves where `dist` is 0 again, with the middle of the
-cut far deeper than either end. So the *spread* of `dist` along a plane boundary is the
-measurement, and it needs no contour tracing, no curve fitting, and no float.
+> **This subsection was rewritten after the term was implemented and measured, and the reason is
+> the whole of it: the term specified here originally did not survive contact with real artwork.**
+> The original term was the *spread of `dist` along a plane boundary*, and it is worth keeping the
+> reasoning, because the second attempt is only legible as a correction of the first.
+
+`dist(p)` (§3.3) is how deep inside the body a pixel sits. A **concentric** terminator is a
+*level set* of that field: every pixel along it sits at roughly the same distance from the
+silhouette edge, because it is tracking the contour. A **straight diagonal** cut across a rounded
+body is not — it enters where `dist` is 0, crosses the body, and leaves where `dist` is 0 again,
+with the middle far deeper than either end. So the spread looked like the measurement, and it needs
+no contour tracing, no curve fitting and no float. It is also wrong, in both directions at once.
+
+**It rewards a target and punishes a sphere.** A level set has a spread near zero and scored as a
+perfect form-following plane; a *translated* contour runs from the silhouette's own edge out to its
+deepest reach, so its spread is as large as the body is deep. A correctly shaded round body is made
+of translated contours: `demo.ts` walks its `[left, right, y]` rows `inset` pixels in and displaces
+them along the light axis, and every plane except the core shadow is a pure translation. Measured
+on the product's own reference sprite, the specified term banded it at `formQ` 100 and fired
+`plane-crosses-form` at blocking severity — **the reference artwork failed for using the technique
+the product teaches.** The corpus case that records the bias is `value/level-set-32` against
+`value/nested-contour-32`: the same body, the same five tones, the same five planes, the same four
+boundaries, and the specified term ranked them in the wrong order.
+
+`spanQ` is therefore still computed, still recorded, and **deliberately not scored**. It is the
+most informative number in the record — it is what a person needs in order to understand a piece —
+and it is the standing evidence that the specified term was biased, so the generated report prints
+it beside the score on every case, including the ones that are correct. The evidence is now 91
+against 909, which is ten times the gap the original reading produced.
+
+What replaced it is the plane's own geometry, which is invariant under translation by
+construction. What is true of both a level set and a translated contour, and false of a straight
+cut, is that the boundary **turns**.
 
 ```
-toneEdge(p)        from §3.3: p is solid with a solid 4-neighbour in a different LqBucket
-planes             the 8-connected components of { p : toneEdge(p) and ditherMask(p) == 0 }
-                   components of fewer than 4 pixels are discarded — a 2px step is a
-                   dither artefact or a mistake, not a plane
+toneEdge(p)        p is solid with a solid 4-neighbour in a different LqBucket
+planes             the 8-connected components of toneEdge, keyed by the PAIR of tone
+                   regions the two sides separate; components under 4 pixels are
+                   discarded — a 2px step is a dither artefact or a mistake, not a plane
 
 for each plane P:
-    d0        min dist over P            how deep the plane sits inside the body
-    d1        max dist over P            its deepest excursion
-    spanQ     rhu((d1 - d0) * 1000, Dmax + 1)
+    dirs        the distinct 8-step directions P's own pixels walk, collapsed to
+                half-planes, so (-1,0) and (1,0) are one orientation
+    dirQ        rhu((min(|dirs|, 3) - 1) * 1000, 2)
+    surplusQ    clamp(rhu((|P| - extent(P)) * 1000, extent(P)), 0, 1000)
+    bendQ       max(surplusQ, dirQ)      the WEAKER of two readings of "it turns"
 
-    near      the pixels within Chebyshev distance 3 of P
-    corners   count of convexCorner(§3.3) among them
-    edgeN     count of edgePixel among them
-    cornerQ   rhu(corners * 1000, edgeN + 1)
+    splitQ      rhu(min(areaA, areaB) * 1000, max(areaA, areaB))
+    reachQ      rhu(min(extent(P), bodyExtent) * 1000, bodyExtent)
+    curvedQ     rhu(stairCorners * 1000, edgeN + 1)     over the Chebyshev-3 neighbourhood
 
-    effectiveQ = (cornerQ >= 250) ? spanQ : rhu(spanQ, 2)
+    crossesQ = (curvedQ < 250 || reachQ < 500) ? 0
+             : rhu((1000 - bendQ) * splitQ, 1000)        // higher is worse
 
-formQ = band( max over planes of effectiveQ )      // the WORST plane
+formQ = band( max over planes of crossesQ )              // the WORST plane
 ```
 
-Three decisions in that block each needed a reason, and two of them exist because the naive
-version produced a confident wrong answer.
+Two clauses in the `planes` definition are not §4.2's, and both earn their place. **A plane is an
+area, not a line**: a tone region counts only if at least one of its pixels has three or more solid
+4-neighbours in the same bucket, so a traced contour, a rim light, a 1px highlight, a mouth and a
+dither speck are all excluded. **A boundary is keyed by the region pair**, because two boundaries a
+pixel apart are 4-adjacent whichever side you canonicalise to. Without both, the tone-edge set fuses
+into 386 of 491 solid pixels in a single component on `pixel demo`, `planes` is 1 on every version,
+and the term measures one ring containing every boundary in the sprite at once. With them it is 5.
 
-**Normalising by `Dmax` rather than by a constant.** `spanQ`'s denominator is the subject's
-own half-thickness. A 3px-wide blade has `Dmax` 1 and *cannot* contain a curved terminator —
-nesting is not an option at that width — while a 30px cloak has `Dmax` 8 and has every
-opportunity. A constant denominator punishes the first and forgives the second. Normalising
-by the body means the test asks the only question that makes sense: *how much of the available
-depth range does this plane span?* It also bounds `spanQ` at 1000 by construction, which is
-the same lesson `compactnessQ` learned the hard way (§4.1).
+Four decisions in the block above each needed a measurement, and three of them exist because the
+naive version produced a confident wrong answer.
 
-**The worst plane, not the average.** Averaging `effectiveQ` across planes is the same mistake
-the weighted mean makes at the report level: one straight cut through the chest gets averaged
-away by four well-formed contours on the arms and the cloak. The defect is *one plane in the
-wrong place*, and the measurement that survives it is the minimum. This is a deliberate
-asymmetry with the rest of the document — §5.3 uses a weighted mean for the same reason and
-puts floors underneath it, and a floor cannot help inside a single dimension.
+**The weaker of the two bend readings wins.** A rasterised 45° staircase drawn two pixels wide is a
+solid staircase and reads as bending; the one-pixel boundary of a gentle arc is locally straight and
+reads as not bending. Either reading alone puts real artwork on the wrong side of the table, and the
+failure they share — a **missed** straight cut — is the direction this dimension is allowed to fail
+in: a missed dither seam is one advisory not emitted, and a working artist told their transition is
+broken is the expensive error.
 
-**The curvature gate, which is the one clause that was not obvious.** A straight plane across a
-**straight-edged** form is correct, not wrong: the lit face of a box meets its shadow face
-along a line, and a hard-surface sprite drawn isometrically would be wrongly failed at blocking
-severity. So a high `spanQ` is only the serious defect where the *silhouette itself is curved*,
-and that is measurable with an integer local count. `convexCorner` (§3.3) is the signature of
-a 45° staircase on a convex boundary; a circle's outline is roughly half convex corners, a
-rectangle's four corners are lost in its perimeter, and the 250/1000 gate sits between them
-comfortably at every radius down to 2. Where the local silhouette is straight, `effectiveQ` is
-halved rather than waived — the plane is still worth a look, and a hard-surface sprite with a
-diagnose plane gets an advisory instead of a refusal.
+**The direction ladder saturates at three orientations, not four.** The half-plane collapse leaves
+four, and an open boundary on a convex body cannot use the fourth without closing: right, down,
+left, up is a loop. Dividing by four therefore reads a maximally-turning arc at 667 and the ring
+enclosing it at 1000, which put the product's own taught construction 250 per-mille below the
+target-like one on the same body with no defect on either side. Three orientations is where a
+boundary has stopped being a line and started tracking something, and a fourth is the same evidence
+with the ends joined rather than more of it.
 
-**The dependency on §3.3's dither mask, stated explicitly.** A dithered seam is a boundary
-between two tones by this definition, and its `dist` spread is enormous, so a dither seam
-would otherwise be reported as a straight cut through the body. Every `toneEdge` pixel inside
-a detected dither region is excluded before planes are built. This is not an implementation
-convenience; it is a correctness requirement, and it is why the two defects were fixed in one
-amendment rather than two.
+**`splitQ` is the only multiplier, and it is the clause that makes a crescent safe.** A level set
+and a translated contour both produce a thin sliver against a fat field; a straight cut produces two
+fat halves. It is also what stops a locally straight fragment of a curved boundary from being read as
+a cut — the tangent piece of a translated contour is geometrically a straight run, and no local
+measurement can tell it from one.
+
+**Two gates, both failing toward "cannot measure".** `curvedQ` at 250: a straight plane across a
+**straight-edged** form is correct, not wrong, so the lit face of a box meeting its shadow face along
+a line must not be failed. `reachQ` at 500: a boundary that does not cross the body is a fragment,
+not a cross-section. `pixel demo` shades with 1px and 2px crescents whose ends die out at the
+silhouette — five pixels down the right flank, nine along the bottom — and a term that judged those
+as boundaries read the reference artwork as a flat sticker, blocking. §4.2's own floor of 4 pixels
+is a floor on *existence*; `reachQ` is a floor on *consequence*, and they are not the same question.
+
+**The worst plane, not the average.** Unchanged, and for the original reason: one straight cut
+through the chest gets averaged away by four well-formed contours on the arms and the cloak. The
+defect is *one plane in the wrong place*, and the measurement that survives it is the minimum. This
+is a deliberate asymmetry with §5.3, which uses a weighted mean for the same reason and puts floors
+underneath it — and a floor cannot help inside a single dimension.
+
+**One rejected alternative, recorded because it is the next thing anyone will try.** "Is this
+boundary locally parallel to the silhouette's own edge?" unifies the two acceptable constructions
+*by definition*, since a level set and a translation are both offsets of the outline. Measured, it
+is worse than useless: a straight 45° cut across a round body scored 923 and the translated contour
+scored 0, because a chord is locally parallel to the outline over the middle of its run while a
+translation is parallel to a *shifted* copy of it. The general lesson is the one worth keeping: **no
+local geometric property unifies a closed offset and an open one**, because a loop turns strictly
+more than an arc of identical curvature — that is geometry, not a bug. They can only be unified by
+declining to rank them against each other, which is what saturating the ladder does.
+
+**The dependency on §3.3's dither mask is stated and not yet implemented here.** A dithered seam is
+a boundary between two tones by this definition, and excluding it before planes are built is a
+correctness requirement rather than a convenience. `ditherMask` is §3.3's largest predicate and
+`noise` (§4.4) is its declared consumer, so implementing it twice would put a second home in the
+repository for one quantity. The "a tone region must be an area" rule covers the common case anyway
+— a 1px Bayer field and a `cluster2` pattern have no pixel with three same-bucket 4-neighbours, so
+they are not planes and the seams against them are not planes' business — and every remaining path
+through the dither question is a false negative, which is the safe direction.
 
 #### `keyLight`, and why it was skipped too easily
 
@@ -733,7 +789,8 @@ hueOnlyRatio    hueOnlyEdges / internalEdges
 keyLight        mean Lq over the usable top-left region, minus the usable bottom-right one
 shadowShare     (pixels with Lq <= 12) / N
 highlightShare  (pixels with Lq >= 243) / N
-planes, spanQ, cornerQ, effectiveQ, formQ   as specified above
+planes, bendQ, splitQ, reachQ, curvedQ, crossesQ, formQ   as specified above
+spanQ    the depth spread, computed and recorded but deliberately not scored — see above
 ```
 
 If there are no qualifying planes, the form term is not measurable: `formQ` is 1000, the
@@ -751,7 +808,7 @@ absence as a defect.
 | `== 2` | 400 |
 | `<= 1` | 150 |
 
-| `effectiveQ` (the worst plane) | `formQ` | issue |
+| `crossesQ` (the worst plane) | `formQ` | issue |
 | --- | --- | --- |
 | `<= 150` | 1000 | — |
 | `<= 300` | 900 | — |
@@ -792,7 +849,7 @@ also a sprite with a low `keyLight`, and counting both would charge it twice for
 
 | code | fires when | severity | blocking |
 | --- | --- | --- | --- |
-| `plane-crosses-form` | worst-plane `effectiveQ > 600` (0.60 above 750, else 0.30) | 0.30 / 0.60 | **yes** at 0.60 |
+| `plane-crosses-form` | worst-plane `crossesQ > 750` (0.60), else `> 600` (0.30) | 0.30 / 0.60 | **yes** at 0.60 |
 | `hue-carries-form` | `hueOnlyRatio > 10/100` (0.60 above 0.25, else 0.30) | 0.30 / 0.60 | **yes** at 0.60 |
 | `narrow-value-range` | `range < 45` | 0.45 | no |
 | `flat-value` | `dominantShare >= 0.92` or `buckets <= 1` | 0.55 | **yes** |
@@ -807,43 +864,60 @@ word covers both. The `message` names the role and the region: *"the shadow term
 cross it."* The `rect` is the plane's bounding box, which for a diagonal terminator is a
 rotated band the caller can act on directly.
 
-**Worked example** — the two versions of the same 32×32 character. The tone-plane
-measurements are identical in both, which is the whole point:
+**Worked example** — the acceptance pair, and these are two committed corpus cases rather than two
+sheets of arithmetic, so every number below is reproducible from `benchmarks/corpus/`. A is
+`value/straight-diagonal-32` and B is `value/nested-contour-32`: the same 32×32 body, the same five
+tones, the same five tone regions, the same five planes, the same four boundaries. The only
+difference is whether the boundaries are insets or translations, which is exactly the property
+under test. Every tone-plane measurement is identical in both, which is the whole point:
 
 ```
                               A: straight diagonal    B: nested contours
-buckets present               2, 5, 7, 9, 11          2, 5, 7, 9, 11
+N                             398                      398
+buckets present               4, 7, 9, 12, 13          4, 7, 9, 12, 13
 distinct buckets              5   -> toneQ 900         5   -> toneQ 900
-range                         192                      192
-internalEdges                 1140                     1140
-hueOnlyEdges                  402                      402
-hueOnlyRatio                  0.3526  -> -250          0.3526  -> -250
-Dmax                          8                        8
-worst plane  d0, d1           0, 7                     2, 3
-spanQ                        rhu(7*1000, 9) = 778     rhu(1*1000, 9) = 111
-cornerQ (rounded region)     412   >= 250 -> no halve 412   -> no halve
-effectiveQ                   778                       111
-formQ                        100   (band > 750)        900   (band <= 300)
+range                         148                      148
+internalEdges                 749                      749
+hueOnlyEdges                  0                        0
+Dmax                          10                       10
+tone regions                  5                        5
+planes                        5                        5
+worst plane  bendQ            0                        1000
+              splitQ          1000                     371
+              reachQ          600   >= 500 -> open     560   >= 500 -> open
+              curvedQ         750   >= 250 -> open     600   >= 250 -> open
+              crossesQ        1000                    0
+formQ                        100   (band > 750)        1000  (band <= 150)
 valueScoreQ                  rhu(500*900 + 500*100, 1000) = 500
-                             rhu(500*900 + 500*900, 1000) = 900
-minus adjustments            -250                      -250
-scoreQ                       250                       650
+                             rhu(500*900 + 500*1000, 1000) = 950
+minus adjustments            0                        0
+scoreQ                       500                      950
 ```
 
 ```
-A: 250/1000 = 0.25, and `plane-crosses-form` at 0.60 is BLOCKING  ->  verdict fail
-B: 650/1000 = 0.65, no blocking issue
-value delta 400 per-mille x weight 260 / denominator 920  =  113 per-mille of total
+A: 500/1000 = 0.50, and `plane-crosses-form` at 0.60 is BLOCKING  ->  verdict fail
+B: 950/1000 = 0.95, no blocking issue
+dimension gap 450 per-mille
 ```
 
-The old `value` scored both versions identically, and the whole report moved **0.014**. This
-one moves the total by **0.113** and moves the verdict by a whole class, because the flat
-sticker is now *blocking* rather than merely dim. That is the acceptance test, and the
-blocking severity is doing as much work as the score: a diagonal band across a rounded body is
-not a matter of degree, it is a different object from a lit form.
+The old `value` scored both versions identically, and the whole report moved **0.014**. This one
+moves the dimension by **0.45** and moves the verdict by a whole class, because the flat sticker is
+now *blocking* rather than merely dim. The blocking severity is doing as much work as the score: a
+diagonal band across a rounded body is not a matter of degree, it is a different object from a lit
+form. Note where the separation comes from: the two documents agree on `toneQ`, `range`,
+`internalEdges`, `Dmax`, the region count, the plane count, the boundary count and both gates, and
+the only quantity that differs is whether the boundary turns.
 
-Verdict text for A: *"5 tone planes, range 192, but the shadow terminator spans 78% of the
-body's depth as a straight cut — the plane crosses the form instead of nesting around it."*
+Verdict text for A: *"5 tone planes, range 148, but a shadow terminator runs the full depth of the
+body as a straight cut — the plane crosses the form instead of nesting around it."*
+
+**The control, and the number the bias is recorded in.** `value/level-set-32` is the same body with
+four *true insets* — the construction that looks like a target — and it is in the corpus as a clean
+control rather than as a claim. It scores `scoreQ` 950, identical to B, with no issues: a level set
+and a translated contour are both acceptable ways to build a sphere, and the term is not allowed to
+prefer one over the other. Its unscored `spanQ` reads **91** against B's **909**, which is the
+standing evidence that the originally specified term was biased, and the reason the quantity is
+still computed and still printed.
 
 **How a human rates this by eye** (1–5) — and note the new anchor, which is the question that
 was missing:
@@ -1829,22 +1903,33 @@ penalised for nothing and credited for nothing. A deliberately held animation fr
 reported as `no-motion-content` and `frames-identical` when it was the right call. There is
 no mechanism for "I meant that", because there is no mechanism for knowing.
 
-**5. The form-conformance term is an approximation, and an honest one.** `spanQ` measures the
-spread of the distance-to-boundary field along a tone plane, which is a *proxy* for "does
-this plane follow the form", not the thing itself. It cannot distinguish a genuinely
-concentric terminator from a wiggly one that happens to stay at a similar depth, and it cannot
-tell a nested plane from a *deliberately* offset one — a rim light following an edge at 1px
-and a core shadow following it at 3px both read as conforming, which is right, but a plane
-that follows the form of a *different* form also reads as conforming, and that is wrong. It
-also inherits one structural weakness: it says nothing about a plane that is the right shape
-in the wrong place. A sprite whose cloak shading mirrors the body's contour when the cloak
-hangs straight will score well here and read as wrong.
+**5. The form-conformance term is an approximation, and an honest one — and on real artwork it is
+currently inert.** Two separate problems, and the second is the more serious.
 
-The curvature gate makes it usable on hard-surface art, and the gate is a blunt instrument: a
-local count of convex staircase corners is a proxy for "this outline is round here", and a
-tight polygon approximating a circle with few corners will fall below the 250/1000 threshold
-and be treated as straight-edged. That is the safe direction — it downgrades a blocking
-severity to an advisory — but it is a direction, not a solution.
+*The approximation.* `bendQ` measures whether a plane boundary **turns**, which is a proxy for
+"does this plane follow the form", not the thing itself. It cannot distinguish a genuinely concentric
+terminator from a wiggly one that happens to double back, and it cannot tell a nested plane from a
+*deliberately* offset one — a rim light following an edge at 1px and a core shadow following it at
+3px both read as conforming, which is right, but a plane that follows the form of a *different* form
+also reads as conforming, and that is wrong. It also inherits one structural weakness: it says
+nothing about a plane that is the right shape in the wrong place. A sprite whose cloak shading
+mirrors the body's contour when the cloak hangs straight will score well here and read as wrong.
+
+The curvature gate makes it usable on hard-surface art, and the gate is a blunt instrument: a local
+count of convex staircase corners is a proxy for "this outline is round here", and a tight polygon
+approximating a circle with few corners will fall below the 250/1000 threshold and be treated as
+straight-edged. That is the safe direction — it downgrades a blocking severity to an advisory — but
+it is a direction, not a solution.
+
+*The inertness.* `crossesQ` is **0 on every one of the twelve real artworks in the corpus**, so
+`formQ` reads 1000 on all of them and the term has never once fired on a finished piece. It is
+calibrated entirely on synthetic fixtures, where it does its job. The cause is the `reachQ` gate:
+the maintainer's scenes and the one real character sprite have plane boundaries that are fragments
+— a shoreline, a rim, a lantern's edge — rather than cross-sections of the body, and a fragment is
+exempt. So the honest statement is that §4.2 detects a straight cut across a compact subject and has
+no opinion on anything else yet. Nobody should read a real artwork's `value` score as evidence that
+its shading follows its form. Closing this needs measurements on real artwork, not another synthetic
+fixture, and it is a prerequisite for trusting this dimension on anything the product actually ships.
 
 **6. `noise` is the dimension most likely to sand a piece flat.** The redesigned
 `colourOrphans` predicate is sharp — it fires only on a pixel that agrees with *nothing* —
