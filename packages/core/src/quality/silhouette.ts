@@ -790,6 +790,7 @@ export const silhouetteAnalyzer: QualityAnalyzer = (context: QualityContext): Qu
           ? 'nothing to measure: the context carries no frames.'
           : `nothing opaque to measure on any of the ${plural(frames.length, 'frame')}; there is no shape to judge.`,
       issues: [],
+      unmeasured: {},
     };
   }
 
@@ -815,7 +816,10 @@ export const silhouetteAnalyzer: QualityAnalyzer = (context: QualityContext): Qu
     frames.length > 1
       ? `worst of ${frames.length} ${plural(frames.length, 'frame')} (frame ${worst.index}): `
       : '';
-  return { scoreQ: worst.scoreQ, verdict: prefix + describe(worst, context), issues };
+  // `silhouette` is a single measurement, so it has no sub-score to declare as unmeasured. The map
+  // is still written rather than omitted: the contract makes it required precisely so that "this
+  // dimension has no blind spot" and "nobody checked" cannot be the same report.
+  return { scoreQ: worst.scoreQ, verdict: prefix + describe(worst, context), issues, unmeasured: {} };
 };
 
 /** §3.5's six steps, once per frame. */

@@ -134,6 +134,15 @@ The replacement quality pipeline (`packages/core/src/quality/`) is being built w
 
 - An **absent dimension is reported as unmeasured**, never as a number. A dimension with no
   analyzer reports `not-implemented`, which is a claim about the build, not the artwork.
+- A dimension can be **partly** absent, and that is the case with no precedent to lean on.
+  `QualityDimension.unmeasured` names the sub-scores that were not measured and why; the dimension
+  reports only what it measured, re-normalised, exactly as `STATIC_QUALITY_WEIGHTS` renormalises
+  around a still sprite's absent `motion`. **It is required, not optional** — a sub-score that is
+  silently absent is indistinguishable from one counted at its best. §4.2's form term claimed a
+  perfect 1000 on all ten full-bleed artworks in the corpus, donating half of `value`'s weight to a
+  measurement nobody took, until T-099 separated "the gate abstained and the abstention is the
+  answer" (a hard-surface box) from "there is no outline to read" (a scene). Do not collapse those
+  two: doing so marked three clean controls down from `pass` to `warn`.
 - The benchmark corpus (`benchmarks/`) carries **negative controls** — clean work that must produce
   no issues — because an analyzer that fires on clean art is worse than one that misses a defect.
 - The corpus **withholds the machine's scores from the human-rated section**, because a rater who

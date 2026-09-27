@@ -2288,7 +2288,7 @@
           "subject-undersized",
           "fragmented-silhouette"
         ],
-        "verdict": "warn",
+        "verdict": "fail",
         "noBlocking": true,
         "preconditions": {
           "silhouette": "no-subject"
@@ -2416,7 +2416,8 @@
           "scoreQ": [
             800
           ]
-        }
+        },
+        "verdict": "fail"
       }
     },
     {

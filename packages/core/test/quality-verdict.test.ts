@@ -46,7 +46,7 @@ const IDS: readonly QualityDimensionId[] = [
 ];
 
 function dim(scoreQ: number, issues: readonly QualityIssue[] = []): QualityDimension {
-  return { scoreQ, verdict: `scored ${scoreQ}`, issues };
+  return { scoreQ, verdict: `scored ${scoreQ}`, issues, unmeasured: {} };
 }
 
 /** Build a `dimensions` record from per-dimension per-mille scores. */

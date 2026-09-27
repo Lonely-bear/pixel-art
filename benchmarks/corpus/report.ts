@@ -138,7 +138,13 @@ export interface ValueReading {
   readonly index: number;
   readonly scoreQ: number;
   readonly toneQ: number;
-  readonly formQ: number;
+  /**
+   * `null` when the subject has no outline for §4.2's curvature gate to read. It was a `number` and
+   * it was 1000 on all ten full-bleed artworks, which is the finding T-099 is about: a perfect
+   * score for a measurement nobody took, printed on a row in a committed file where it read as
+   * evidence.
+   */
+  readonly formQ: number | null;
   readonly distinct: number;
   readonly range: number;
   readonly regions: number;
@@ -147,10 +153,10 @@ export interface ValueReading {
   readonly worstCrossesQ: number | null;
   readonly worstBendQ: number | null;
   readonly worstSpanQ: number | null;
-  /** §4.2's curvature gate, `curvedQ >= 250`. 0 on every full-bleed scene. */
-  readonly worstCurvedQ: number | null;
-  /** §4.2's reach gate, `reachQ >= 500`. Also 0-or-under on every full-bleed scene. */
-  readonly worstReachQ: number | null;
+  /** §4.2's curvature gate, `curvedQ >= 250`. The maximum over every plane, 0..77 on all ten scenes. */
+  readonly maxCurvedQ: number | null;
+  /** §4.2's reach gate, `reachQ >= 500`. The maximum over every plane. */
+  readonly maxReachQ: number | null;
   readonly Dmax: number;
   readonly keyLight: number | null;
   readonly hueOnlyQ: number;
@@ -186,6 +192,14 @@ export interface CorpusRow {
   readonly scores: Readonly<Partial<Record<QualityDimensionId, number>>>;
   /** The aggregator's own `excluded` map, verbatim. */
   readonly excluded: Readonly<Record<string, ExcludedReason>>;
+  /**
+   * Every measured dimension's own `unmeasured` entries, flattened to `dimension.subScore`.
+   *
+   * Carried through rather than recomputed, because the whole value of it is that it comes from
+   * the analyzer that did (or did not) measure: a report that re-derived "this looks unmeasured"
+   * from the numbers would be re-deriving the bug it exists to catch.
+   */
+  readonly unmeasured: Readonly<Record<string, ExcludedReason>>;
   /** The applicability predicates, called directly. */
   readonly preconditions: Readonly<Record<string, CorpusExcludedReason | null>>;
   readonly frames: readonly FrameReading[];
@@ -257,6 +271,7 @@ function evaluateCase(entry: CorpusCase, sprite: Sprite | null): CorpusRow {
       blocking: [],
       scores: {},
       excluded: {},
+      unmeasured: {},
       preconditions: {},
       frames: [],
       value: null,
@@ -299,8 +314,13 @@ function evaluateCase(entry: CorpusCase, sprite: Sprite | null): CorpusRow {
           worstCrossesQ: worstValue.worst === null ? null : worstValue.worst.crossesQ,
           worstBendQ: worstValue.worst === null ? null : worstValue.worst.bendQ,
           worstSpanQ: worstValue.worst === null ? null : worstValue.worst.spanQ,
-          worstCurvedQ: worstValue.worst === null ? null : worstValue.worst.curvedQ,
-          worstReachQ: worstValue.worst === null ? null : worstValue.worst.reachQ,
+          // **Maxima over every plane, not the worst plane's readings.** The two gate columns exist
+          // to keep the T-099 finding re-measured on every run, and the finding is *about* the rows
+          // where no plane was judged — so reading them off the worst plane prints `-` on exactly
+          // the rows that need the evidence. A maximum answers the question the column is for: how
+          // close did the most favourable plane come to being judged?
+          maxCurvedQ: maxOf(worstValue.terminators.map((term) => term.curvedQ)),
+          maxReachQ: maxOf(worstValue.terminators.map((term) => term.reachQ)),
           Dmax: worstValue.Dmax,
           keyLight: worstValue.keyLight,
           hueOnlyQ: worstValue.hueOnlyQ,
@@ -384,6 +404,15 @@ function evaluateCase(entry: CorpusCase, sprite: Sprite | null): CorpusRow {
       }),
     ),
     excluded: { ...report.excluded },
+    // Keyed `dimension.subScore` rather than flattened to the sub-score alone, so the row says
+    // *which* dimension is half blind and not merely that something is.
+    unmeasured: Object.fromEntries(
+      Object.entries(report.dimensions).flatMap(([id, dimension]) =>
+        dimension === undefined
+          ? []
+          : Object.entries(dimension.unmeasured).map(([name, reason]) => [`${id}.${name}`, reason]),
+      ),
+    ),
     preconditions,
     frames: readings,
     value,
@@ -944,6 +973,11 @@ function listOrNone(values: readonly string[]): string {
   return values.length === 0 ? '-' : values.join(', ');
 }
 
+/** The largest reading, or `null` when there is nothing to take one of. */
+function maxOf(values: readonly number[]): number | null {
+  return values.length === 0 ? null : Math.max(...values);
+}
+
 /** The generated report. Compared against `baseline.md` by the test; never edited by hand. */
 export function renderMarkdown(spec: CorpusSpec, scores: CorpusScores, rows: readonly CorpusRow[]): string {
   const run: CorpusRun = { spec, scores, rows, failures: [], markdown: '' };
@@ -1118,15 +1152,15 @@ export function renderMarkdown(spec: CorpusSpec, scores: CorpusScores, rows: rea
       String(v.index),
       String(v.scoreQ),
       String(v.toneQ),
-      String(v.formQ),
+      String(v.formQ === null ? 'unmeasured' : v.formQ),
       String(v.distinct),
       String(v.range),
       String(v.planes),
       String(v.terminators),
       v.worstCrossesQ === null ? '-' : String(v.worstCrossesQ),
       v.worstBendQ === null ? '-' : String(v.worstBendQ),
-      v.worstCurvedQ === null ? '-' : String(v.worstCurvedQ),
-      v.worstReachQ === null ? '-' : String(v.worstReachQ),
+      v.maxCurvedQ === null ? '-' : String(v.maxCurvedQ),
+      v.maxReachQ === null ? '-' : String(v.maxReachQ),
       v.worstSpanQ === null ? '-' : String(v.worstSpanQ),
       String(v.Dmax),
       v.keyLight === null ? 'not measurable' : String(v.keyLight),
@@ -1149,8 +1183,8 @@ export function renderMarkdown(spec: CorpusSpec, scores: CorpusScores, rows: rea
         'bounds',
         'crossesQ',
         'bendQ',
-        'curvedQ gate',
-        'reachQ gate',
+        'curvedQ max',
+        'reachQ max',
         'spanQ unscored',
         'Dmax',
         'keyLight',
@@ -1175,7 +1209,14 @@ export function renderMarkdown(spec: CorpusSpec, scores: CorpusScores, rows: rea
   out.push('');
   out.push(
     ...table(
-      ['case', 'requiresReadableSubject', 'motionApplicability', 'exclusions with a reason', 'blocking'],
+      [
+        'case',
+        'requiresReadableSubject',
+        'motionApplicability',
+        'exclusions with a reason',
+        'unmeasured sub-scores',
+        'blocking',
+      ],
       rows
         .filter((row) => row.tier !== 'human')
         .map((row) => [
@@ -1191,9 +1232,20 @@ export function renderMarkdown(spec: CorpusSpec, scores: CorpusScores, rows: rea
               .filter(([, reason]) => reason !== 'not-implemented')
               .map(([id, reason]) => `${id}=${reason}`),
           ),
+          // A dimension that is present and *partly* blind is the case neither `excluded` nor a
+          // score can express, so it gets its own column rather than being inferred from a number.
+          listOrNone(Object.entries(row.unmeasured).map(([name, reason]) => `${name}=${reason}`)),
           listOrNone(row.blocking),
         ]),
     ),
+  );
+  out.push('');
+  out.push(
+    'The `unmeasured sub-scores` column is the one T-099 added. `value` applies to a full-bleed ' +
+      'scene and its tone half is measured there, so it is not in `excluded` — but §4.2\'s form ' +
+      'half has no outline to read and used to report `formQ` 1000 on every one of them. A row ' +
+      'reading `value` is present, `excluded` empty, `formQ` 1000 was a perfect score for a ' +
+      'measurement nobody took.',
   );
   out.push('');
 

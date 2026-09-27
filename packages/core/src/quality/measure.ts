@@ -377,6 +377,70 @@ export function edgePixelCount(mask: Uint8Array, width: number, height: number):
 }
 
 /**
+ * How close the ink may get to a canvas edge before the document stops having a subject.
+ *
+ * **One pixel, and the unit is a pixel on purpose.** This is the one number in the pipeline
+ * that decides whether a scene is reported as unmeasurable, and the reasoning is the trap
+ * the first corpus run laid: identical ink with no transparent border scores 800 and fires
+ * a blocking `shape-clipped`, while the *same ink* with a 1px margin scores 1000 and fires
+ * nothing. A predicate anchored on "does the ink reach the edge" (`borderTouch == 4`) reads
+ * that 1px margin as a subject and hands a full-bleed scene a confident perfect silhouette.
+ * A predicate anchored on a *fraction* of the canvas does not fix it either: one pixel of
+ * margin is 12% of a 32×32 canvas and 0.4% of a 1024² one, so any ratio threshold is
+ * either too tight to absorb the margin or too loose to keep a subject — and its meaning
+ * moves with the canvas size, which is what makes it knife-edge in the first place.
+ *
+ * A pixel is the unit an artist actually draws in, and it is the same one pixel on a 32×32
+ * sprite and on a 4096² scene. One pixel is also the smallest margin that is a decision
+ * rather than an accident: nobody composes an environment around half a pixel of
+ * transparency, and everybody has a 1px bleed guard in a sheet.
+ *
+ * The cost is stated rather than hidden: a subject drawn within 1px of *all four* edges is
+ * called a scene. That is the one false exclusion this buys, it is in the region where the
+ * spec's own `shape-clipped` (three of four edges, blocking) is one pixel away from firing,
+ * and it fails toward "cannot measure", which is the direction the whole mechanism exists
+ * to fail. T-021's corpus is where that trade gets measured rather than argued.
+ *
+ * It sits here, beside {@link edgeGapOf}, because two consumers ask the question and the
+ * aggregator cannot be one of them: `index.ts` imports `value.ts`, so `value.ts` asking
+ * `index.ts` for this number would be a cycle, and copying the literal is how two modules end
+ * up a pixel apart on the one threshold where a pixel is the whole argument.
+ */
+export const SUBJECT_REQUIRED_MARGIN = 1;
+
+/**
+ * §3.3's `edgeGap`: the largest distance from the ink to any of the four canvas edges, in pixels.
+ *
+ * A *distance* and not a bounding box, because the question this answers is "how much transparent
+ * frame is there at all", not "where is the ink". One definition, two consumers, and they are
+ * genuinely the same question: the aggregator's `no-subject` applicability rule asks it of a whole
+ * document, and §4.2's curvature gate asks it of one frame — a subject that runs off all four edges
+ * has no outline, and an outline is the only place local curvature can be read from.
+ *
+ * The `solid === 0` sentinel is read only behind a `solid > 0` test. With no ink there is no
+ * distance to an edge, and reporting it as maximally distant keeps the "all four margins are one
+ * pixel" arithmetic from having to know that case exists.
+ */
+export function edgeGapOf(mask: Uint8Array, width: number, height: number): number {
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < height; y++) {
+    const row = y * width;
+    for (let x = 0; x < width; x++) {
+      if (mask[row + x] !== 1) continue;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+  }
+  if (maxX < 0) return width + height;
+  return Math.max(minX, minY, width - 1 - maxX, height - 1 - maxY);
+}
+
+/**
  * §3.3's `dist` is not here, and the two incompatible definitions of it are recorded in the
  * corpus rather than resolved here. Re-exported so that the names a second consumer needs are
  * in one place even though their definitions are not.

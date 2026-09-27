@@ -452,13 +452,33 @@ describe('the corrected `convexCorner`, and the spec-literal count it corrects',
   it('is the quantity the curvature gate reads, and the gate is what spares a hard-surface sprite', () => {
     // §4.2: "a straight plane across a straight-edged form is correct, not wrong". The box's four
     // corners are the only convex staircase pixels near its terminators, and 4 against the
-    // terminator's own edge pixels is far below the 250/1000 gate, so `crossesQ` is 0 with no
-    // reliance on `bendQ` at all.
+    // terminator's own edge pixels is far below the 250/1000 gate.
+    //
+    // The gate is read off the terminators directly rather than through `worst`, because there is
+    // no `worst`: the gate closes on all five of the box's planes, so the frame has nothing it is
+    // entitled to judge. **That is a completed measurement, not a blind one** — the box has an
+    // outline, the outline is straight, and "a straight terminator on a straight-edged form is
+    // correct" is an answer. So `formQ` is 1000 and `unmeasured` is empty.
+    //
+    // The distinction is the whole of T-099 and it is worth stating in the test that could most
+    // easily get it wrong: this box and a full-bleed landscape both abstain on every plane, and
+    // they are not the same claim. A rectangle knows it is straight; a scene has no outline to
+    // know anything about. Folding the second into the first is what made a first attempt at the
+    // fix report three clean controls as `warn`.
     const box = read(spriteOf(RAMP, hardSurface()));
-    expect(box.frame.worst).not.toBeNull();
-    expect(box.frame.worst!.bendQ).toBe(0);
-    expect(box.frame.worst!.curvedQ).toBeLessThan(250);
-    expect(box.frame.worst!.crossesQ).toBe(0);
+    const planes = box.frame.terminators;
+    expect(planes.length).toBeGreaterThanOrEqual(4);
+    for (const plane of planes) {
+      expect(plane.bendQ).toBe(0);
+      expect(plane.curvedQ).toBeLessThan(250);
+      expect(plane.gate).toBe('curvature');
+      expect(plane.crossesQ).toBe(0);
+    }
+    expect(box.frame.gateCounts.curvature).toBe(planes.length);
+    expect(box.frame.gateCounts.reach).toBe(0);
+    expect(box.frame.worst).toBeNull();
+    expect(box.frame.formQ).toBe(1000);
+    expect(box.dimension.unmeasured).toEqual({});
     expect(codes(box.dimension.issues)).toEqual([]);
   });
 });

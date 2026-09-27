@@ -4,12 +4,15 @@ import {
   buildSolidMask,
   convexStaircaseCornerAt,
   distField,
+  edgeGapOf,
   edgePixelAt,
   lqBucketOf,
   lqOf,
   rhu,
+  SUBJECT_REQUIRED_MARGIN,
 } from './measure.js';
 import type {
+  ExcludedReason,
   QualityAnalyzer,
   QualityCel,
   QualityContext,
@@ -233,6 +236,17 @@ export interface Terminator {
   readonly curvedQ: number;
   /** The badness this plane contributes: higher is worse, 0 means "this plane follows the form". */
   readonly crossesQ: number;
+  /**
+   * Why this plane was not judged, or `null` when it was.
+   *
+   * `crossesQ` is 0 both for a plane that follows the form and for one that was never asked, so
+   * the number alone cannot tell a clean sprite from a blind one. That ambiguity is why §4.2 read
+   * 1000 on all twelve real artworks in the corpus: every one of their planes was gated, every one
+   * of them scored 0, and nothing recorded that the 0 meant "not asked" rather than "no defect".
+   * The gate is kept per plane so the difference survives into the measurement record instead of
+   * having to be re-derived from a throwaway probe.
+   */
+  readonly gate: 'curvature' | 'reach' | null;
   /** `min` and `max` of `dist` over the plane, and the depth spread in per-mille of `Dmax + 1`. */
   readonly d0: number;
   readonly d1: number;
@@ -281,12 +295,24 @@ export interface ValueFrame {
   readonly planes: number;
   /** The connected plane boundaries, ≥ {@link MIN_TERMINATOR} pixels each. */
   readonly terminators: readonly Terminator[];
-  /** The bad plane, or `null` when there is no plane to judge. */
+  /** The bad plane among the **judged** ones, or `null` when there is no plane to judge. */
   readonly worst: Terminator | null;
+  /**
+   * Planes that were not judged, and why: `curvature` when the local silhouette has no curvature
+   * to compare against, `reach` when the plane is too small to be a cross-section, `null` when the
+   * frame has no plane at all. This is the field that makes the *absence* of a form measurement
+   * visible; {@link formQ} alone cannot, because an unmeasured term and a perfect one were both 1000.
+   */
+  readonly gateCounts: Readonly<Record<'curvature' | 'reach', number>>;
   /** §3.3's `Dmax` on the adopted reading: the subject's half-thickness. */
   readonly Dmax: number;
   readonly toneQ: number;
-  readonly formQ: number;
+  /**
+   * `null` when no plane was judgeable — see {@link gateCounts}. Not 1000, and the difference is the
+   * whole point: a full-bleed scene and a sphere shaded with translated contours both report a
+   * clean form term, and only one of them was looked at.
+   */
+  readonly formQ: number | null;
   readonly scoreQ: number;
   readonly issues: readonly QualityIssue[];
 }
@@ -321,8 +347,8 @@ export const valueAnalyzer: QualityAnalyzer = (context: QualityContext): Quality
           ? 'nothing to measure: the context carries no frames.'
           : `nothing opaque to measure on any of the ${plural(frames.length, 'frame')}; there is no tone to judge.`,
       issues: [],
-    };
-  }
+      unmeasured: { form: 'no-judgeable-plane' },
+    };  }
   let worst = measured[0];
   for (const frame of measured) if (frame.scoreQ < worst.scoreQ) worst = frame;
   const issues = frames
@@ -338,8 +364,44 @@ export const valueAnalyzer: QualityAnalyzer = (context: QualityContext): Quality
     frames.length > 1
       ? `worst of ${frames.length} ${plural(frames.length, 'frame')} (frame ${worst.index}): `
       : '';
-  return { scoreQ: worst.scoreQ, verdict: prefix + describe(worst), issues };
+  // The verdict is the sentence a person reads when they want to know what was *not* checked, so
+  // the absence goes here in words as well as in the `unmeasured` map. Saying nothing would let a
+  // full-bleed scene read exactly like a correctly shaded sphere.
+  //
+  // `'no-subject'` and `'no-judgeable-plane'` are different claims and are kept apart: the first is
+  // about the document having no outline to measure against, the second about there being nothing
+  // to measure at all. Unanimity matches the aggregator's rule for the same predicate — one frame
+  // with an outline is enough for the dimension to have an opinion.
+  const blind = measured.filter((frame) => frame.formQ === null);
+  const reason: ExcludedReason | null =
+    blind.length === 0 ? null : blind.length === measured.length && worst.formQ === null
+      ? blind[0].N === 0
+        ? 'no-judgeable-plane'
+        : 'no-subject'
+      : null;
+  return {
+    scoreQ: worst.scoreQ,
+    verdict: prefix + describe(worst) + (reason === null ? '' : formBlindNote(worst, reason)),
+    issues,
+    unmeasured: reason === null ? {} : { form: reason },
+  };
 };
+
+/**
+ * Why the form term has no number, in one sentence.
+ *
+ * `'no-subject'` is the case a reader can act on and the reason it is worth a sentence: the subject
+ * fills the canvas, so its outline is the frame, so there is no local curvature for a terminator to
+ * agree or disagree with. That is a fact about the asset class rather than a defect in the
+ * artwork, and it is the same fact the aggregator already reports as `no-subject` for `silhouette`
+ * — which is why one of the two is that member and not a new one.
+ */
+function formBlindNote(frame: ValueFrame, reason: ExcludedReason): string {
+  if (reason === 'no-judgeable-plane') {
+    return ' No tone boundary to judge for form conformance, so that half of the dimension is unmeasured rather than clean.';
+  }
+  return " Form conformance is unmeasured: the subject reaches every canvas edge, so its outline is the frame and there is no local curvature for a terminator to follow. The tone half was measured.";
+}
 
 /** §4.2's whole measurement, once per frame. */
 function measureFrame(context: QualityContext, index: number): ValueFrame {
@@ -370,14 +432,14 @@ function measureFrame(context: QualityContext, index: number): ValueFrame {
       planes: 0,
       terminators: [],
       worst: null,
+      gateCounts: { curvature: 0, reach: 0 },
       Dmax: 0,
       toneQ: 1000,
-      formQ: 1000,
+      formQ: null,
       scoreQ: 1000,
       issues: [],
     };
   }
-
   /* --- tone statistics, one pass over the solid pixels --- */
   const bucketCount = new Int32Array(16);
   let lqMin = 255;
@@ -465,18 +527,39 @@ function measureFrame(context: QualityContext, index: number): ValueFrame {
   const { regions, regionId } = labelToneRegions(cel, mask, width, height);
   const planes = regions.filter((region) => region.thickness >= 3).length;
   const bodyExtent = Math.max(maxX - minX + 1, maxY - minY + 1);
-  const terminators = findTerminators(cel, mask, width, height, regions, regionId, dist, Dmax, bodyExtent);  // Worst plane, not the mean: the defect is one plane in the wrong place, and a mean is allowed
-  // to hide it behind four well-formed crescents.
+  const terminators = findTerminators(cel, mask, width, height, regions, regionId, dist, Dmax, bodyExtent);
+  // Worst plane, not the mean: the defect is one plane in the wrong place, and a mean is allowed
+  // to hide it behind four well-formed crescents. **Among the judged planes only** — a gated plane
+  // carries a `crossesQ` of 0 that means "not asked", and letting those compete for the title of
+  // worst plane is how a frame where nothing was measured acquired a worst plane at all.
+  const gateCounts = { curvature: 0, reach: 0 };
   let worst: Terminator | null = null;
   for (const term of terminators) {
+    if (term.gate !== null) {
+      gateCounts[term.gate]++;
+      continue;
+    }
     if (worst === null || term.crossesQ > worst.crossesQ) worst = term;
   }
 
   const toneQ = toneQFor(distinct);
-  // No qualifying plane is not a defect: a flat single-tone sprite legitimately has none, and §4.2
-  // says so explicitly. It is reported as unmeasured, which is a different claim from a good score.
-  const worstBand = worst === null ? null : formBandFor(worst.crossesQ);
-  const formQ = worstBand === null ? 1000 : worstBand.formQ;
+  // **The one case where the form term has no answer at all.** §4.2's curvature gate asks whether
+  // the local silhouette is round, and it reads that off the subject's own outline. A subject that
+  // fills the canvas has no outline — its boundary is the frame — so there is nothing to read
+  // curvature from and the gate abstains on every plane for a reason that is about the *document*
+  // rather than about the artwork. Reporting 1000 there is how all twelve real artworks in the
+  // corpus came out with a clean form term and not one plane judged: ten are full-bleed scenes
+  // whose outline is a rectangle, and the remaining two are 32×32 and 1024² sprites whose planes
+  // are fragments the `reach` gate legitimately spares.
+  //
+  // A subject that *does* have an outline is a different case and keeps §4.2's designed reading: a
+  // rectangle's straight terminators are correct, and `formQ` 1000 says the term examined them and
+  // found nothing wrong. Collapsing the two cases is what made a first attempt at this penalise
+  // three clean controls from `pass` to `warn` — a defect-free rectangle told it was mediocre
+  // because the scorer was half-blind, which is the distortion this whole mechanism exists to
+  // prevent wearing a different hat.
+  const noOutline = edgeGapOf(mask, width, height) <= SUBJECT_REQUIRED_MARGIN;
+  const formQ = noOutline ? null : worst === null ? 1000 : formBandFor(worst.crossesQ).formQ;
 
   /* --- the score, and the issues --- */
   const issues: QualityIssue[] = [];
@@ -592,7 +675,7 @@ function measureFrame(context: QualityContext, index: number): ValueFrame {
   // is allowed to block. Its message names the geometry it measured rather than an artistic role,
   // because it fires on a straight cut through a highlight exactly as it does through a shadow.
   // The band table carries the severity with the band, so the score and the advice cannot drift.
-  const planeSeverity: number | null = worstBand === null ? null : worstBand.severity;
+  const planeSeverity: number | null = worst === null ? null : formBandFor(worst.crossesQ).severity;
   if (worst !== null && planeSeverity !== null && focused(context, worst.rect)) {
     issues.push({
       code: 'plane-crosses-form',
@@ -625,10 +708,20 @@ function measureFrame(context: QualityContext, index: number): ValueFrame {
     planes,
     terminators,
     worst,
+    gateCounts,
     Dmax,
     toneQ,
     formQ,
-    scoreQ: Math.max(0, Math.min(1000, rhu(500 * toneQ + 500 * formQ, 1000) + clamped)),
+    // The form term's share is dropped rather than credited when it was not measured, and the
+    // remainder re-normalised — the same rule `STATIC_QUALITY_WEIGHTS` applies to a still sprite's
+    // absent `motion`. Crediting it would hand a full-bleed scene 500 of the dimension's 1000 for
+    // something the curvature gate declined to look at, and the corpus measured what that buys: a
+    // confident `formQ` 1000 and `value` 950 on every one of the twelve real artworks, none of which
+    // had a single plane judged.
+    scoreQ:
+      formQ === null
+        ? Math.max(0, Math.min(1000, toneQ + clamped))
+        : Math.max(0, Math.min(1000, rhu(500 * toneQ + 500 * formQ, 1000) + clamped)),
     issues,
   };
 }
@@ -1009,10 +1102,15 @@ function describeTerminator(
   // only multiplier, and it is the clause that makes a *crescent* safe: a level set and a
   // translated contour both produce a thin sliver against a fat field, and a straight cut
   // produces two fat halves.
-  const crossesQ =
-    curvedQ < CURVATURE_GATE || reachQ < REACH_GATE
-      ? 0
-      : rhu((1000 - bendQ) * splitQ, 1000);
+  //
+  // Both gates record *which one* closed, because `crossesQ` is 0 either way and the frame has to
+  // be able to tell "this plane follows the form" from "this plane was never asked" once every
+  // plane turns out to be gated. Curvature is checked first because it is the one that closes on a
+  // whole class of artwork rather than on individual planes: a subject that fills the canvas has a
+  // rectangular outline, four convex corners in total, and none of them near an interior plane, so
+  // every plane in a full-bleed scene is exempt.
+  const gate = curvedQ < CURVATURE_GATE ? 'curvature' : reachQ < REACH_GATE ? 'reach' : null;
+  const crossesQ = gate === null ? rhu((1000 - bendQ) * splitQ, 1000) : 0;
   return {
     pixels,
     regions: [pair[0], pair[1]],
@@ -1022,6 +1120,7 @@ function describeTerminator(
     reachQ,
     curvedQ,
     crossesQ,
+    gate,
     d0: d0 === Number.POSITIVE_INFINITY ? 0 : d0,
     d1: d1 < 0 ? 0 : d1,
     spanQ: rhu((d1 - d0) * 1000, Dmax + 1),
@@ -1092,6 +1191,11 @@ function focused(context: QualityContext, rect: Rect): boolean {
 /** `"1 frame"` / `"4 frames"`. */
 function plural(count: number, word: string): string {
   return count === 1 ? word : `${word}s`;
+}
+
+/** `"1 boundary"` / `"4 boundaries"`, for the irregular plural the verdict note needs. */
+function pluralBoundaries(count: number, word: string, pluralWord: string): string {
+  return count === 1 ? word : pluralWord;
 }
 
 /** A noun for how a plane divides the subject, so the message names the geometry. */

@@ -1171,15 +1171,46 @@ describe("this repository's own artwork, which is real and unlabelled", () => {
       { id: 'artwork/moonlit-alpine-lake-fast.pixel', kl: 6 },
       { id: 'artwork/sunset-lighthouse-512-baseline-model-a.pixel', kl: 10 },
     ]);
-    // And the gate the form term cannot see through, which is the other half of the same finding:
-    // §4.2's curvature gate counts `edgePixel`s near the plane, and a full-bleed subject has none
-    // but the canvas frame. All ten read `curvedQ` 0, so the form sub-term is 1000 on all twelve of
-    // the real assets and a straight shadow band across a curved mountain is excused today.
+    // **And the gate the form term reads nothing through, which is the other half of the same
+    // finding.** §4.2's curvature gate asks whether the local silhouette is round, and it reads
+    // that off the subject's own outline. All ten scenes reach every canvas edge, so their outline
+    // *is* the frame: `maxCurvedQ` over every plane is 0..77 against a gate of 250, and not one
+    // plane on any of the ten comes close to being judged. A straight shadow band across a curved
+    // mountain is still excused today — the gate is doing its job on a rectangle — but the report no
+    // longer calls that a clean form measurement.
+    //
+    // **Curvature and not reach is the gate that binds, and the corpus now says which.** The autumn
+    // lake's most favourable plane reaches `reachQ` 1000, well over that gate's 500, so an
+    // assertion on the reach column would have read as a pass and hidden the finding. It is the
+    // curvature maximum that never clears 250, on any plane, on any of the ten — which is the
+    // measurement T-013 recorded as "the curvature gate reads nothing on a full-bleed subject"
+    // before anyone asked what the report was doing with the 1000 that followed.
+    //
+    // **This assertion used to be `every real asset reads formQ 1000`, and it was pinning the bug
+    // as expected behaviour with a paragraph explaining why.** The maxima replace the worst plane's
+    // readings on purpose: reading them off `worst` prints `-` on exactly the rows this finding is
+    // about, which is the one thing a re-measured column must not do.
     for (const entry of scenes) {
-      expect(row(entry.id).value?.worstCurvedQ, entry.id).toBe(0);
-      expect(row(entry.id).value?.worstReachQ ?? 0, entry.id).toBeLessThan(500);
+      expect(row(entry.id).value?.maxCurvedQ ?? 0, entry.id).toBeLessThan(250);
+      // And the absence is stated, not inferred from a number.
+      expect(row(entry.id).value?.formQ, entry.id).toBeNull();
+      expect(row(entry.id).unmeasured, entry.id).toEqual({ 'value.form': 'no-subject' });
     }
-    expect(real().every((entry) => row(entry.id).value?.formQ === 1000)).toBe(true);
+    // **The two real subjects are the other half of the finding, and they are not the same case.**
+    // Neither reaches a canvas edge, so both have an outline; their planes are gated by `reach` as
+    // fragments too small to be a cross-section, which §4.2 gates on purpose, and "these are
+    // fragments, so there is nothing here to fail" is an answer rather than an absence. A first
+    // attempt at this fix folded the two cases together and dropped the lantern keeper from 850 to
+    // 800, which is a defect-free sprite being marked down for the scorer's blindness.
+    const subjects = real().filter((entry) => row(entry.id).preconditions.silhouette !== 'no-subject');
+    expect(subjects.map((entry) => entry.id).sort()).toEqual([
+      'app/icon.png',
+      'artwork/verify/lantern-keeper.pixel',
+    ]);
+    for (const entry of subjects) {
+      expect(row(entry.id).value?.formQ, entry.id).toBe(1000);
+      expect(row(entry.id).unmeasured, entry.id).toEqual({});
+    }
   });
 
   it('keeps the two real subjects measurable, and records them as a drift baseline', () => {

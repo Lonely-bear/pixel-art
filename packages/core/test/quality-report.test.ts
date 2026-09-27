@@ -131,12 +131,15 @@ function insetBy(margin: number, width = 32, height = 32, frames = 1): Sprite {
 
 /** An analyzer that returns a fixed score, for testing the aggregator with no dimension in it. */
 function stub(scoreQ: number, issues: readonly QualityIssue[] = []): QualityAnalyzer {
-  return () => ({ scoreQ, verdict: `stub at ${scoreQ}`, issues });
+  // `unmeasured` is written rather than omitted even though nothing here reads it: a stub that
+  // leaves it off hands the aggregator `undefined` for a field the contract makes required, and
+  // tests are not typechecked, so nothing would say so until a dimension started reading it.
+  return () => ({ scoreQ, verdict: `stub at ${scoreQ}`, issues, unmeasured: {} });
 }
 
 /** The same, plus the issues a dimension would emit. */
 function stubWith(issues: readonly QualityIssue[], scoreQ = 500): QualityAnalyzer {
-  return () => ({ scoreQ, verdict: `stub with ${issues.length} issue(s)`, issues });
+  return () => ({ scoreQ, verdict: `stub with ${issues.length} issue(s)`, issues, unmeasured: {} });
 }
 
 function reg(
@@ -311,7 +314,7 @@ describe('the precondition is the aggregator\'s to call, and it is one line to r
     let runs = 0;
     const counting: QualityAnalyzer = () => {
       runs++;
-      return { scoreQ: 1000, verdict: 'ran', issues: [BLOCKING_ISSUE] };
+      return { scoreQ: 1000, verdict: 'ran', issues: [BLOCKING_ISSUE], unmeasured: {} };
     };
     const report = evaluate(firstContext(fullBleed()), [
       reg('silhouette', counting, () => 'no-subject'),
@@ -421,7 +424,20 @@ describe('a dimension with no analyzer is reported as unmeasured, not as perfect
     // great deal to say about exactly the documents `silhouette` refuses.
     const measured = evaluate(firstContext(fullBleed()));
     expect(measured.excluded.silhouette).toBe('no-subject');
-    expect(measured.dimensions.value?.scoreQ).toBe(175);
+    // The fixture is one flat colour over the whole canvas, and it is scored as one: `toneQ` at its
+    // 150 floor, -200 for `flat-value` and -200 for `narrow-value-range`, clamped at 0. Before
+    // T-099 the same document read 175, and the whole difference is the form term — a full-bleed
+    // canvas has no outline, so §4.2's curvature gate had no local curvature to read and the term
+    // was reporting 1000 for a measurement it never took, donating 500 of the dimension's weight
+    // to it.
+    expect(measured.dimensions.value?.scoreQ).toBe(0);
+    // Which is the point stated as a fact rather than as a number. The reason is `no-subject` and
+    // not a new member: the document has no outline, which is the same fact `silhouette` is
+    // excluded for one line above, so an agent branches on one vocabulary. `value` is still
+    // *present* — the tone half was measured, and §4.2 applies to scenes — and it says in the
+    // sentence a human reads which half is missing.
+    expect(measured.dimensions.value?.unmeasured).toEqual({ form: 'no-subject' });
+    expect(measured.dimensions.value?.verdict).toMatch(/unmeasured/);
   });
 
   it('never lets an excluded dimension drag the total toward zero', () => {
@@ -608,7 +624,7 @@ describe('a report is validated before it leaves the aggregator', () => {
     // The 0..1 unit mistake, from the analyzer side. `assertReportInvariants` is the only
     // thing standing between a bad score and a report that is arithmetically sound and
     // semantically broken, so removing the call is a real regression rather than a tidy-up.
-    const unitMistake: QualityAnalyzer = () => ({ scoreQ: 0.94, verdict: 'oops', issues: [] });
+    const unitMistake: QualityAnalyzer = () => ({ scoreQ: 0.94, verdict: 'oops', issues: [], unmeasured: {} });
     expect(() => evaluate(firstContext(insetBy(2)), [reg('silhouette', unitMistake)])).toThrow(
       /Malformed quality report/,
     );
@@ -781,14 +797,21 @@ describe('the repository\'s own artwork, measured through evaluate', () => {
     // An advisory, not a gate: the sprite is a subject, it reads, and the report says so
     // without pretending the measurement is settled.
     expect(report.blocking).toEqual([]);
-    // **The total is 823, not 800, and that is the weighted mean over the active set.** `value`
-    // registered and measured this sprite at 850, so the report is rhu(300 * 800 + 260 * 850, 300
-    // + 260) = 823 over a denominator of 560 — a 920-denominator still-sprite mean would not apply,
-    // because `motion` is the only dimension a still sprite excludes and `value` is measured. The
-    // arithmetic is written out because "the score moved and nothing about the art did" is exactly
-    // the kind of diff a reviewer should not have to reconstruct.
+    // **The total is 823 over the active set, and it is unchanged by T-099 — which is the result
+    // worth having.** The first attempt at the fix treated every gated plane as unmeasured, and
+    // this sprite dropped 850 to 800: its five tone boundaries are 4 to 7 pixels on a 32-pixel
+    // body, all of them gated by `reachQ` as fragments rather than cross-sections, so half the
+    // dimension was thrown away and the report fell. That was the distortion, not the fix: this
+    // sprite has an outline, the gate read it, and "these are fragments, not a cross-section, so
+    // there is nothing here to fail" is an answer. The subject is not full-bleed, so the form term
+    // is measured and `unmeasured` is empty — which is the half of T-099 that is about the ten
+    // full-bleed scenes and explicitly not about this one.
+    //
+    // The arithmetic is written out because "the score moved and nothing about the art did" is
+    // exactly the kind of diff a reviewer should not have to reconstruct.
     expect(report.dimensions.silhouette?.scoreQ).toBe(800);
     expect(report.dimensions.value?.scoreQ).toBe(850);
+    expect(report.dimensions.value?.unmeasured).toEqual({});
     expect(report.score).toBe(0.823);
     expect(report.verdict).toBe('pass');
   });

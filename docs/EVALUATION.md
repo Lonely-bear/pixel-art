@@ -793,10 +793,40 @@ planes, bendQ, splitQ, reachQ, curvedQ, crossesQ, formQ   as specified above
 spanQ    the depth spread, computed and recorded but deliberately not scored — see above
 ```
 
-If there are no qualifying planes, the form term is not measurable: `formQ` is 1000, the
-verdict says `"no interior tone boundary to judge"`, and no issue fires. A flat single-tone
-sprite legitimately has none, and inventing a penalty for it would be the scorer grading an
-absence as a defect.
+**When the form term is unmeasured, and when it is merely clean.** These are different claims and
+conflating them is the single largest measurement defect this dimension had. `formQ` is `null` —
+absent, with the reason on `QualityDimension.unmeasured` and a sentence in the verdict — in exactly
+one situation:
+
+> **The subject reaches every canvas edge.** §4.2's curvature gate asks whether the local silhouette
+> is round, and it reads that off the subject's own outline. A subject that fills the canvas has no
+> outline: its boundary *is* the frame, there are four convex corners in the whole document and none
+> of them near an interior plane, and `curvedQ` is 0 on every plane of every frame. The term has no
+> reference to judge against, and that is a fact about the asset class rather than about the artwork.
+
+`value` itself stays applicable to a full-bleed scene — its tone half measures one, and §4.2 is
+written for scenes — so the dimension is present, contributes its measured half at full weight, and
+declares the other. Measured on the corpus: `maxCurvedQ` over every plane is 0..77 against the 250
+gate on all ten real scenes, and the report read `formQ` 1000 and `value` 950 on every one of them
+before this was separated. A perfect sub-score for a measurement nobody took is the failure
+`QualityDimension.unmeasured` exists to make impossible, and it was worth more of the dimension's
+weight than the half that *was* measured.
+
+Three cases are deliberately **not** unmeasured, and collapsing them into the above is a mistake this
+document has already made once:
+
+- **No tone plane at all** — a flat single-tone sprite. `formQ` 1000, no issue. Inventing a penalty
+  would be the scorer grading an absence as a defect, and §4.2 legislates the 1000.
+- **Every plane gated, on a subject that has an outline** — a hard-surface box, a rectangle. The
+  gate abstained *and the abstention is the answer*: a straight terminator across a straight-edged
+  form is correct, the term examined the planes and found nothing to complain about, and reporting
+  "unmeasured" here would mark down clean sprites for the scorer's blindness. A first attempt at
+  this separation did exactly that and dropped three clean controls from `pass` to `warn`, and dropped
+  the repository's only real character sprite from `value` 850 to 800.
+- **A subject with an empty frame** — the whole dimension reports 1000 and contributes no issues,
+  because `empty-frame` belongs to the aggregator at severity 1.00 and a blank canvas is caught by
+  one blocking issue rather than by six dimensions each inventing a zero. `unmeasured` still records
+  `{ form: 'no-judgeable-plane' }`, because the reason is useful even where the score is fixed.
 
 **Scoring.** Two banded sub-scores, combined with fixed weights, in the same shape as §4.4:
 
@@ -819,6 +849,13 @@ absence as a defect.
 
 ```
 valueScoreQ = rhu(500 * toneQ + 500 * formQ, 1000) + adjustments, clamped to [0, 1000]
+```
+
+…except when `formQ` is `null`, where the form half's weight is dropped and the remainder
+re-normalised — the same rule `STATIC_QUALITY_WEIGHTS` applies to a still sprite's absent `motion`:
+
+```
+formQ is null:  valueScoreQ = toneQ + adjustments, clamped to [0, 1000]
 ```
 
 **The 500/500 split is the least-supported number in this document and §6 should look at it
@@ -918,6 +955,14 @@ and a translated contour are both acceptable ways to build a sphere, and the ter
 prefer one over the other. Its unscored `spanQ` reads **91** against B's **909**, which is the
 standing evidence that the originally specified term was biased, and the reason the quantity is
 still computed and still printed.
+
+**And the third case, which is not a case at all: a subject that fills its canvas.** Both A and B
+have an outline, so both are measured. `bleed/full-bleed-scene-32` is the same kind of picture with
+the margin taken away, and it is not scored by this term at all — `formQ` is `null`, the dimension
+reports `unmeasured: { form: 'no-subject' }`, and its `value` is its `toneQ` of 400 rather than the
+700 the 1000 used to blend into. The reason is in the block above, and the reason it is worth
+stating in the worked example is that a reader who has just seen A and B separated by 450 per-mille
+will otherwise assume the term has an opinion on everything with planes in it.
 
 **How a human rates this by eye** (1–5) — and note the new anchor, which is the question that
 was missing:
@@ -1921,15 +1966,27 @@ approximating a circle with few corners will fall below the 250/1000 threshold a
 straight-edged. That is the safe direction — it downgrades a blocking severity to an advisory — but
 it is a direction, not a solution.
 
-*The inertness.* `crossesQ` is **0 on every one of the twelve real artworks in the corpus**, so
-`formQ` reads 1000 on all of them and the term has never once fired on a finished piece. It is
-calibrated entirely on synthetic fixtures, where it does its job. The cause is the `reachQ` gate:
-the maintainer's scenes and the one real character sprite have plane boundaries that are fragments
-— a shoreline, a rim, a lantern's edge — rather than cross-sections of the body, and a fragment is
-exempt. So the honest statement is that §4.2 detects a straight cut across a compact subject and has
-no opinion on anything else yet. Nobody should read a real artwork's `value` score as evidence that
-its shading follows its form. Closing this needs measurements on real artwork, not another synthetic
-fixture, and it is a prerequisite for trusting this dimension on anything the product actually ships.
+*The inertness.* `crossesQ` is **0 on every one of the twelve real artworks in the corpus**, and on
+**ten of them no plane was ever eligible to be judged**, so `formQ` read 1000 and `value` read 700 to
+950 on a term that had not looked at anything. All ten are full-bleed, and the cause is now measured
+rather than guessed: §4.2's curvature gate reads local curvature off the subject's outline, a
+full-bleed subject's outline is the canvas rectangle, and `maxCurvedQ` over every plane of every
+scene is 0..77 against a gate of 250. T-013 recorded this as "the curvature gate reads nothing on a
+full-bleed subject", and the number that followed it — a perfect form score — sat in the committed
+baseline through three tasks without anybody asking where it came from.
+
+The form term is therefore **reported as unmeasured on a full-bleed subject** (see the block in
+§4.2), and the corpus has a dedicated `unmeasured sub-scores` column so the absence is re-derived on
+every run instead of being a paragraph in a comment somebody trusts. That fixes the honesty and not
+the coverage: a straight shadow band across a curved mountain in a 256×256 scene is still excused,
+because the gate cannot tell a mountain from a rectangle when the mountain *is* the frame.
+
+Nobody should read a full-bleed scene's `value` score as evidence that its shading follows its form,
+and closing that needs a curvature reference that is not the silhouette — the terrain's own form, or
+the local structure of the tone regions. That is a new §3.3 quantity, it is the one T-013 left open,
+and it is not a threshold change. The two real *subjects* in the corpus are not in this state: both
+have an outline, both have their planes gated by `reachQ` as fragments, and both report a measured
+`formQ` 1000.
 
 **6. `noise` is the dimension most likely to sand a piece flat.** The redesigned
 `colourOrphans` predicate is sharp — it fires only on a pixel that agrees with *nothing* —

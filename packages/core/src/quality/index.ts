@@ -1,5 +1,6 @@
 import { buildSolidMask, silhouetteAnalyzer } from './silhouette.js';
 import { valueAnalyzer } from './value.js';
+import { edgeGapOf, SUBJECT_REQUIRED_MARGIN } from './measure.js';
 import {
   assertReportInvariants,
   DEFAULT_QUALITY_WEIGHTS,
@@ -110,8 +111,13 @@ import {
  * spec's own `shape-clipped` (three of four edges, blocking) is one pixel away from firing,
  * and it fails toward "cannot measure", which is the direction the whole mechanism exists
  * to fail. T-021's corpus is where that trade gets measured rather than argued.
+ *
+ * It lives in `measure.ts` beside {@link edgeGapOf} and is re-exported here, because §4.2's
+ * curvature gate asks the same question and `value.ts` cannot import from a module that imports
+ * it. A second copy of this number would be a second thing to keep right, and the whole argument
+ * above is about what happens when one place and another disagree by a pixel.
  */
-export const SUBJECT_REQUIRED_MARGIN = 1;
+export { SUBJECT_REQUIRED_MARGIN } from './measure.js';
 
 /** Per-frame ink facts the aggregator needs, and the only reason it reads a mask itself. */
 interface FrameInk {
@@ -127,7 +133,9 @@ interface FrameInk {
    * without a rectangle is what keeps the two from drifting into the same function.
    *
    * {@link FrameInk.solid} comes from `buildSolidMask` so that `ALPHA_SOLID` has exactly
-   * one home; the scan that follows is four integer comparisons per solid pixel.
+   * one home; the scan that follows is four integer comparisons per solid pixel, and it now
+   * lives in `measure.ts` as {@link edgeGapOf} because §4.2's curvature gate asks the same
+   * question of a single frame and a second copy of this loop is a second thing to keep right.
    */
   readonly edgeGap: number;
 }
@@ -136,30 +144,7 @@ interface FrameInk {
 function frameInk(context: QualityContext, index: number): FrameInk {
   const { width, height } = context;
   const { mask, solid } = buildSolidMask(context.composite[index], width, height);
-  if (solid === 0) {
-    // A sentinel, and only ever read behind a `solid > 0` test: with no ink there is no
-    // distance to a canvas edge, and reporting it as maximally distant keeps the "all four
-    // margins are one pixel" arithmetic below from having to know that case exists.
-    return { solid, edgeGap: width + height };
-  }
-  let minX = width;
-  let minY = height;
-  let maxX = -1;
-  let maxY = -1;
-  for (let y = 0; y < height; y++) {
-    const row = y * width;
-    for (let x = 0; x < width; x++) {
-      if (mask[row + x] !== 1) continue;
-      if (x < minX) minX = x;
-      if (y < minY) minY = y;
-      if (x > maxX) maxX = x;
-      if (y > maxY) maxY = y;
-    }
-  }
-  return {
-    solid,
-    edgeGap: Math.max(minX, minY, width - 1 - maxX, height - 1 - maxY),
-  };
+  return { solid, edgeGap: edgeGapOf(mask, width, height) };
 }
 
 /** The ink facts for the whole evaluated sequence, in playback order. */
@@ -198,8 +183,15 @@ export function hasReadableSubject(context: QualityContext): boolean {
  *
  * A **full-bleed** target returns `'no-subject'`. `outline` registers the same
  * precondition when it lands (T-016) — a 1px contour traced around a frame edge is a
- * contour of the frame, not of anything — and `value`, `palette` and `noise` do not, which
- * is the whole reason applicability is per dimension.
+ * contour of the frame, not of anything — and `palette` and `noise` do not, which is
+ * the whole reason applicability is per dimension.
+ *
+ * `value` registers **no** precondition and is the interesting case, so the reason it
+ * shares is not that it is excluded. A full-bleed scene is built out of value planes and
+ * `value` measures its tone half there. What it cannot do is judge §4.2's form term, whose
+ * curvature gate reads local curvature off an outline the document does not have — so the
+ * dimension stays present, contributes what it measured, and declares
+ * `unmeasured: { form: 'no-subject' }` itself. See `value.ts` and §4.2.
  */
 export function requiresReadableSubject(context: QualityContext): ExcludedReason | null {
   const inks = frameInks(context);

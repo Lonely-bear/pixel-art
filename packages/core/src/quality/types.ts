@@ -127,6 +127,25 @@ export interface QualityDimension {
   readonly verdict: string;
   /** Actionable problems; empty means nothing here needs doing. */
   readonly issues: readonly QualityIssue[];
+  /**
+   * The sub-scores this dimension could not measure, and why. Required, and empty whenever
+   * everything was measured, for exactly the reason {@link QualityReport.excluded} is required:
+   * **a sub-score that is silently absent is indistinguishable from one that was counted at its
+   * best**, and a dimension that half-measures itself while handing out a perfect mark for the
+   * other half is the failure this field exists to make impossible.
+   *
+   * Keyed by sub-score name — `form` for §4.2's form term — and the values are the same closed
+   * {@link ExcludedReason} enum the report uses for whole dimensions, so an agent branches on one
+   * vocabulary rather than two. The reason a sub-score needs its own map rather than a sentinel is
+   * the reason `dimensions` is a `Partial` record: a dimension that *is* present and *partly*
+   * unmeasured is the case neither of those two shapes can express.
+   *
+   * A dimension with an unmeasured sub-score reports the score of the ones it did measure, with
+   * the rest dropped and the remainder re-normalised — the rule {@link QualityWeights} already
+   * applies to a still sprite's absent `motion`. Crediting an unmeasured sub-score at its best is
+   * how a finished painting ends up with a confident 1000 for something nobody looked at.
+   */
+  readonly unmeasured: Readonly<Record<string, ExcludedReason>>;
 }
 
 /**
@@ -170,10 +189,25 @@ export type ExcludedReason =
   /**
    * The ink is full-bleed on every inked frame — it comes within a pixel of all four
    * canvas edges — so there is no subject reading against a background. `silhouette` and
-   * `outline` cannot measure a shape whose boundary is the frame; `value`, `palette` and
-   * `noise` can, and are unaffected.
+   * `outline` cannot measure a shape whose boundary is the frame. `palette` and `noise`
+   * are unaffected. `value` is **present but partly unmeasured**: its tone half applies to a
+   * scene and is measured, while its form half declares this same reason on
+   * {@link QualityDimension.unmeasured}, because §4.2's curvature gate reads local curvature
+   * off the subject's outline and a full-bleed subject has none.
    */
   | 'no-subject'
+  /**
+   * A sub-score of a dimension that *is* otherwise measured, and could not be: §4.2's form term
+   * found no tone-plane boundary meeting its preconditions, so it has no opinion on whether the
+   * shading follows the form. Reached when every plane is exempt — a canvas-filling scene, whose
+   * outline is a rectangle and therefore has no local curvature to compare a terminator against,
+   * or a sprite whose planes are all fragments too small to be cross-sections of the body.
+   *
+   * Distinct from `'not-implemented'` because a number *would* have been produced and was
+   * withheld, and distinct from a defect because the artwork did nothing wrong: this is the
+   * measurement declining to guess.
+   */
+  | 'no-judgeable-plane'
   /** No analyzer is registered for this dimension, so no number was produced. */
   | 'not-implemented';
 
