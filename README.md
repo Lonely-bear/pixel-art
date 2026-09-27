@@ -1,8 +1,9 @@
 <div align="center">
   <img src="assets/pixel-mark.svg" width="88" alt="dotloom-mcp logo" />
   <h1>dotloom-mcp</h1>
-  <p><strong>One pixel-art engine. Two ways to create.</strong></p>
-  <p>dotloom-mcp 为人类与 AI 提供同一套像素画引擎 · Electron for humans, MCP for agents</p>
+  <p><strong>A pixel-art engine for game assets, operated by people and by AI agents.</strong></p>
+  <p>One engine, one document model, three clients: an Electron editor, a <code>pixel</code> CLI, and a Model Context Protocol server.</p>
+  <p>为人类与 AI 提供同一套像素画引擎 · Electron for humans, MCP for agents</p>
   <p>
     <a href="https://www.npmjs.com/package/dotloom-mcp"><img src="https://img.shields.io/npm/v/dotloom-mcp?label=npm&logo=npm&style=flat-square" alt="npm version" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="Apache-2.0 License" /></a>
@@ -24,35 +25,119 @@
   Every mutation crosses one command bus, so tools, history, exports, and undo/redo never disagree.
 </p>
 
-## Why dotloom-mcp?
+It is a game-asset pipeline, not an image generator. A pixel asset is a constrained,
+quantised, grid-exact artefact with a technical contract — palette indices, frame tags,
+tile properties, collision rectangles — and the commands, the file formats and the
+exports are built around that contract rather than around the picture.
+
+## Do the thing in one command
+
+`pixel demo` takes no input file, no palette, and no required arguments. It authors a
+sprite through the real command bus, writes the PNG, and writes the editable `.pixel`
+source beside it. Nothing to install first — this is the whole command, with the two
+optional flags spelled out:
+
+```console
+$ npx -y dotloom-mcp pixel demo --out out --size 8
+pixel demo -> /…/out/crowned-slime.png
+  editable source: /…/out/crowned-slime.pixel
+{
+  "ok": true,
+  "command": "demo",
+  "sprite": "Crowned Slime",
+  "path": "/…/out/crowned-slime.png",
+  "source": "/…/out/crowned-slime.pixel",
+  "width": 256,
+  "height": 256,
+  "canvas": {
+    "width": 32,
+    "height": 32
+  },
+  "scale": 8,
+  "palette": 10,
+  "layers": [
+    "Base",
+    "Shade",
+    "Light",
+    "Crown",
+    "Face",
+    "Outline"
+  ],
+  "frames": 2,
+  "tags": [
+    "idle"
+  ],
+  "commands": 33,
+  "bytes": 4675
+}
+```
+
+A finished 32×32 sprite — ten colours, six layers, two frames on an `idle` tag, drawn
+by 33 commands — upscaled 8× with nearest-neighbour sampling, next to a `.pixel` you can
+open in the editor. Every document operation prints exactly one JSON object, so this
+composes with a shell script like any other.
+
+`path` and `source` come back resolved against the working directory, so `/…/` is
+wherever you ran it. The transcript above is the same command run out of this
+repository's build.
+
+### The same engine, for an agent
+
+```json
+{
+  "mcpServers": {
+    "dotloom-mcp": {
+      "command": "npx",
+      "args": ["-y", "dotloom-mcp"]
+    }
+  }
+}
+```
+
+That is the whole install. The server speaks MCP over stdio, discovers a running editor
+on the loopback interface and edits the same documents the window shows, with the same
+undo history; with no editor running it serves the same engine from memory and
+reconnects if one appears later.
+
+`tools/list` returns **36 tools**. The 94 commands behind them — `draw_ellipse`,
+`add_palette_ramp`, `outline`, `stroke_tilemap`, `autotile`, the rig, the tilemaps —
+are not in that list up front. An agent finds them the way any MCP client would,
+through `list_commands`, `describe_command`, `find_workflow` or `apply_ops`, and a
+command becomes a directly callable tool the moment the session touches it. The flat
+catalogue was 127 entries in the context of every request. The numbers and the
+reasoning are in [`docs/REFERENCE.md`](docs/REFERENCE.md#what-it-exposes).
+
+## Drawn by an agent
+
+The pixel art on this page was drawn by an AI agent driving this product over the wire,
+through the public tool list only — no imports from `@pixel/core`, no direct editor
+access, no privileged calls. That constraint is the claim, and it is a real one here:
+the list the agent started from contained no drawing commands at all, so the
+discovery path had to work or there would have been no artwork.
+
+One scene, two media. A raster reference on the left; the same composition as native
+512×512 pixel art on the right.
 
 <table>
   <tr>
-    <td width="33%" valign="top">
-      <h3>Human workspace</h3>
-      <p>Pixel-perfect canvas, layers, frames, onion skinning, tilemaps, palettes, and animation playback in Electron.</p>
-    </td>
-    <td width="33%" valign="top">
-      <h3>Agent workspace</h3>
-      <p>A standalone MCP server gives agents real PNG previews, structured tools, exact text grids, and safe batch edits.</p>
-    </td>
-    <td width="33%" valign="top">
-      <h3>One source of truth</h3>
-      <p>The Electron UI, CLI, scripts, and MCP server use the same serialisable commands and document model.</p>
-    </td>
+    <td width="50%"><img src="assets/lighthouse-reference.png" alt="Raster reference of a lighthouse at sunset" /><br><sub>Raster reference</sub></td>
+    <td width="50%"><img src="assets/lighthouse-pixel.png" alt="The same composition as native pixel art" /><br><sub>Native pixel-art output</sub></td>
   </tr>
 </table>
 
-```text
-┌─────────────────────┐
-│ Electron pixel UI   │──┐
-├─────────────────────┤  │
-│ pixel CLI + scripts │──┼──▶  command bus  ──▶  PixelDocument
-├─────────────────────┤  │        │                layers · frames
-│ MCP tools/resources │──┘        │                tags · tilemaps
-└─────────────────────┘           ▼
-                            undo / redo history
-```
+<table>
+  <tr>
+    <td width="50%"><img src="assets/showcase-autumn.png" alt="Autumn dusk lake pixel art" /></td>
+    <td width="50%"><img src="assets/showcase-moonlit.png" alt="Moonlit alpine lake pixel art" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Autumn Dusk Lake</sub></td>
+    <td align="center"><sub>Moonlit Alpine Lake</sub></td>
+  </tr>
+</table>
+
+The scenes, the `.pixel` sources the server wrote and the verification run that replays
+them are in [`artwork/`](artwork/README.md).
 
 ## Install
 
@@ -71,10 +156,10 @@ from **[GitHub Releases](https://github.com/Lonely-bear/pixel-art/releases/lates
 | macOS, Intel | `dotloom-mcp-<version>-x64.dmg` |
 | Linux | `dotloom-mcp-<version>-x86_64.AppImage` — run it, nothing to install; or the `.deb` on Debian/Ubuntu |
 
-The app is self-contained: the CLI and the MCP server are built into the same
-binary, so installing the editor is the whole installation. The embedded MCP
-server publishes itself on `127.0.0.1`, which is how a separately installed
-`dotloom-mcp` finds a running editor.
+The editor needs nothing else: the MCP server is built into the same binary and
+publishes itself on `127.0.0.1`, which is how a separately installed `dotloom-mcp`
+finds a running editor. The `pixel` CLI is not part of that binary — it comes from
+npm, below.
 
 > These builds are **not yet code-signed**. macOS blocks the first launch until
 > you right-click the app and choose **Open** (or run
@@ -104,18 +189,18 @@ pixel --version
 
 `pixel-mcp` and `pixel-art-mcp` remain compatibility aliases for the standalone MCP server; `pixel` is the headless document CLI.
 
-The package also exposes namespaced library APIs without starting a CLI process:
+No global install is required for one-off use:
 
-```js
-import { VERSION, core, mcp, script } from 'dotloom-mcp';
-
-const document = core.createSprite({ width: 32, height: 32 });
-console.log(VERSION, document.width, typeof mcp.createPixelServer, typeof script.ScriptRuntime);
+```bash
+npx -y -p dotloom-mcp pixel --version
+npx -y dotloom-mcp --version
 ```
 
-Those three namespaces are the full engine, and they are the escape hatch rather than the
-recommended starting point: to generate assets from a build script, use the task-shaped
-functions on the same entry point instead.
+### Generate assets from a build script
+
+There is a way in that is neither a client nor a person: a build script. No GUI, no
+MCP client, no human in the loop. `buildSprite`, `buildAnimation` and `exportAssets`
+turn a spec into finished files, as a `devDependency`.
 
 ```js
 import { buildSprite, exportAssets } from 'dotloom-mcp';
@@ -132,17 +217,23 @@ for (const file of exportAssets(slime, { sheet: true, source: true })) {
 }
 ```
 
-Same seed, same bytes, every run — which is what makes committing generated assets viable.
-**[`docs/API.md`](docs/API.md) has the full surface, the determinism contract and the
-versioning policy**: what is stable, what is internal, and what changes in a major version.
-[中文版](docs/API-ZH.md) mirrors it.
+Same seed, same bytes, every run — which is what makes committing generated assets
+viable. The API returns bytes and never touches the disk; where they go is the build
+script's business. **[`docs/API.md`](docs/API.md) has the full surface, the determinism
+contract and the versioning policy**: what is stable, what is internal, and what changes
+in a major version. [中文版](docs/API-ZH.md) mirrors it.
 
-No global install is required for one-off use:
+The package also exposes the whole engine without going through a task-shaped function:
 
-```bash
-npx -y -p dotloom-mcp pixel --version
-npx -y dotloom-mcp --version
+```js
+import { VERSION, core, mcp, script } from 'dotloom-mcp';
+
+const document = core.createSprite({ width: 32, height: 32 });
+console.log(VERSION, document.width, typeof mcp.createPixelServer, typeof script.ScriptRuntime);
 ```
+
+Those three namespaces are the escape hatch rather than the recommended starting point.
+They are real, shipped and documented, and they are not covered by `API_VERSION`.
 
 ### Connect an MCP client
 
@@ -190,11 +281,41 @@ Check the connection with `opencode mcp list` or `/mcps`.
 
 </details>
 
+## Why dotloom-mcp?
+
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <h3>Human workspace</h3>
+      <p>Pixel-perfect canvas, layers, frames, onion skinning, tilemaps, palettes, and animation playback in Electron.</p>
+    </td>
+    <td width="33%" valign="top">
+      <h3>Agent workspace</h3>
+      <p>A standalone MCP server gives agents real PNG previews, structured tools, exact text grids, and safe batch edits.</p>
+    </td>
+    <td width="33%" valign="top">
+      <h3>One source of truth</h3>
+      <p>The Electron UI, CLI, scripts, and MCP server use the same serialisable commands and document model.</p>
+    </td>
+  </tr>
+</table>
+
+A practical agent loop is deliberately short:
+
+```text
+create_document → block silhouette → inspect PNG → shade in batches
+      ↑                                                    ↓
+ fix what you can see ← preview each visual gate → finalize_document
+```
+
 ## CLI in 30 seconds
 
 Document operations print one JSON object, making the CLI easy to compose with shell scripts and CI; help and human-readable command listings use plain text.
 
 ```bash
+# A finished sprite; --out and --size are optional
+pixel demo --out out --size 8
+
 # Create a layered, animated document
 pixel new hero.pixel --width 32 --height 32 --layers Ink,Shade --frames 4
 
@@ -248,7 +369,7 @@ pixel apply hero.pixel --ops ops.json
 
 ## What the MCP server exposes
 
-The tool catalog is generated from the same Zod schemas used to validate commands, so documentation cannot drift from runtime behaviour.
+The tool catalog is generated from the same Zod schemas used to validate commands, so documentation cannot drift from runtime behaviour. The table below is a selection; `list_commands` returns the whole catalogue, and every tool declares all four risk hints so a client can gate on them.
 
 | Capability | Why it matters |
 | --- | --- |
@@ -270,13 +391,11 @@ The tool catalog is generated from the same Zod schemas used to validate command
 | `run_script` | Runs a time-limited JavaScript batch as a single undo step, with isolated dry-run and source-relative error diagnostics. |
 | `load_plugin` | Registers plugin commands as live MCP tools. |
 
-A practical agent loop is deliberately short:
-
-```text
-create_document → block silhouette → inspect PNG → shade in batches
-      ↑                                                    ↓
- fix what you can see ← preview each visual gate → finalize_document
-```
+`read_grid` verifies, `get_preview` approves. That split is deliberate: a PNG is the
+only way to judge whether a piece *looks* good, and a poor tool for the questions an
+agent actually iterates on — a 256px downsample of a 32×32 sprite cannot say whether
+the silhouette is symmetric or whether row 14 is one step off row 13, and an image
+cannot be diffed.
 
 The standalone server runs over stdio and requires no desktop app, but it prefers one.
 Started with no arguments it discovers a running Electron app on its loopback endpoint
@@ -338,27 +457,22 @@ Map scripts can call `strokeTilemap(...)`, `paintTilemap(...)`, and the matching
 | Animated GIF | — | ✓ | Tag direction and repeat are honoured |
 | Tiled `.tmj` | — | ✓ | Self-contained map + tileset PNG, tile properties and object layer |
 
-## Showcase
-
-<table>
-  <tr>
-    <td width="50%"><img src="assets/showcase-autumn.png" alt="Autumn dusk lake pixel art" /></td>
-    <td width="50%"><img src="assets/showcase-moonlit.png" alt="Moonlit alpine cabin pixel art" /></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>Autumn Dusk Lake</sub></td>
-    <td align="center"><sub>Moonlit Alpine Lake</sub></td>
-  </tr>
-</table>
-
-<table>
-  <tr>
-    <td width="50%"><img src="assets/lighthouse-reference.png" alt="Detailed lighthouse reference" /><br><sub>Raster reference</sub></td>
-    <td width="50%"><img src="assets/lighthouse-pixel.png" alt="Native pixel-art lighthouse output" /><br><sub>Native pixel-art output</sub></td>
-  </tr>
-</table>
+A `.pixel` file is a plain zip — a manifest and one PNG per cel, with entry
+timestamps pinned — so it can be unzipped and read, and serialising the same document
+twice gives the same bytes.
 
 ## Architecture
+
+```text
+┌─────────────────────┐
+│ Electron pixel UI   │──┐
+├─────────────────────┤  │
+│ pixel CLI + scripts │──┼──▶  command bus  ──▶  PixelDocument
+├─────────────────────┤  │        │                layers · frames
+│ MCP tools/resources │──┘        │                tags · tilemaps
+└─────────────────────┘           ▼
+                             undo / redo history
+```
 
 | Package | Role |
 | --- | --- |
@@ -430,10 +544,11 @@ the workflow only decides which runner builds which platform.
 
 ```bash
 # 1. Move the Unreleased changelog notes under a dated heading, then bump:
-#    package.json -> version, CHANGELOG.md -> ## [X.Y.Z] - 2026-09-26
+#    package.json -> version, CHANGELOG.md -> ## [X.Y.Z] - YYYY-MM-DD
 # 2. Commit, then tag and push. The tag must match package.json exactly.
-git commit -am "chore(release): prepare dotloom-mcp 0.4.0"
-git tag v0.4.0
+#    Substitute the version you just set for <version> in both lines.
+git commit -am "chore(release): prepare dotloom-mcp <version>"
+git tag v<version>
 git push origin main --follow-tags
 ```
 
@@ -462,6 +577,7 @@ or config change is needed:
 
 ## Documentation
 
+- [Library API](docs/API.md) — build-time asset generation, the determinism contract, and the versioning policy ([中文](docs/API-ZH.md))
 - [Technical reference](docs/REFERENCE.md) — command catalogue, MCP internals, scripting, animation, tilemaps, and design decisions
 - [Changelog](CHANGELOG.md) — release history and scope
 - [Model Context Protocol](https://modelcontextprotocol.io/)
@@ -469,13 +585,15 @@ or config change is needed:
 
 ## Project status
 
-`dotloom-mcp@0.4.0` is the current release — the first one to ship desktop
-installers.
+`dotloom-mcp@0.4.1` is the current release. `0.4.0` was the first to ship desktop
+installers; `0.4.1` made the headless server reconnect to an app that starts late
+instead of committing to memory for the rest of the session.
 
 - [x] Core document model, rasteriser, command bus, history, and native serialisation
 - [x] PNG, spritesheet, GIF, Aseprite import, and Tiled export
 - [x] Electron editor, animation, palettes, onion skinning, and tilemaps
 - [x] Standalone MCP server, visual resources, prompts, diagnostics, and scripts/plugins
+- [x] Stable build-time library API (`buildSprite` / `buildAnimation` / `exportAssets`)
 - [x] Public npm package and CI quality gates
 - [x] Cross-platform desktop installers on every GitHub Release
 - [ ] Code signing and macOS notarisation

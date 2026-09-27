@@ -1,8 +1,9 @@
 <div align="center">
   <img src="assets/pixel-mark.svg" width="88" alt="dotloom-mcp 标志" />
   <h1>dotloom-mcp</h1>
-  <p><strong>同一套像素画引擎，两种创作方式。</strong></p>
-  <p>为人类与 AI 打造的同一套像素画引擎 · Electron for humans, MCP for agents</p>
+  <p><strong>面向游戏资产的像素画引擎，人类和 AI Agent 操作的是同一套。</strong></p>
+  <p>同一套引擎、同一套文档模型，三个客户端：Electron 编辑器、<code>pixel</code> CLI 和 Model Context Protocol 服务器。</p>
+  <p>为人类与 AI 提供同一套像素画引擎 · Electron for humans, MCP for agents</p>
   <p>
     <a href="https://www.npmjs.com/package/dotloom-mcp"><img src="https://img.shields.io/npm/v/dotloom-mcp?label=npm&logo=npm&style=flat-square" alt="npm 版本" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="Apache-2.0 许可证" /></a>
@@ -24,35 +25,113 @@
   所有变更都经过同一条命令总线，因此工具、历史记录、导出以及撤销/重做始终保持一致。
 </p>
 
-## 为什么选择 dotloom-mcp？
+它是游戏资产管线，不是图像生成器。像素画资产是受约束的、量化的、网格精确的
+产物，并带有技术契约 —— 调色板索引、动画标签、瓦片属性、碰撞矩形 —— 命令、
+文件格式和导出都是围绕这份契约设计的，而不是围绕画面本身。
+
+## 一条命令做出成品
+
+`pixel demo` 不需要输入文件、不需要调色板，也没有必填参数。它通过真实的命令总线
+画出一张精灵，写出 PNG，并在旁边写下可编辑的 `.pixel` 源文件。事先什么都不用装 ——
+下面就是完整的命令，只是把两个可选参数写了出来：
+
+```console
+$ npx -y dotloom-mcp pixel demo --out out --size 8
+pixel demo -> /…/out/crowned-slime.png
+  editable source: /…/out/crowned-slime.pixel
+{
+  "ok": true,
+  "command": "demo",
+  "sprite": "Crowned Slime",
+  "path": "/…/out/crowned-slime.png",
+  "source": "/…/out/crowned-slime.pixel",
+  "width": 256,
+  "height": 256,
+  "canvas": {
+    "width": 32,
+    "height": 32
+  },
+  "scale": 8,
+  "palette": 10,
+  "layers": [
+    "Base",
+    "Shade",
+    "Light",
+    "Crown",
+    "Face",
+    "Outline"
+  ],
+  "frames": 2,
+  "tags": [
+    "idle"
+  ],
+  "commands": 33,
+  "bytes": 4675
+}
+```
+
+一张 32×32 的成品精灵 —— 十个颜色、六个图层、`idle` 标签下的两帧，由 33 条命令
+画出 —— 用最近邻采样放大 8 倍，旁边就是可以直接在编辑器里打开的 `.pixel`。所有
+文档操作都只打印一个 JSON 对象，所以它和别的命令一样能进 Shell 脚本。
+
+`path` 和 `source` 是相对工作目录解析后的绝对路径，`/…/` 就是你执行命令的位置。
+上面的输出是在本仓库的构建产物上跑同一条命令得到的。
+
+### 同一个引擎，接给 Agent
+
+```json
+{
+  "mcpServers": {
+    "dotloom-mcp": {
+      "command": "npx",
+      "args": ["-y", "dotloom-mcp"]
+    }
+  }
+}
+```
+
+这就是全部的安装步骤。服务器通过 stdio 讲 MCP，会在 loopback 接口上发现正在运行的
+编辑器，去编辑窗口里显示的同一批文档、共用同一份撤销历史；如果没有编辑器在运行，
+它就在内存中提供同一套引擎，并在之后出现编辑器时自动重连。
+
+`tools/list` 返回 **36 个工具**。它们背后的 94 条命令 —— `draw_ellipse`、
+`add_palette_ramp`、`outline`、`stroke_tilemap`、`autotile`、绑定、瓦片地图 ——
+一开始并不在列表里。Agent 只能像任何 MCP 客户端那样，通过 `list_commands`、
+`describe_command`、`find_workflow` 或 `apply_ops` 去找它们；只要本次会话查找过
+或运行过某条命令，它就立刻变成可以直接调用的工具。那份扁平目录曾经是 127 条，
+每条请求都要带在上下文里。数字和取舍理由写在
+[`docs/REFERENCE.md`](docs/REFERENCE.md#what-it-exposes)。
+
+## 画面由 Agent 画出
+
+本页的像素画，是 AI Agent 通过网络驱动本产品画出来的，只用公开的工具列表 ——
+没有 import `@pixel/core`，没有直接访问编辑器，也没有特权调用。这个限制本身就是
+论据，而且在这里是真实存在的：Agent 出发时拿到的列表里一条绘图命令都没有，所以
+发现路径必须真的能用，否则根本不会有这些画。
+
+同一个场景，两种媒介。左边是光栅参考图，右边是同一构图在原生 512×512 像素画
+下的样子。
 
 <table>
   <tr>
-    <td width="33%" valign="top">
-      <h3>面向人类的工作区</h3>
-      <p>在 Electron 中提供像素级画布、图层、帧、洋葱皮、瓦片地图、调色板和动画播放。</p>
-    </td>
-    <td width="33%" valign="top">
-      <h3>面向 Agent 的工作区</h3>
-      <p>独立 MCP 服务器为 Agent 提供真实 PNG 预览、结构化工具、视觉质量报告和安全批量编辑。</p>
-    </td>
-    <td width="33%" valign="top">
-      <h3>唯一事实来源</h3>
-      <p>Electron UI、CLI、脚本和 MCP 服务器使用同一套可序列化命令与文档模型。</p>
-    </td>
+    <td width="50%"><img src="assets/lighthouse-reference.png" alt="日落灯塔的光栅参考图" /><br /><sub>光栅参考</sub></td>
+    <td width="50%"><img src="assets/lighthouse-pixel.png" alt="同一构图的原生像素画" /><br /><sub>原生像素画输出</sub></td>
   </tr>
 </table>
 
-```text
-┌─────────────────────┐
-│ Electron 像素 UI    │──┐
-├─────────────────────┤  │
-│ pixel CLI + 脚本    │──┼──▶  命令总线  ──▶  PixelDocument
-├─────────────────────┤  │        │              图层 · 帧
-│ MCP 工具/资源       │──┘        │              标签 · 瓦片地图
-└─────────────────────┘           ▼
-                         撤销 / 重做历史
-```
+<table>
+  <tr>
+    <td width="50%"><img src="assets/showcase-autumn.png" alt="秋日黄昏湖泊像素画" /></td>
+    <td width="50%"><img src="assets/showcase-moonlit.png" alt="月光下的高山湖泊像素画" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>秋日黄昏湖泊</sub></td>
+    <td align="center"><sub>月光下的高山湖泊</sub></td>
+  </tr>
+</table>
+
+这些场景、服务器写出的 `.pixel` 源文件，以及用来复现它们的校验流程，都放在
+[`artwork/`](artwork/README.md)。
 
 ## 安装
 
@@ -72,9 +151,9 @@
 | macOS（Intel） | `dotloom-mcp-<version>-x64.dmg` |
 | Linux | `dotloom-mcp-<version>-x86_64.AppImage` — 直接运行，无需安装；Debian/Ubuntu 也可用 `.deb` |
 
-应用是自包含的：CLI 和 MCP 服务器都构建在同一个二进制里，装好编辑器就算
-安装完成。内嵌的 MCP 服务器会在 `127.0.0.1` 上发布自己，这正是单独安装的
-`dotloom-mcp` 找到正在运行的编辑器的方式。
+装好编辑器就够了，不需要其它任何东西：MCP 服务器构建在同一个二进制里，并在
+`127.0.0.1` 上发布自己，这正是单独安装的 `dotloom-mcp` 找到正在运行的编辑器的
+方式。`pixel` CLI 不在这个二进制里 —— 它来自下面的 npm 包。
 
 > 这些构建**尚未做代码签名**。macOS 首次启动会拦截，需要右键应用选择
 > **打开**（或执行 `xattr -dr com.apple.quarantine /Applications/dotloom-mcp.app`）；
@@ -103,7 +182,40 @@ pixel --version
 
 `pixel-mcp` 和 `pixel-art-mcp` 仍是独立 MCP 服务器的兼容别名；`pixel` 是无界面的文档 CLI。
 
-该包还提供无需启动 CLI 进程的库 API：
+无需全局安装，也可以直接临时运行：
+
+```bash
+npx -y -p dotloom-mcp pixel --version
+npx -y dotloom-mcp --version
+```
+
+### 从构建脚本生成资产
+
+还有一种用法，既不需要客户端也不需要人：构建脚本。不用 GUI，不用 MCP 客户端，
+没有人类在环里。`buildSprite`、`buildAnimation` 和 `exportAssets` 会把一份规格变成
+成品文件，以 `devDependency` 的形式使用。
+
+```js
+import { buildSprite, exportAssets } from 'dotloom-mcp';
+
+const slime = buildSprite({
+  seed: 20260927, width: 16, height: 16, name: 'slime',
+  layers: ['base', 'shade'],
+  palette: ['#0f380f', '#306230', '#8bac0f', '#9bbc0f'],
+  ops: [{ command: 'draw_ellipse', params: { rect: { x: 2, y: 5, w: 12, h: 9 }, color: '#8bac0f' } }],
+});
+
+for (const file of exportAssets(slime, { sheet: true, source: true })) {
+  console.log(file.path, file.bytes.length, file.mediaType);
+}
+```
+
+同一个种子，每次都是同样的字节 —— 这正是把生成的资产纳入版本管理的前提。API 只
+返回字节，绝不碰磁盘；文件放在哪里由构建脚本决定。**[`docs/API-ZH.md`](docs/API-ZH.md)
+给出完整接口面、确定性契约和版本策略**（[English](docs/API.md)）：哪些是稳定的、
+哪些是内部的、哪些会在大版本里变。
+
+该包还直接暴露整套引擎，不必经过上面这种任务形函数：
 
 ```js
 import { VERSION, core, mcp, script } from 'dotloom-mcp';
@@ -112,16 +224,8 @@ const document = core.createSprite({ width: 32, height: 32 });
 console.log(VERSION, document.width, typeof mcp.createPixelServer, typeof script.ScriptRuntime);
 ```
 
-这三个命名空间就是完整的引擎，也是逃生舱而不是推荐的起点：要在构建脚本里
-生成资产，请改用同一个入口上任务形的函数 —— 完整接口面、确定性契约和版本
-策略见 [`docs/API-ZH.md`](docs/API-ZH.md)（[English](docs/API.md)）。
-
-无需全局安装，也可以直接临时运行：
-
-```bash
-npx -y -p dotloom-mcp pixel --version
-npx -y dotloom-mcp --version
-```
+这三个命名空间是逃生舱，而不是推荐的起点。它们真实存在、已经发布、也有文档，
+但不在 `API_VERSION` 的覆盖范围内。
 
 ### 连接 MCP 客户端
 
@@ -169,11 +273,41 @@ opencode mcp add dotloom-mcp -- npx -y dotloom-mcp
 
 </details>
 
+## 为什么选择 dotloom-mcp？
+
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <h3>面向人类的工作区</h3>
+      <p>在 Electron 中提供像素级画布、图层、帧、洋葱皮、瓦片地图、调色板和动画播放。</p>
+    </td>
+    <td width="33%" valign="top">
+      <h3>面向 Agent 的工作区</h3>
+      <p>独立 MCP 服务器为 Agent 提供真实 PNG 预览、结构化工具、精确的字符网格和安全批量编辑。</p>
+    </td>
+    <td width="33%" valign="top">
+      <h3>唯一事实来源</h3>
+      <p>Electron UI、CLI、脚本和 MCP 服务器使用同一套可序列化命令与文档模型。</p>
+    </td>
+  </tr>
+</table>
+
+实用的 Agent 工作循环刻意保持简短：
+
+```text
+create_document → block silhouette → inspect PNG → shade in batches
+      ↑                                                    ↓
+ fix what you can see ← preview each visual gate → finalize_document
+```
+
 ## 30 秒了解 CLI
 
 文档操作只向 stdout 打印一个 JSON 对象，便于 CLI 与 Shell 脚本和 CI 组合；帮助信息和面向人类的命令列表使用纯文本。
 
 ```bash
+# 一张成品精灵；--out 和 --size 都可以省略
+pixel demo --out out --size 8
+
 # 创建带图层和动画的文档
 pixel new hero.pixel --width 32 --height 32 --layers Ink,Shade --frames 4
 
@@ -227,7 +361,7 @@ pixel apply hero.pixel --ops ops.json
 
 ## MCP 服务器提供什么
 
-工具目录由用于验证命令的同一套 Zod Schema 生成，因此文档不会与运行时行为脱节。
+工具目录由用于验证命令的同一套 Zod Schema 生成，因此文档不会与运行时行为脱节。下表是其中的一部分；`list_commands` 返回完整目录，并且每个工具都声明了全部四项风险提示，客户端可以据此做门禁。
 
 | 能力 | 作用 |
 | --- | --- |
@@ -249,13 +383,10 @@ pixel apply hero.pixel --ops ops.json
 | `run_script` | 将有时限的 JavaScript 批处理作为单个撤销步骤运行，并提供隔离 dry-run 和源码相对错误诊断。 |
 | `load_plugin` | 将插件命令注册为实时 MCP 工具。 |
 
-实用的 Agent 工作循环刻意保持简短：
-
-```text
-create_document → block silhouette → inspect PNG → shade in batches
-      ↑                                                    ↓
- fix what you can see ← preview each visual gate → finalize_document
-```
+`read_grid` 负责**验证**，`get_preview` 负责**终审**。这个分工是刻意的：判断一幅画
+*好不好看*只有 PNG 才行，但 Agent 真正反复迭代的问题它答不上来 —— 32×32 精灵的
+256px 缩图看不出剪影是否对称，也说不出第 14 行和第 13 行是否差了一个色阶，而图像
+本身没法做 diff。
 
 独立服务器通过 stdio 运行，不需要桌面应用，但会优先选择它。不带参数启动时，它会在
 loopback 端点上发现正在运行的 Electron 应用并转发过去，因此 Agent 编辑的正是窗口
@@ -315,27 +446,21 @@ return { base, reflected };
 | 动画 GIF | — | ✓ | 支持标签方向和重复设置 |
 | Tiled `.tmj` | — | ✓ | 自包含地图 + 图块集 PNG、瓦片属性和对象图层 |
 
-## 作品展示
-
-<table>
-  <tr>
-    <td width="50%"><img src="assets/showcase-autumn.png" alt="秋日黄昏湖泊像素画" /></td>
-    <td width="50%"><img src="assets/showcase-moonlit.png" alt="月光下的高山湖泊像素画" /></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>秋日黄昏湖泊</sub></td>
-    <td align="center"><sub>月光下的高山湖泊</sub></td>
-  </tr>
-</table>
-
-<table>
-  <tr>
-    <td width="50%"><img src="assets/lighthouse-reference.png" alt="详细灯塔参考图" /><br /><sub>光栅参考</sub></td>
-    <td width="50%"><img src="assets/lighthouse-pixel.png" alt="原生像素画灯塔输出" /><br /><sub>原生像素画输出</sub></td>
-  </tr>
-</table>
+`.pixel` 就是一个普通的 zip —— 一份 manifest 和每个 cel 一张 PNG，zip 条目的时间戳
+被固定 —— 所以可以直接解开查看，同一份文档序列化两次得到的也是同样的字节。
 
 ## 架构
+
+```text
+┌─────────────────────┐
+│ Electron 像素 UI    │──┐
+├─────────────────────┤  │
+│ pixel CLI + 脚本    │──┼──▶  命令总线  ──▶  PixelDocument
+├─────────────────────┤  │        │              图层 · 帧
+│ MCP 工具/资源       │──┘        │              标签 · 瓦片地图
+└─────────────────────┘           ▼
+                         撤销 / 重做历史
+```
 
 | 包 | 作用 |
 | --- | --- |
@@ -404,10 +529,11 @@ workflow 只负责决定哪个 runner 构建哪个平台。
 
 ```bash
 # 1. 把 Unreleased 的更新日志条目移到带日期的标题下，然后提升版本号：
-#    package.json -> version，CHANGELOG.md -> ## [X.Y.Z] - 2026-09-26
+#    package.json -> version，CHANGELOG.md -> ## [X.Y.Z] - YYYY-MM-DD
 # 2. 提交后打 tag 并推送。tag 必须与 package.json 完全一致。
-git commit -am "chore(release): prepare dotloom-mcp 0.4.0"
-git tag v0.4.0
+#    两行里的 <version> 都要替换成你刚设置的版本号。
+git commit -am "chore(release): prepare dotloom-mcp <version>"
+git tag v<version>
 git push origin main --follow-tags
 ```
 
@@ -445,12 +571,15 @@ electron-builder 读取。
 
 ## 项目状态
 
-`dotloom-mcp@0.4.0` 是当前版本 —— 也是第一个提供桌面安装程序的版本。
+`dotloom-mcp@0.4.1` 是当前版本。`0.4.0` 是第一个提供桌面安装程序的版本；`0.4.1`
+让无界面服务器在编辑器稍晚启动时能够重连，而不是在本次会话剩余时间里一直待在
+内存模式。
 
 - [x] 核心文档模型、光栅器、命令总线、历史记录和原生序列化
 - [x] PNG、精灵图、GIF、Aseprite 导入和 Tiled 导出
 - [x] Electron 编辑器、动画、调色板、洋葱皮和瓦片地图
 - [x] 独立 MCP 服务器、视觉资源、提示、诊断以及脚本/插件
+- [x] 稳定的构建期库 API（`buildSprite` / `buildAnimation` / `exportAssets`）
 - [x] 公开 npm 包和 CI 质量门禁
 - [x] 每个 GitHub Release 都提供跨平台桌面安装程序
 - [ ] 代码签名和 macOS 公证
