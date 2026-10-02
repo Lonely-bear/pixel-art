@@ -29,6 +29,151 @@ All notable changes to dotloom-mcp are documented in this file.
   sprites drawn a second apart must not have two identities.
 - **`scripts/baseline-rowdiff.mjs`** — a row-keyed diff of the calibration baseline, so a change
   reads as *this subject, these columns, this direction* rather than as a count of lines.
+- **`pixel demo`: the whole product, in one command.** Someone who has just installed the
+  package has nothing but Node, so this one takes no input file, no palette and no required
+  arguments. It authors a 32×32 sprite — ten colours, six layers, two frames on an `idle`
+  tag, 33 commands — through the real command bus, writes an upscaled PNG and the editable
+  `.pixel` source beside it, and prints exactly one JSON object like every other command,
+  so it composes with a shell script. The artwork is drawn the way a pixel artist blocks
+  one in — one flat silhouette, a hue-shifted ramp, tonal planes that follow the form,
+  light from a single direction, a consistent 1px contour — because a demo that looks
+  procedural teaches people the wrong thing, and every mutation goes through
+  `Editor.execute`, so the `.pixel` it leaves behind is a genuine document with a real undo
+  history behind it. That is the proof this is a tool and not a texture generator.
+  `--out` and `--size` are the only flags.
+- **A build-time library API, for the half of the pipeline with nobody in the loop.** An
+  agent drives this product over MCP; a game's build script has to be able to drive it
+  from code, as a `devDependency`, with no GUI, no MCP client and no editor running.
+  `buildSprite(spec)`, `buildAnimation(spec)` and `exportAssets(sprite, plan)` are that
+  entry point, next to `VERSION` and `API_VERSION`; `core`, `mcp` and `script` ship beside
+  them as the documented escape hatch. `exportAssets` returns bytes and never writes to
+  disk — where they go belongs to the build system, not to this package.
+  [`docs/API.md`](docs/API.md) is the authority and [`docs/API-ZH.md`](docs/API-ZH.md)
+  mirrors it, and `API_VERSION` is the versioned contract: inside one major version of it
+  only additive changes are permitted, so a build script can pin it and mean something.
+  It is `1` here, and the eight exports are asserted by a test.
+- **The published entry is typechecked, and its surface is asserted.** `pnpm typecheck` now
+  compiles the npm entry along with everything else (`tsconfig.npm.json`). It had no
+  typecheck coverage at all, which meant a broken entry failed in a consumer's pipeline
+  rather than in this one.
+- **Determinism is a guarantee rather than an assumption.** Every "random-looking" thing
+  the engine draws — noise fields, scatter points, terrain variant choices, reflection
+  wobble — now comes from one seeded source, built on `mix32` and `mulberry32` rather than
+  an inlined hash of unknown provenance. What that buys is small and specific: a committed
+  baseline diff means *the artwork changed*, not *the run changed*, and those are
+  indistinguishable after the fact. Fields are position-addressed, so evaluation order is
+  irrelevant and adding a pixel does not disturb its neighbours; streams are for sequential
+  work, because a stream is order-dependent and skipping one draw shifts everything after
+  it. Chasing this turned up three real defects — a truncated `scatter` seed,
+  `Math.hypot` on a result path, and a `serializeSprite` that was never byte-reproducible
+  in the first place. `deterministicIdFactory` is the opt-in for documents that have to come
+  out byte-identical.
+- **A `.pixel` file is byte-reproducible.** The same ops, run twice, produce the same
+  archive. Cel entries are named by position (`cels/0_1.png`) rather than embedding the
+  layer id inside the filename, because an id comes from the clock and real entropy, and a
+  filename that changes on every run makes "the source did not change" an uncheckable
+  claim. The zip timestamp is pinned to 1980-01-01 *local* — fflate had been stamping
+  every entry with `Date.now()`, so even a fully deterministic document produced a
+  different archive on every save, and pinning the instant in UTC would instead have made
+  the bytes depend on the machine's timezone. The rename is non-breaking in both
+  directions, because the reader always resolved paths through the manifest, so the
+  container version is deliberately **not** bumped.
+- **A quality-analysis contract, an aggregator, and the first two of six dimensions.**
+  `packages/core/src/quality/` freezes six dimensions with per-mille integer scores, a
+  `pass` / `warn` / `fail` verdict, and a compile-time guard that fails the build if a
+  dimension id is added without its weights row. `silhouette` and `value` are implemented
+  and measured against this repository's own artwork, which is where the interesting part
+  is:
+  - **Applicability is declared per dimension, not per document class.** A full-bleed
+    scene has no silhouette and no outline, and does have value structure and a palette —
+    so a dimension that cannot measure a document contributes **no number at all**: its key
+    is absent from the report and the reason is recorded, never a sentinel and never `0`,
+    because `0` is silently averaged in by every caller that trusted the field. The first
+    `silhouette` implementation scored ten full-bleed scenes a confident 800 with a blocking
+    `shape-clipped` issue, since for a scene whose ink runs to the frame the alpha boundary
+    *is* the canvas edge. Ten confident wrong numbers are worse than none. The "is there a
+    subject" test is deliberately a pixel margin rather than a per-mille quantity: a 1px
+    margin is 234/1000 on a 16² canvas and 7/1000 at 2px on a 1024² one, and no single
+    threshold serves both ends.
+  - **The threshold did not move; the measurement did.** The only real character sprite in
+    this repository was being *penalised* — `compactnessQ` 269 against a gate of 300 — and
+    the dimension returned an identical 800 for artwork that had been rejected twice and
+    artwork that had been accepted. The cause was the measurement, not the gate: compactness
+    was computed over the whole mask, so a subject was paying for its own scattered pixels,
+    and it was scale-invariant, so a 32² blade edge and a 1024² horizon scored the same. It
+    is now computed per subject part and split into `thicknessPx` and `thicknessQ`, which
+    is the shape of the thing: blade and horizon differ by 91 while every shape reading
+    stays identical.
+  - **`value` can tell a bad shadow from a good one.** A hard straight-diagonal band and
+    correctly nested contours were 0.014 apart in the report total. They are now 385‰ apart
+    in the dimension and 0.179 in the total — a whole verdict grade, which is the difference
+    between a scorer and a mood ring.
+  - **Two findings are recorded and deliberately left unfixed**, because the honest fix in
+    each case is a new shared quantity rather than a threshold: the curvature gate reads
+    nothing on a full-bleed subject, so the form sub-term is a perfect 1000 on all twelve
+    real assets — a straight shadow band across the mountains passes today — and `keyLight`
+    is a subject-level check being applied to scenes.
+  **None of this is an MCP tool, and none of it is on the advertised surface.** A number an
+  agent can see becomes the target instead of the artwork — that is how a lake got sanded
+  into a dark flat rectangle before `quality_report` was deleted in 0.3.1 — so what ships
+  here is a library, a specification and a calibration harness. The command, the tool and
+  the gate that would consume them are later work, and the gate belongs in
+  `finalize_document` refusing, not in a tool that advises. The lesson that produced
+  `AGENTS.md`'s "do not show an agent a number to optimise" section is written down rather
+  than left as tribal knowledge.
+- **A calibration corpus with ground truth by construction.** 63 cases in three tiers:
+  48 synthetic, each carrying a **declared** defect *and* what it must not fire on, because
+  an analyzer that cries wolf on clean work is worse than one that misses a defect;
+  12 real — this repository's committed artwork, which may assert quietness but never taste;
+  and 3 awaiting a human rating, a tier whose type has no `expect` field at all, so no code
+  path can compare an unrated image against an expectation. The tier boundaries are
+  enforced by four loader rules rather than by a comment. Cases are declarative descriptions
+  materialised deterministically at test time instead of committed PNGs — sixty-odd binary
+  files would be an unreviewable diff on every engine change, and a threshold edit would
+  look like a picture edit — and the generated report is compared byte for byte, so a score
+  that moves is a diff a reviewer reads. It also withholds the machine's own scores from
+  the human-rated section, because a rater who has seen the number is anchored to it.
+- **The scoring specification is written down.**
+  [`docs/EVALUATION.md`](docs/EVALUATION.md) is the contract for the analyzers: what each
+  dimension measures, how it is banded, which house-style conventions it encodes and what
+  each of those costs, and what the scorer is *not*. It has been amended twice against
+  measured evidence — the second time because four of the formulas turned out to be
+  measuring something other than what they claimed, and because §3.1 described an input
+  contract (`alphaThreshold`, `background`, `scope`) that exists in the prose and not in the
+  frozen type, which six analyzers would otherwise have been written against. The
+  dimensions now also ship a `baseline.md` next to the corpus, so a score change arrives
+  with the measurement that justifies it.
+- **The app can update itself from the Releases it was downloaded from.** A background
+  check runs a few times a day while the editor is open, and when a newer version exists
+  a banner offers to download it, show its release notes, and restart into it. The same
+  check is available on demand from **Settings ▸ Updates**, along with the installed
+  version, the time of the last check, and a switch to turn the background check off.
+  Three things are deliberately *not* automatic. Nothing is downloaded without being asked
+  for, a finished download waits for a person before the app restarts, and a version that
+  has been dismissed stays dismissed - so the editor never spends bandwidth or throws away
+  unsaved work on its own. Restarting also asks first when a sprite has never been written
+  to a file, since the main process is the only side that knows.
+  Builds that genuinely cannot replace themselves say so rather than pretending: the
+  portable `.exe` and the `.deb` point at the release page and at your package manager,
+  and an unsigned macOS build does the same, because macOS will not verify a signature
+  that is re-derived on every build. Signing the releases turns macOS self-updating on
+  with no code change - the app is told at build time whether it was signed.
+- **Updates are published as real release assets.** The release workflow now collects the
+  `latest*.yml` metadata and the `.blockmap` files electron-builder writes beside the
+  installers, and attaches them to the Release. Without them an installed app sees a
+  release with nothing it can install, which is the difference between "you are on the
+  latest version" and "there is no update" - and only the first of those is true.
+- **The project can be picked up by a stranger, human or agent.** `CONTRIBUTING.md`
+  covers setup, the build-order trap, the review rules and the release checklist;
+  `CODE_OF_CONDUCT.md` and issue templates for bugs, features, agent usability and an
+  asset showcase are in place, along with a pull request template that asks for a
+  changelog entry in the voice already in the file, and a seeded list of good first
+  issues. `AGENTS.md` documents the one architectural rule - every mutation crosses
+  `applyCommand` - and the traps that catch agents out, and `TASKS.md` is the single
+  event bus the roadmap runs on. It also records the review rule this release was built
+  under: a claim of "verified" is not evidence, it has to be re-checked independently,
+  and with a *discriminating* case, because a test that passes whether or not the bug is
+  present proves nothing.
 
 ### Fixed
 
@@ -59,6 +204,113 @@ All notable changes to dotloom-mcp are documented in this file.
   the package supports. The Windows configuration goes through `cmd` + `/c`.
 - **Two OpenCode claims that could not be verified have been removed rather than hedged** — the
   non-interactive `opencode mcp add <name> -- <cmd>` form, and the `/mcps` slash command.
+- **Four committed scenes have no judged plane because their tone field is dithered, and the gate that
+  was supposed to be at fault is not.** The `reachQ` gate closes the last of the full-bleed scenes and## [0.4.2] - 2026-09-27
+- **The desktop app can import `.aseprite` files again.** The file dialog accepted PNGs
+  only, so an Aseprite file could not be picked at all - the feature the MCP tool and the
+  `pixel import` command already supported. The dialog now offers `png`, `aseprite` and
+  `ase`, and the file is told apart by its header, exactly as the CLI does: an Aseprite
+  file arrives with its layers, frames, durations and tags intact.
+  was supposed to be at fault is not.** The `reachQ` gate closes the last of the full-bleed scenes and
+  reads its denominator as the subject's bounding box, which on a full-bleed document is the whole canvas
+  — so a plane has to span half the picture to be judged. That is the same shape of error the previous two
+  entries fixed for curvature, and the obvious move is to normalise against the form the plane cuts
+  instead. **Measured, that move is wrong, and this entry records why rather than making it.**
+  Plane extents are small everywhere: median 6..10px against a body of 64..512, `p90` 16..33. On
+  `artwork/sunset-lighthouse-512.pixel` — 512², 1008 terminators — the **largest** plane is 110px where
+  the gate wants 256. A region-relative denominator opens 110 planes there, and they are water ripples
+  and sky sparks: a short plane inside a small region scores *high* on that ratio, so the change admits
+  texture rather than form.
+  Counting 4-connected same-bucket regions says what the pictures are: `lantern-keeper` has 8 regions per
+  bucket, `dusk-lake-valley-agent` 95, `autumn-dusk-lake-256` 519, and `sunset-lighthouse-512`
+  **2,880** — 46,079 regions, 98.8% of them 16 pixels or smaller, in a painting with 16 tones. A
+  hard-edged painting with 16 tones has tens of regions. That is a dithered and gradient tone field, and
+  §4.2's plane definition — both sides an area — finds no plane across a dithered transition at all, so
+  the sun's limb and the water's horizon there were never planes to gate.
+  `reachQ` turns out to be an accidental dither detector pointing the right way: the scenes it opens are
+  the least fragmented ones (95, 519 and 632 regions per bucket read `reachQ max` 1000, 1000 and 996, and
+  those are the three with a measured `formQ`), and the two most fragmented read 215 and 236. **So no gate
+  changed.** What is missing is the ability to *say* that a picture is dithered, and the quantity that
+  would is §3.3's `ditherMask` — specified, unimplemented, and declared as `noise`'s consumer. Until it
+  lands, the report's `gated` column gives `curvature` and `reach` as reasons on pictures whose real reason
+  is neither, and all four of those scenes have both gates closing something. The state is pinned by a
+  test, so a future change that suddenly judges them has to answer why: nothing about the pictures
+  changed.
+- **Whether a straight cut was caught depended on where it had been drawn.** The previous entry gave §4.2's
+  curvature gate a second reference and stopped it being blind on a full-bleed document. It did not stop it
+  being a coin toss. The gate asks whether the local form is round, and the second reference read a tone
+  region's curvature over its **whole** boundary — which contains the plane being judged. A straight band
+  drawn across a curved dome therefore read `curvedQ` **260** at one row and **248** at the next, against a
+  gate of 250: the defect was reported where the band crossed a wide part of the dome and excused where it
+  crossed a narrow part, because the band's own straight cut contributed boundary pixels and no corners to
+  the very ratio meant to describe the arc it was cutting. Nobody can act on "your defect was drawn in the
+  wrong place".
+  A new §3.3 quantity, `planeCurvedQ`, reads a region's curvature with **the plane's own boundary removed** —
+  the form the plane cuts, without the plane — and the gate takes the maximum of all three references. The
+  same band now reads 333 and 420, both clear of the gate, and `value/straight-band-over-terrain-64` is in
+  the corpus reporting `plane-crosses-form`. Two properties survive the change, and they are the test of
+  whether the reasoning that refused two shortcuts was sound: a region whose **only** boundary is the plane
+  is left with nothing and reads 0, still "cannot measure"; and a straight-edged box reads 93 before and
+  after, because excluding the band between two straight bands leaves straight runs on both sides.
+  It is per region **pair** and not per terminator, so it is one pass over the canvas rather than one
+  full-boundary rescan per plane — the largest committed scene has 1008 terminators.
+  What it costs, measured: `gated` moved on 8 rows and `curvedQ max` on 4, and **no score moved anywhere**.
+  Nine more planes on the committed artwork became judged and every one came back clean. That is the reason
+  improving rather than the number, and it is a weaker claim than it looks — it means nothing in the corpus
+  got worse, not that the artwork has no defects.
+- **Two bugs in the new curvature reference, both caught by the corpus on their first run.** The exclusion
+  counters were keyed by the *unordered* region pair, so both sides of a pair subtracted the same total and
+  a density came out as **7385** — impossible, since a density cannot exceed 1000. And a pixel with two
+  neighbours in the same region was counted twice, so the excluded boundary could exceed the boundary and
+  the density divided by zero, reading `NaN` on the largest committed scene. Both are recorded next to the
+  quantity rather than in a changelog, because the second is the kind of defect that only shows up on the
+  one document in the corpus with a one-pixel neck in it.
+- **§4.2's curvature gate can now read curvature that does not come from the silhouette.** This is the
+  coverage half of the entry below: the previous change made the form term *honest* about a full-bleed
+  scene, and this one makes it *able to judge* one. The gate asked whether the local form is round and
+  had a single door — the subject's own outline — and on a document that fills its canvas that door is
+  a wall, because the outline is the frame: `curvedQ` read 0–77 on all ten committed scenes against a
+  gate of 250, so every plane in every one of them was exempt. No threshold fixes that, because when
+  the mountain reaches the edges it *is* the frame.
+  A second reference, §3.3's new `regionCurvedQ`, reads the curvature off the shape of the document's
+  own tone regions, and the gate takes the **maximum** of the two. A maximum can only make the gate
+  more permissive, so every plane already judged is still judged with the same numbers and **no
+  `value`, `formQ` or `crossesQ` moved for any subject with a readable outline**; planes that used
+  to be exempt on curvature are now examined instead, and the reading itself changes on most rows
+  (measured: `curvedQ max` moved on 32 of 59). The ten scenes now read 667–880, three of them
+  acquire a measured `formQ` of 1000 that they previously reported as `unmeasured`, and
+  `value/hard-surface-terminator-32` — a straight-edged box, the gate's own negative control —
+  stays at 93 and keeps the exemption that a straight plane across a straight-edged form is
+  correct.
+  Measured limitation, recorded rather than tuned away: whether a straight cut is *caught* still depends
+  on which tone region it crosses (260 against 248 either side of the gate), so the honesty is fixed
+  everywhere and the coverage is not.
+- **The quality scorer's form term was reporting a perfect score on ten finished paintings it had
+  never looked at.** §4.2's curvature gate asks whether the local silhouette is round and reads it
+  off the subject's own outline — and a subject that fills its canvas has no outline, because its
+  boundary *is* the frame. Every plane on all ten of this repository's committed scenes was exempt,
+  every one of them scored zero, and nothing recorded that a zero there meant "not asked" rather
+  than "no defect", so the sub-term read `formQ` 1000 and `value` read 700–950 on a term that had
+  examined nothing. `formQ` is now `null` with a stated reason, and the dimension reports the half
+  it did measure.
+- **`QualityDimension` can now be partly unmeasured, and says which part.** A dimension that is
+  present and half-blind is a shape neither the report's `dimensions` map nor a score can express:
+  `dimensions` is partial, so absence means *not applicable*, and a score cannot say "this half is
+  1000 for a measurement nobody took". The new `unmeasured` field names the sub-scores that were not
+  measured and why, it is **required** rather than optional — a sub-score that is silently absent is
+  indistinguishable from one counted at its best — and an unmeasured sub-score drops its weight with
+  the remainder re-normalised, which is the rule a still sprite's absent `motion` already followed.
+  Two new reason strings are agent-facing API: `'no-judgeable-plane'` for a frame with no tone plane
+  to judge, and `'no-subject'` reused from the dimension-level enum for a full-bleed subject.
+- **The form term ranked a target above a sphere.** §4.2's `bendQ` divided the number of distinct
+  8-step orientations a boundary walks by the number of half-plane orientations, and an open
+  boundary on a convex body cannot use the fourth without closing — so a maximally-turning arc read
+  667 and the ring enclosing it read 1000. The product's own reference artwork, and the translated
+  contours the craft guide teaches, came out 250 per-mille *below* a level-set ring on the same body
+  with the same five tones, the same five planes and no defect on either side. The ladder now
+  saturates at three orientations; the band table did not move, the acceptance pair's separation
+  grew from 325 to 450 per-mille, and the straight-diagonal defect case is unchanged and still
+  blocking.
 
 ### Changed
 
@@ -66,6 +318,43 @@ All notable changes to dotloom-mcp are documented in this file.
   `value/level-set-32`, a declared negative control, because a 1px contour line and a 1px stipple
   are the same set of pixels — and no threshold separates two things that are equivalent on the same
   pixels. `ditherShare` is reported as a measurement and nothing is asserted about intent.
+- **The README leads with the thing a stranger can do.** `pixel demo` and a real
+  transcript are the first section, above the install instructions and the agent
+  configuration: a reader who has to scroll to find out what the tool does is being asked
+  for patience nobody offered them. The same pass corrected a factual error inherited from
+  the 0.4.x README, where the desktop app was described as bundling the CLI - it bundles
+  the MCP server, `pixel` is an npm install away, and the Release notes repeated the same
+  mistake until now.
+- **This changelog has a Chinese mirror.** [`CHANGELOG-ZH.md`](CHANGELOG-ZH.md) tracks
+  it, and both files ship in the npm tarball. English is the source of truth; where the two
+  disagree, the English one is correct and the Chinese one is the stale copy.
+- **The Release page now carries this changelog.** A GitHub Release body used to be one
+  static file — an install table and a first-launch note — so every release page read
+  identically, and the description of what the release *is* was nowhere on it. GitHub's own
+  `--generate-notes` could not fill that gap: it enumerates merged pull requests, and this
+  repository pushes commits straight to `master`. The release workflow now builds the notes
+  with `scripts/release-notes.mjs`, which joins that install section to the `## [X.Y.Z]`
+  section of `CHANGELOG.md` and to its `CHANGELOG-ZH.md` twin, collapsed behind a
+  `<details>`, and refuses to publish a version the changelog does not describe. The prose
+  is written once, in the file a contributor already has to edit, and the page cannot drift
+  away from it. This page was generated that way and rewritten in place; the workflow change
+  itself takes effect from the next tag.
+- The import menu entry is now labelled **Import PNG / .aseprite** in every language, so
+  it says what it actually accepts.
+- **`docs/EVALUATION.md` §4.2 now describes the scorer that exists.** It specified the `dist`-spread
+  form term that the implementation replaced two tasks ago; `crossesQ`, `bendQ`, `splitQ`, `reachQ`
+  and `curvedQ` appeared nowhere in the specification, the scoring table keyed on a quantity nothing
+  computed, the issue-code row fired on it, and the worked example was arithmetic that had never been
+  run. The scoring table's 150 "no penalty" boundary had been carried across from the old
+  quantity's scale with its numbers unchanged and never re-derived, which is how it came to
+  penalise the product's own taught construction. The rewritten section keeps the rejected
+  alternative and the measurement that rejected it, and the worked example is now two committed
+  corpus cases rather than two sheets of arithmetic.
+- **The generated calibration report grew a column it needed.** §2 prints `curvedQ max` and
+  `reachQ max` — the maximum over every plane rather than the worst plane's readings, because
+  reading them off the worst plane prints `-` on exactly the rows the finding is about — plus a
+  `gated` column giving the count per gate, and §3 carries an `unmeasured sub-scores` column so an
+  absent sub-score is re-derived on every run instead of being remembered from a comment.
 
 ### Known limitations
 
@@ -83,10 +372,7 @@ All notable changes to dotloom-mcp are documented in this file.
   dimension's abstention, which is what happened to the two full-bleed margin cases — is an
   open aggregator question.
 
-### Fixed
-
-- **Four committed scenes have no judged plane because their tone field is dithered, and the gate that
-  was supposed to be at fault is not.** The `reachQ` gate closes the last of the full-bleed scenes and## [0.4.2] - 2026-09-27
+## [0.4.2] - 2026-09-27
 
 ### Added
 

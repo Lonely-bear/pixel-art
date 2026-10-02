@@ -7,10 +7,11 @@
  * does nothing else. No imports from `@pixel/core`, no shortcuts through the library —
  * the only thing that reaches the editor is the advertised tool list.
  *
- * That is what makes it a real test of the lazy surface. The tool list is 33 entries and
- * the ~90 core commands are absent until the session discovers them, so an agent using
+ * That is what makes it a real test of the lazy surface. The tool list is ~36 entries and
+ * the ~94 core commands are absent until the session discovers them, so an agent using
  * this script has to go through `list_commands` / `describe_command` / `find_workflow`
- * exactly as any other client would. Promotion changes the list mid-session, which is
+ * exactly as any other client would. **Both counts drift: run `list` and read them rather
+ * than trusting any number written here, including these two.** Promotion changes the list mid-session, which is
  * why `list` is a separate command and why every response reports how many
  * `tools/list_changed` notifications arrived since the last call.
  *
