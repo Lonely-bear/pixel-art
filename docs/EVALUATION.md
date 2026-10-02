@@ -351,8 +351,12 @@ for each candidate pair (a, b):
         |R| >= 8
         and >= 400/1000 of R's pixels have at least one 8-neighbour in R of the OTHER bucket
     ditherMask = 1 for every pixel of every dither region
-ditherShare  = (pixels with ditherMask == 1) / N
+ditherShare  = rhu( (pixels with ditherMask == 1) * 1000, N )
 ```
+The alternation count is a **count**, not a flag, because `alternating * 1000 >= 400 * |R|`
+compares it against the size of `R` — a component alternating over 40% of its pixels has to be
+able to say so. It also means `ditherShare` is integer per-mille like every other ratio in this
+document (§3.7), where the first version of this section wrote it as a bare fraction.
 
 Three properties make this work, and each one is a deliberate rejection of something simpler:
 
@@ -374,15 +378,34 @@ occupied" pre-check drops the ones a given sprite does not use, so a six-tone sp
 five flood fills rather than fifteen. `|R| >= 8` keeps a single stray pixel from being its
 own dither region.
 
-**What this opens up.** A 2px checkerboard is a legitimate technique at 32×32 and above — it
-reads as a soft tonal step rather than as digital stipple, which is exactly why the craft
-guide recommends `cluster2`/`cluster4` on large canvases. The predicate cannot tell a
-*legitimate* 2px cluster from a *mistaken* 1px stipple, so both are detected and both are
-excluded from the noise measures. The only cost is that a sprite whose texture is mostly
-alternation trips the `dither-dominant` advisory (§4.4), which is an advisory rather than a
-score penalty precisely because this false positive is unavoidable. Treating visible grain as
-defect is the failure the whole dimension has to avoid, and `despeckle`'s own
-`minClusterSize` option exists for the same reason.
+**The first implementation of that clause counted one pixel and stopped.** It early-exited the
+scan over `R` on the first alternating pixel, as an optimisation, which capped `alternating` at 1
+for every component. With `|R| >= 8` the gate `1 * 1000 < 400 * |R|` is then true for every
+component that can reach it — `400 * 8 = 3200` is already greater than 1000 — so `ditherMask`
+returned nothing on **every case in the corpus**, a perfect 50% checkerboard among them, which is
+the structure it exists to find. It reported "no dither anywhere" and meant "this counter cannot
+exceed 1", and the two sentences are indistinguishable from the outside. A measurement that
+cannot fail is not a measurement, so the honest reading of a structural zero is a broken
+instrument rather than an absence in the world. §7 records what turning it on cost.
+
+**What the corrected instrument says.** Per-mille, measured across the corpus: every declared
+`clean-control` reads **0** — all six `control/*` negative controls included, which is the
+property that matters and the one the broken version also appeared to satisfy — and so do
+`human/item-16`, `human/tile-32` and `human/scene-64`. The ten committed artworks read 1, 3,
+4, 38, 38, 91, 107, 389, 523 and **574**, the last of them
+`artwork/verify/lantern-keeper.pixel`; `app/icon.png` reads 29. The two largest readings in the
+corpus are `value/straight-diagonal-32` at **261** and `value/level-set-32` at **427**, and both
+are synthetic value cases drawing 1px contour lines — which is §4.4's reason for having no dither
+verdict at all rather than a tuned one.
+
+**What this costs.** A 2px checkerboard is a legitimate technique at 32×32 and above — it reads
+as a soft tonal step rather than as digital stipple, which is exactly why the craft guide
+recommends `cluster2`/`cluster4` on large canvases. The predicate cannot tell a *legitimate* 2px
+cluster from a *mistaken* 1px stipple, so both are detected and both are exempted from the noise
+measures (§4.4). A `sparse` pattern at low coverage is a further miss, since at low coverage a
+region stops being a connected set of two adjacent buckets and falls out of the mask entirely.
+`ditherShare` is therefore a **measurement on the frame record and never a verdict**, and §4.4
+says what follows from that.
 
 ### 3.4 Luminance
 
@@ -1283,14 +1306,15 @@ before it reads the design.
 isolated        solid p with n8 == 0, ditherMask(p) == 0, and the sprite is not a line sprite
 diagOnly        solid p with n4 == 0 and n8 >= 1, ditherMask(p) == 0
 spurs           solid p with n8 == 1, ditherMask(p) == 0
-colourOrphans   solid p with n4 >= 1 and NO solid 4-neighbour in the same LqBucket
+colourOrphans   count of the solid p with nothing agreeing within Chebyshev 2 and nothing in the
+                neighbourhood even on the same part of the ramp — see below
 nearDuplicatePairs
                 pairs of distinct colours, each with >= 8 solid pixels, whose Chebyshev
                 colorDistance is <= 8
-ditherShare     (pixels with ditherMask == 1) / N
+ditherShare     rhu( (pixels with ditherMask == 1) * 1000, N )   -- a measurement, not a verdict
 ```
 
-#### `colourOrphans` replaces `outliers`, and the old one measured the wrong thing
+#### `colourOrphans` replaces `outliers`, and the replacement needed measuring too
 
 The first version of this dimension tested each pixel's Chebyshev distance from the *median*
 colour of its 8-neighbours and flagged anything over 32. Implemented against a real sprite it
@@ -1307,29 +1331,71 @@ The defect is conceptual rather than a bad threshold. Distance from the local me
 "is this pixel unusual *relative to its neighbourhood*", and on a coherent edge **every** pixel
 is unusual relative to its neighbourhood, because half of it is on the other side of the
 boundary. What distinguishes a speck from an edge is not the *distance* to the local colour but
-the *absence of any agreement at all*. So:
+the *absence of any agreement at all*.
+
+That sentence was then written down as a **4-neighbour** test, and the 4-neighbour version is
+false on two of its own worked-example rows. Both were found by measuring it across the corpus
+rather than by reading it, and the first is the one that mattered most, because the case which
+exposes it is a declared negative control. **A 1px outline drawn as a staircase**: every pixel on
+the diagonal run of such a contour has no same-bucket 4-neighbour, because the rest of the run
+reaches it only diagonally, and `control/outline-ring-32` read **31/1000** against a trigger of
+8. **A gradient**: in a ramp a pixel's 4-neighbours are the buckets either side of it, so "no
+same-bucket 4-neighbour" is the normal state of a picture rather than a defect, and the ten
+committed scenes read **9..153**.
+
+Two replacements were measured before the one that shipped, and both are written down here
+because a refuted approach is the thing a future revision can least re-derive. Treating a
+**+/-1 bucket as agreement** does what it says on a gradient — the 512² scene falls 153 -> 27,
+the 256² one 89 -> 25 — and changes `control/outline-ring-32` **not at all**, because a dark
+contour against a light interior is 13 buckets away rather than one. It cannot be both a gradient
+test and an outline test, and the outline is the one it fails. Comparing a pixel against the
+**[min, max] range spanned by its radius-1 neighbours** does read 0 on
+`control/outline-ring-32`, and in exchange it **breaks the gap this dimension is proud of**: the
+2px specular highlight in `artwork/verify/lantern-keeper.pixel` is an island sitting entirely
+outside its surroundings' range, so a correct 2px highlight starts scoring as a stray colour.
+Protecting a deliberate highlight is the whole reason `despeckle` ships `minClusterSize`.
+
+Radius 2 is what makes the range clause safe, and the reason is mechanical rather than tuned: at
+Chebyshev 2 the rest of a 1px contour is always reachable, and a 2px island always contains its own
+partner. So:
 
 ```
-colourOrphan(p) = p is solid
-                && n4(p) >= 1
-                && #{ n : n is a solid 4-neighbour of p, LqBucket(n) == LqBucket(p) } == 0
+colourOrphan(p) = #{ q solid : 1 <= Chebyshev(p, q) <= 2, LqBucket(q) == LqBucket(p) } == 0
+                && LqBucket(p) not in [ min, max ] over that same set of q
 ```
+
+The second clause is what turns "isolated" into "wrong": a stray pixel is not merely alone, it is
+on a part of the ramp that nothing around it is on. A pixel needs neighbours to have a range at
+all, so one with nothing solid within 2px is **not** counted — `isolated` is the measure for
+that, and a single pixel cannot be both unattached and undescribed. The range is accumulated
+from sentinels and is **not** seeded with `LqBucket(p)`: seeding it that way makes
+`own > hi` unsatisfiable and silently exempts every stray *brighter* than its surroundings,
+which is the common half of the case.
+
+Measured: every declared `clean-control` in the corpus reads **0**, all six `control/*`
+negative controls included, and the ten real artworks read **0..10** against a trigger of 8.
 
 | case | fires? | why |
 | --- | --- | --- |
-| stray pixel in a field | **yes** | it matches no neighbour |
-| one wrong-coloured pixel inside a solid block (`n8 == 8`) | **yes** | it matches no neighbour, and this is the case the old test was written for |
-| pixel on a material edge | no | ~half its neighbours share its bucket |
-| outline's inner edge | no | the ink is a connected ring, every pixel has ink neighbours |
-| a smooth shading plane | no | every pixel has several same-bucket neighbours |
+| stray pixel in a field | **yes** | it matches nothing within 2px, and nothing near it is on its own step |
+| one wrong-coloured pixel inside a solid block (`n8 == 8`) | **yes** | the same, and this is the case the first test was written for |
+| pixel on a material edge | no | the buckets either side of the boundary span its own |
+| outline's inner edge | no | a 1px contour reaches every one of its pixels within 2px, diagonals included |
+| a 1px outline drawn as a staircase | no | the rest of the run is at Chebyshev 2, which is why this row is here |
+| a smooth shading plane | no | it is inside the range its neighbours span |
 | a 2–3 px island of one tone inside another | **no** | its pixels match *each other* — see below |
 
-That last row is a real gap and it is deliberate. Catching a small island and protecting a
-2px specular dot are the same problem: a 2px highlight on a shoulder is correct craft, and
-`despeckle` ships `minClusterSize: 2-4` precisely so that a cleanup pass will not delete it.
-A region-level test sharp enough to catch the island would also delete every specular dot in
-the corpus. One sharp pixel-level predicate plus a documented gap beats a broad one that
-quietly sands a piece flat, and §7 item 5 states the cost.
+The last row is a real gap and it is deliberate, and radius 2 buys the outline back at a price
+worth naming: a stray pixel buried inside a feature narrower than 4px is exempt for the same
+reason, because the feature's other side is in the neighbourhood. `isolated`, `diagOnly` and
+`spurs` still see those as *shape* problems, so the case is not invisible — but a wrong colour
+down the middle of a 3px antenna does read clean here, and there is no threshold in this
+predicate that fixes it without re-admitting the 1px outline. Recorded rather than tuned away.
+Catching a small island and protecting a 2px specular dot remain the same problem: a 2px
+highlight on a shoulder is correct craft, and `despeckle` ships `minClusterSize: 2-4` precisely
+so that a cleanup pass will not delete it. A region-level test sharp enough to catch the island
+would also delete every specular dot in the corpus. One sharp pixel-level predicate plus a
+documented gap beats a broad one that quietly sands a piece flat, and §7 item 6 states the cost.
 
 The weights changed with the measurement, and the reasoning is that the two sharp quantities
 now carry the dimension: `isolated` (a stray *shape*) and `colourOrphans` (a stray *colour*)
@@ -1363,33 +1429,66 @@ recoverable by looking and a false alarm costs the artist a good feature.
 #### Dither is excluded, and the exclusion is now one that works
 
 Dither is not noise, and the first attempt at excluding it did not work. Its predicate was
-`ditherCell`: all four orthogonal neighbours transparent and all four diagonals solid — the
-exact signature of a **perfect axis-aligned 50% checkerboard**. Measured against a sprite with
-three clearly visible `bayer4` seams it reported `ditherShare` **0.0000**. On a diagonal
-terminator or an elliptical arc the lattice and the boundary fight each other and the perfect
-checkerboard never appears, so the one check designed to catch "mostly 1px dither" was blind
-to exactly the dither an agent produces.
+`ditherCell`: all four orthogonal neighbours transparent and all four diagonals solid — the exact
+signature of a **perfect axis-aligned 50% checkerboard**. Measured against a sprite with three
+clearly visible `bayer4` seams it reported `ditherShare` **0.0000**. On a diagonal terminator
+or an elliptical arc the lattice and the boundary fight each other and the perfect checkerboard
+never appears, so the one check designed to catch "mostly 1px dither" was blind to exactly the
+dither an agent produces. The second attempt was written to the letter of this document and was
+blind for the opposite reason; §3.3 records that one, because it is the more instructive of the
+two failures.
 
-The replacement is `ditherMask` in §3.3, which detects *periodic alternation between two
-adjacent ramp steps* and knows nothing about lattices, orientation or scale. All three of
-`isolated`, `diagOnly` and `spurs` exclude `ditherMask` pixels, `ditherShare` is its
-population over `N`, and the verdict names it so a human can see why the noise score is what
-it is. When `ditherShare >= 10/100` the dimension emits `dither-dominant` as an advisory: a
-piece that is *mostly* one- or two-pixel alternation is its own problem under the 3–5px seam
-rule, but it is not noise, and it does not cost a point here.
+The exclusion that works is `ditherMask`. All three of `isolated`, `diagOnly` and `spurs`
+exclude its pixels, `ditherShare` is its population over `N` in per-mille, and the verdict names
+it so a human can see why the noise score is what it is.
 
-What that costs is stated in §3.3 and repeated in §7: the predicate cannot distinguish a
-legitimate 2px checkerboard from a mistaken 1px stipple, so both are detected, both are
-exempted from the noise measures, and a heavily-textured sprite picks up an advisory. A
-`sparse` pattern at low coverage is a further false negative, since at low coverage a region
-stops being a connected set of two adjacent buckets and falls out of the mask entirely.
+**There is no `dither-dominant` advisory, and its absence is a measurement rather than an
+omission.** This section used to specify one, at `ditherShare >= 100/1000`, on the reasoning that
+a piece which is *mostly* one- or two-pixel alternation is its own problem under the 3–5px seam
+rule. With `ditherMask` actually working it fires on `value/level-set-32` — a **declared negative
+control** — at **427**, and on `value/straight-diagonal-32` at **261**. Both draw 1–2px concentric
+contours and one straight 45° cut, and §7 already lists "a 1px outline is the target" among the
+conventions this repository scores positively. **No threshold fixes it**, and the reason is the
+argument this document uses elsewhere: a 1px alternation between two adjacent buckets **is** a
+dither pattern and **is** a contour line, so they are the same set of pixels, and no value of a
+gate separates two cases that are equivalent on the same pixels. The advisory had nowhere to go.
+
+A second candidate was measured rather than assumed. Adding an "interior" clause — the share of
+the component whose 8-neighbourhood lies wholly inside it — looked as though it should separate
+them, on the reasoning that a 1px line has no interior and a filled band does. It does not, and
+it separates them in the wrong order: `value/level-set-32` reads **200** where
+`artwork/verify/lantern-keeper.pixel` reads **141**. The two `value` cases draw their contours
+**2px apart** — their own recipe says so and explains why — so the pair's union set is a band
+several pixels across and does have an interior. Band thickness is not the discriminator, and
+neither is anything else about the component's shape.
+
+So `ditherShare` stays on the frame record as a **measurement** and stops being a verdict. It is
+the number §7's four dithered scenes needed and did not have, and an agent reading it learns
+something true; an advisory claiming to know whether the alternation it found was intentional
+would not be, and it would have fired on this repository's own clean control. What is left as the
+cost is the one §3.3 states: both a legitimate 2px cluster and a mistaken 1px stipple are
+exempted from the noise measures, and a `sparse` pattern at low coverage falls out of the mask
+entirely.
 
 **Scoring.** Four ratios, each banded, combined with fixed weights. Higher ratio is worse, so
-the bands run the other way:
+the bands run the other way, and the table is read **ascending bound, best sub-score first**:
 
 | ratio | `<= 2/1000` | `<= 8/1000` | `<= 20/1000` | `<= 50/1000` | `> 50/1000` |
 | --- | --- | --- | --- | --- | --- |
 | sub-score | 1000 | 900 | 750 | 500 | 200 |
+
+**The first thing to check on any band table here is the direction it is read in.** The
+implementation of this one was written in descending-bound order and walked in that order, so a
+ratio of 0 matched the `<= 50/1000` row and returned the *worst* sub-score: every clean negative
+control in the corpus scored `noise` **200 of 1000 with all four measures reading exactly
+zero**. It was wrong by a band as well, and the table above is what caught it — the committed
+table had neither the `<= 2/1000 -> 1000` top row nor the `> 50/1000 -> 200` floor specified
+here. A descending list of `(bound, score)` pairs walked with a `for` loop returns the *first*
+match, and on a zero ratio the first match is always the loosest bound unless the list is ordered
+the other way round. Every row of such a table is individually plausible, which is exactly why
+review misses it. What saved this one is that the symptom was loud — it reported the whole corpus
+as noisy, which no implementer ships by accident — and a band table whose inversion were quieter
+would have been the dangerous one.
 
 On a thin sprite (`Dmax == 2`) the three shape thresholds are `4, 16, 40, 100, >100` instead —
 the band *boundaries* double, the sub-scores do not change.
@@ -1423,8 +1522,13 @@ at most one issue.)
 | `stray-colour` | `colourOrphans / N > 8/1000` | 0.35 | no |
 | `single-pixel-spur` | `spurs / N > 8/1000` (16 thin) | 0.30 | no |
 | `near-duplicate-colours` | `nearDuplicatePairs >= 1` | 0.35 | no |
-| `dither-dominant` | `ditherShare >= 10/100` | 0.35 | no |
 
+**`dither-dominant` is retired rather than retuned, and the paragraph above is the argument.**
+It was specified here at `ditherShare >= 10/100` — 100 on the per-mille scale §3.7 uses — and with
+`ditherMask` reading correctly it fires on a declared negative control. Nothing branches on the
+string, because nothing shipped. It must not be reintroduced, and reintroducing it means
+re-answering the question of whether a 1px contour and a 1px stipple are the same set of pixels,
+because on this corpus they are.
 **`colour-outlier` is retired and `stray-colour` replaces it.** That is a breaking rename and
 §8.3 would normally forbid it, because a code's *meaning* may not change under a stable name.
 Two things make it the right call here. The meaning changed completely — the old code measured
@@ -1438,7 +1542,7 @@ seam and nine genuine stray pixels:
 
 ```
 Dmax                     6      (a full body)  -> no thin-sprite relaxation
-ditherShare              25/612 = 0.0408      (a 4px bayer4 seam at 0.25)  -> no advisory
+ditherShare              25/612 = 41/1000     (a 4px bayer4 seam at 0.25)  -> a measurement, no issue
 isolated                 9      9/612   = 0.0147   -> <= 0.020  -> isolatedQ  750
 diagOnly                 4      4/612   = 0.0065   -> <= 0.008  -> diagQ      900
 colourOrphans            9      9/612   = 0.0147   -> <= 0.020  -> orphanQ    750
@@ -1451,12 +1555,14 @@ scoreQ                   825 - 100 = 725  ->  0.725
 
 `colourOrphans` is **9**, not the 159 the old measure returned. Those 159 boundary pixels are
 now correctly invisible to this dimension: they are the outline's inner edge, the gold-to-green
-material edge and the shading planes, and all three are coherent edges where every pixel
-agrees with the half of its neighbourhood on its own side. The nine that remain are the nine
-actual strays, and the score is the same 0.72 the sprite deserves.
+material edge and the shading planes, and all three are coherent edges where every pixel agrees
+with something. The nine that remain are the nine actual strays, and the score is the same 0.72
+the sprite deserves. That count is the radius-2 predicate's rather than the 4-neighbour one's;
+this drawing is not a corpus case, so the row illustrates the arithmetic rather than transcribing
+a measurement, and the corpus's own numbers are in §7.
 
-Verdict: *"9 isolated px, 4 diagonal-only px, 9 stray-colour px, 6 single-pixel spurs, 1
-near-duplicate pair, dither 4% of the surface."* Every one of those is a specific pixel an
+Verdict: *"9 isolated px, 4 diagonal-only px, 6 single-pixel spurs, 9 stray-colour px, 1
+near-duplicate pair, dither 41/1000 of the surface."* Every one of those is a specific pixel an
 agent can fix with one `despeckle {mode: "both", rect}` and one `quantize_to_palette` — which
 is exactly the loop the report is meant to drive. Note that the issue names no boundary: it
 cannot, because there is nothing wrong with any of them.
@@ -2036,8 +2142,8 @@ tracks *the right thing*. Both are needed, and the second is by far the cheaper 
 - **No discussion before both submissions are in.** Same reason.
 - **Fixed viewing conditions.** 1× (100%) for fine judgement, with a second look at 4× for
   structure. Never judge a whole piece zoomed in — upscaling turns a correct `cluster2` block
-  into a visible dot grid, and raters who judge at 4× will systematically over-report `noise`
-  and `dither-dominant`. The craft guide says this to agents; raters need it more.
+  into a visible dot grid, and raters who judge at 4× will systematically over-report `noise`.
+  The craft guide says this to agents; raters need it more.
 - **Rate the image, not the concept.** No credit for a clever idea, none for a subject the
   rater likes.
 
@@ -2158,45 +2264,92 @@ caught at one row and excused at another — now reads 333 against 420, both cle
 straight-band case is in the corpus and reports `plane-crosses-form`. Lowering `CURVATURE_GATE` was
 never the fix and §3.3 still says why: the box is at 93 and would have been admitted by another route.
 
-**`noise` is implemented and NOT registered, and §4.4's `colourOrphans` does not work.** T-015's
-analyzer and §3.3's `ditherMask` are written, compile, and are on disk; the dimension is deliberately
-absent from the aggregator, because registering it puts 17 corpus cases into mismatch — including
-six clean controls — for a reason that is a property of the *specification*, not of the
-implementation. Two findings, and the second is the more serious one.
+**`noise` is registered, and every reason it was held back turned out to be an implementation
+defect rather than a specification defect.** That is the finding worth keeping, and it has the
+same shape as the one T-012 produced on this dimension: the prose was argued from reasoning, the
+analyzer was written against the prose, and the corpus found that three of the four ways that
+prose could be mis-implemented had been mis-implemented. `silhouette`, `value` and `noise` are
+the three dimensions in the aggregator now, and across the corpus `noise` runs **825..1000 with a
+median of 1000**.
 
-**`colourOrphans` cannot tell a speck from a gradient, and the committed artwork is the proof.**
-Measured over the whole corpus, on the ten real scenes and on the hand-authored subjects: 79/1000 on
-`artwork/verify/lantern-keeper.pixel`, 89 on `autumn-dusk-lake-256`, 100 on `dusk-lake-valley-v2`,
-**153 on `sunset-lighthouse-512.pixel`** — 40,231 pixels of 262,144. §4.4's own diagnosis of the
-measure it replaced was that "distance from the local median" was tracking *boundary length* rather
-than stray pixels, and that what distinguishes a speck from an edge is "the absence of any agreement
-at all". Both are true, and neither survives contact with a smooth ramp: in a gradient a pixel's 4-
-neighbours are the buckets on either side of it, so **having no same-bucket 4-neighbour is the normal
-state of the picture and not a defect.** The measure answers its question correctly and the question
-is the wrong one. This is the T-012 failure wearing different clothes — a dimension that fires on
-clean work is worse than one that misses a defect — and §4.4's `> 8/1000` trigger is two orders of
-magnitude below where a gradient lands. **A threshold change cannot fix it**: the clean controls sit
-at 0 and the landscapes at 79..153, and the *defective* cases also sit at 0, so there is no cut that
-separates them.
+**The alternation counter in §3.3's `ditherMask` was capped at 1.** The scan over each candidate
+component early-exited on the first alternating pixel, as an optimisation, so `alternating` could
+never exceed 1 and the gate `1 * 1000 < 400 * |R|` held for every component `|R| >= 8` could
+produce. `ditherMask` returned nothing on **every case in the corpus**, a perfect 50% checkerboard
+among them, which is the structure it exists to find. It reported "no dither anywhere" and meant
+"this counter cannot exceed 1", and those two are the same sentence from outside. Corrected,
+per-mille `ditherShare` reads **0 on every declared `clean-control`** — all six `control/*`
+negative controls included — and 0 on all three human-rated cases, **1..574 on the ten committed
+artworks** (`artwork/verify/lantern-keeper.pixel` is the 574), **29** on `app/icon.png`, **261**
+on `value/straight-diagonal-32` and **427** on `value/level-set-32`. That last number is what
+removed an advisory instead of tuning one, and §3.3 has the rest.
 
-**`ditherMask` reads 0 on every one of the 65 cases, including the dithered scenes.** This is the more
-serious finding, because `ditherMask` is the quantity T-102's entire conclusion points at, and the
-scene T-102 measured at 2,880 regions per bucket is exactly the picture it should be loudest on. The
-predicate is implemented as specified — one flood fill per component of each occupied adjacent bucket
-pair, `|R| >= 8`, and `>= 400/1000` of `R` with an opposite-bucket 8-neighbour in `R` — and it
-returns nothing. So either §3.3's `>= 8` floor and `400/1000` clause are wrong for a *gradient*
-(the component of `{k, k+1}` in a ramp is a wide band whose interior pixels have no opposite-bucket
-neighbour, so the ratio lands well under 400), or the pair-restriction to *adjacent* buckets misses
-the structure that is actually there. **Until that is settled, the honest statement about the four
-dithered scenes is the one already recorded: the report's `gated` column gives `curvature` and
-`reach` as reasons whose real cause is neither.**
+**§4.4's `colourOrphans` was measuring a gradient, and a 1px outline besides.** Measured over the
+whole corpus, the specified predicate — no same-bucket **4-neighbour** — is false on two of §4.4's
+own worked-example rows. `control/outline-ring-32`, a **declared negative control**, read
+**31/1000** past the `> 8/1000` trigger, because every pixel on the diagonal run of a 1px
+staircase contour reaches the rest of the run only diagonally; and the ten committed scenes read
+**9..153**, because in a ramp a pixel's 4-neighbours are the buckets either side of it, so having
+no same-bucket 4-neighbour is the normal state of a picture and not a defect. The dimension was
+firing on this repository's own clean work, which is the failure §3.5 says is worse than missing a
+defect. Two replacements were measured and **both refuted**: treating a +/-1 bucket as agreement
+takes the 512² scene 153 -> 27 and the 256² one 89 -> 25 while changing
+`control/outline-ring-32` **not at all**, and comparing against the radius-1 range reads 0 on
+that control while re-admitting the 2px specular highlight in
+`artwork/verify/lantern-keeper.pixel` as a stray colour. The predicate that shipped asks radius 2
+for same-bucket agreement **and** requires the pixel to sit outside the lightness range of
+everything within 2px; measured, every declared `clean-control` reads **0** and the ten real
+artworks read **0..10** against the trigger of 8. §4.4 has both refutations in full, because a
+refuted approach is the thing a later revision can least re-derive.
 
-**A third, smaller finding, recorded because it is mine and it is the kind that hides.** The band
-table was first written in descending-bound order and read in that order, so a ratio of 0 matched the
-`<= 50` row and returned the *worst* sub-score: every clean control read 200 instead of 1000. The
-first version of this dimension therefore reported the whole corpus as noisy, which is a loud enough
-failure that it could not be shipped by accident — but it is the reason the first thing to check on any
-future band table here is the direction it is read in.
+**The band table was written in descending-bound order and read in that order**, which inverted
+it: a ratio of 0 matched the `<= 50/1000` row and returned the worst sub-score, so every clean
+control read `noise` **200 of 1000 with all four measures at exactly zero**. The committed table
+was also a band wrong at every row — it had neither the `<= 2/1000 -> 1000` this section
+specifies nor its `> 50/1000 -> 200` floor. After the fix every declared `clean-control` scores
+`noise` 1000. The first thing to check on any band table in this repository is the direction it is
+read in, because every row of a descending one is individually plausible and the defect is
+invisible in review.
+
+**A fourth defect, and it is the one the corpus caught rather than a reader.** The lightness range
+in the new predicate was first accumulated with the pixel's own bucket seeding both ends, which
+makes `own > hi` unsatisfiable and silently exempts every stray *brighter* than its surroundings
+— the common half of the case. `defect/stray-colour-16` read zero orphans with two of them drawn
+in. A predicate that half-works is worse than one that does not run, because the corpus case
+asserting the defect is then the thing that has to be believed.
+
+**`isolated`, `diagOnly` and `spurs` measured clean.** With `ditherMask` corrected, all three
+read **0 on every declared `clean-control`** and **0 on all ten committed artworks**. They fire
+only on `connectivity/diagonal-bridge-16` and `connectivity/contour-staircase-24`, both at
+`diag = 1000/1000`, and both of those declare a real defect. The eleven line sprites in the
+corpus report `noise.isolated/diagOnly/spurs = line-sprite` through AD-4's `unmeasured` map
+rather than reading a 1000 they did not earn.
+
+**`dither-dominant` is gone, and its absence is the measurement.** With the mask working, the
+advisory specified at `ditherShare >= 100/1000` fires on `value/level-set-32` at **427** — a
+declared negative control — and on `value/straight-diagonal-32` at **261**. Both draw 1–2px
+concentric contours and one straight 45° cut, and this section already lists "a 1px outline is the
+target" among the conventions the repository scores positively. **No threshold can fix it**: a 1px
+alternation between two adjacent buckets **is** a dither pattern and **is** a contour line, so they
+are the same set of pixels and §3.3's rule — no gate separates two cases that are equivalent on the
+same pixels — applies directly. A second candidate was measured rather than assumed: adding an
+"interior" clause, the share of the component whose 8-neighbourhood lies wholly inside it, on the
+reasoning that a 1px line has no interior and a filled band does. It does not separate them, and
+it separates them in the wrong order, `value/level-set-32` reading **200** where
+`artwork/verify/lantern-keeper.pixel` reads **141**, because the two `value` cases draw their
+contours **2px apart** and their pair's union set is therefore a band with an interior. Band
+thickness is not the discriminator. `ditherShare` stays on the frame record as a measurement and
+stops being a verdict.
+
+**One accepted cost, stated plainly because there is no ground truth for it either way.** `noise`
+fires `stray-colour` on exactly one committed artwork: `artwork/moonlit-alpine-lake.pixel`, at
+**10/1000** against a trigger of 8. It is a hand-drawn 64×64 scene whose 13 tone buckets make ten
+genuinely isolated pixels entirely plausible, and a pixel-level predicate cannot know what a person
+meant by any of them. Nothing available here would settle whether those ten are mistakes, so this
+is recorded as a cost rather than resolved in either direction — it is not fixed, and it is not
+dropped either, and the corpus transcript carries the code against that case so the next reader
+does not have to re-derive it. If it is ever decided, the deciding argument is a human looking at
+ten pixels, not a threshold.
 
 **Two gaps remain that are not curvature, and it is not `reachQ` either.** The first is `splitQ`:
 `crossesQ` is exactly `splitQ` whenever `bendQ` is 0, so a straight cut is *reported* only when
@@ -2229,26 +2382,45 @@ the least fragmented: 95, 519 and 632 regions per bucket read `reachQ max` 1000,
 those are the three whose `formQ` is measured. The two most fragmented, 2,880 and 1,672, read 215
 and 236. A gate that closes on fragments is doing its job, and this is why **T-102 changed no gate**.
 
-**What is missing is the ability to SAY this rather than let the report infer it**, and the quantity
-that would is §3.3's `ditherMask` — specified, unimplemented, and declared as `noise`'s consumer.
-Until it lands, the `gated` column reports `curvature` and `reach` on pictures whose real reason is
-neither, and all four of those scenes have **both** gates closing something (lighthouse: 192 curvature,
-816 reach). That is recorded rather than papered over, and the state is pinned by a test so that a
-future change that suddenly judges them has to answer why — nothing about the pictures changed.
+**What was missing is the ability to SAY this rather than let the report infer it**, and the
+quantity that would is §3.3's `ditherMask`, which is now implemented and reads **1..574
+per-mille** on the ten committed scenes. Until it landed, the `gated` column reported `curvature`
+and `reach` on pictures whose real reason was neither, and all four of those scenes had **both**
+gates closing something (lighthouse: 192 curvature, 816 reach). That was recorded rather than
+papered over, and the state was pinned by a test so that a future change which suddenly judged them
+would have to answer why.
+
+**Registering a third dimension exposed a question this section does not own.**
+`bleed/full-bleed-scene-32` and `bleed/one-pixel-guard-32` moved from `fail` to `warn` when
+`noise` joined the aggregator. Nothing about either picture changed and no sub-score in either
+changed. What changed is that a **third** dimension now applies to them and reads 1000, while
+`silhouette` **abstains** on both (`no-subject`) — so an abstention was netted against an
+unrelated clean reading. That is the same shape of problem AD-4 was written about, one level up: a
+dimension that is silently absent is indistinguishable from one counted at its best, and here the
+missing thing was not a sub-score inside a dimension but a whole dimension. Whether an abstention
+should be netted at all is an aggregator question belonging to §5 and not to this task, so it is
+recorded as **open** rather than decided here. Until it is decided, the verdicts in this section
+are a statement about an aggregator choice as much as about a gate, which is worth knowing before
+anyone reads one as a property of a picture.
 
 The two real *subjects* in the corpus are not in this state: both have an outline, both have their
 planes gated by `reachQ` as fragments, and both report a measured `formQ` 1000.
 
-**6. `noise` is the dimension most likely to sand a piece flat.** The redesigned
-`colourOrphans` predicate is sharp — it fires only on a pixel that agrees with *nothing* —
-and it is still blind to a 2–3px island of one tone inside another, because those pixels
-agree with each other. Catching that and protecting a 2px specular dot are the same problem,
-and `despeckle` ships `minClusterSize: 2-4` precisely so a cleanup pass will not delete a
-deliberate highlight. The `ditherMask` (§3.3) cannot distinguish a legitimate 2px checkerboard
-from a mistaken 1px stipple, so both are exempted from the noise measures and a heavily
-textured sprite picks up a `dither-dominant` advisory it may not deserve. A `sparse` pattern
-at low coverage is a further miss: at low coverage the region stops being a connected set of
-two adjacent buckets and falls out of the mask entirely.
+**6. `noise` is the dimension most likely to sand a piece flat.** The `colourOrphans`
+predicate is sharp — it fires only on a pixel that agrees with nothing within two pixels *and*
+sits outside the lightness range of everything around it — and it is still blind to a 2–3px island
+of one tone inside another, because such an island contains its own partner and therefore agrees
+with itself. Catching that and protecting a 2px specular dot are the same problem, and
+`despeckle` ships `minClusterSize: 2-4` precisely so a cleanup pass will not delete a deliberate
+highlight; §4.4 records the two replacements that were measured and refuted for exactly that
+reason, and one of them would have started scoring that highlight as a stray colour. Radius 2
+buys the 1px outline back at the price of a stray pixel buried inside a feature narrower than 4px,
+and no threshold removes that without re-admitting the outline. `ditherMask` (§3.3) cannot
+distinguish a legitimate 2px checkerboard from a mistaken 1px stipple, so both are exempted from
+the noise measures — but nothing is *judged* on the result any more, so that ambiguity now costs a
+number on the frame record rather than an advisory an artist has to argue with. A `sparse`
+pattern at low coverage remains a plain miss: at low coverage the region stops being a connected
+set of two adjacent buckets and falls out of the mask entirely.
 
 **7. It measures the frames you name.** A sprite whose frame 0 is strong and frame 5 is
 broken passes when evaluated on frame 0. For an animation, evaluate a *tag* — the aggregator
@@ -2372,7 +2544,6 @@ thresholds per code. See §8.3 for what may and may not change about a row in th
 | `stray-colour` | `noise` | 0.35 | no |
 | `single-pixel-spur` | `noise` | 0.30 | no |
 | `near-duplicate-colours` | `noise` | 0.35 | no |
-| `dither-dominant` | `noise` | 0.35 | no |
 | `outline-missing` | `outline` | 0.20 | no |
 | `outline-gap` | `outline` | 0.25 / 0.35 | no |
 | `outline-inconsistent-weight` | `outline` | 0.45 | no |
@@ -2394,6 +2565,12 @@ rename is deliberate and breaking, because the *meaning* changed completely and 
 stable name with new semantics. Nothing has shipped that branches on the old string; it must
 not be reintroduced.
 
+**Retired before it shipped: `dither-dominant`.** It was specified at
+`ditherShare >= 100/1000`, and with §3.3's `ditherMask` reading correctly it fires on
+`value/level-set-32` at 427 — a declared negative control — because a 1px contour line and a 1px
+stipple are the same set of pixels and no threshold separates them. §4.4 has the measurement and §7
+the argument. `ditherShare` is still reported per-mille on the frame record, as a measurement.
+Nothing branches on the string, and it must not be reintroduced.
 **Added in this amendment: `plane-crosses-form`** (`value`, 0.30 / 0.60, blocking at 0.60) —
 the form-conformance term's issue, and the one that separates a flat sticker from a lit volume.
 

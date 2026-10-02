@@ -8,132 +8,85 @@ All notable changes to dotloom-mcp are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`noise` is the third quality dimension, and it is registered.** Speckle, stray pixels and near
+  duplicate ramp entries, over the worst frame. `docs/EVALUATION.md` §4.4 is the specification.
+- **A showcase, generated through the advertised tool surface only.**
+  `showcase/ironhold-knight/` carries the complete 14-call recipe as replayable `ops.json`, a
+  per-call measurement manifest, and PNGs that are byte-reproducible on every run.
+  `scripts/showcase-build.mjs` drives the real MCP server over stdio and imports nothing from
+  `@pixel/core` — which is the point.
+- **A recipe format, with a reference recipe.** `packages/core/src/recipes.ts` plus
+  `recipes/platformer.recipe.json` and `docs/RECIPES.md`. A recipe is guidance an agent reads and
+  then executes through the existing tools, not a script. There is deliberately no field in it for
+  a score: a format that can carry a target becomes one.
+- **Copy-paste client configuration for claude, cursor, opencode and windsurf**, in `clients/`,
+  with `docs/CLIENTS.md` and its Chinese mirror.
+- **An asset metadata contract.** `docs/ASSET-CONTRACT.md` and `packages/core/src/asset/` define
+  one `meta.json` that the Godot, Unity, Phaser and Excalidraw importers can all consume. Identity
+  is a content hash rather than a document id, because ids are clock-based and two identical
+  sprites drawn a second apart must not have two identities.
+- **`scripts/baseline-rowdiff.mjs`** — a row-keyed diff of the calibration baseline, so a change
+  reads as *this subject, these columns, this direction* rather than as a count of lines.
+
 ### Fixed
 
-- **Four committed scenes have no judged plane because their tone field is dithered, and the gate that
-  was supposed to be at fault is not.** The `reachQ` gate closes the last of the full-bleed scenes and
-  reads its denominator as the subject's bounding box, which on a full-bleed document is the whole canvas
-  — so a plane has to span half the picture to be judged. That is the same shape of error the previous two
-  entries fixed for curvature, and the obvious move is to normalise against the form the plane cuts
-  instead. **Measured, that move is wrong, and this entry records why rather than making it.**
-  Plane extents are small everywhere: median 6..10px against a body of 64..512, `p90` 16..33. On
-  `artwork/sunset-lighthouse-512.pixel` — 512², 1008 terminators — the **largest** plane is 110px where
-  the gate wants 256. A region-relative denominator opens 110 planes there, and they are water ripples
-  and sky sparks: a short plane inside a small region scores *high* on that ratio, so the change admits
-  texture rather than form.
-  Counting 4-connected same-bucket regions says what the pictures are: `lantern-keeper` has 8 regions per
-  bucket, `dusk-lake-valley-agent` 95, `autumn-dusk-lake-256` 519, and `sunset-lighthouse-512`
-  **2,880** — 46,079 regions, 98.8% of them 16 pixels or smaller, in a painting with 16 tones. A
-  hard-edged painting with 16 tones has tens of regions. That is a dithered and gradient tone field, and
-  §4.2's plane definition — both sides an area — finds no plane across a dithered transition at all, so
-  the sun's limb and the water's horizon there were never planes to gate.
-  `reachQ` turns out to be an accidental dither detector pointing the right way: the scenes it opens are
-  the least fragmented ones (95, 519 and 632 regions per bucket read `reachQ max` 1000, 1000 and 996, and
-  those are the three with a measured `formQ`), and the two most fragmented read 215 and 236. **So no gate
-  changed.** What is missing is the ability to *say* that a picture is dithered, and the quantity that
-  would is §3.3's `ditherMask` — specified, unimplemented, and declared as `noise`'s consumer. Until it
-  lands, the report's `gated` column gives `curvature` and `reach` as reasons on pictures whose real reason
-  is neither, and all four of those scenes have both gates closing something. The state is pinned by a
-  test, so a future change that suddenly judges them has to answer why: nothing about the pictures
-  changed.
-
-- **Whether a straight cut was caught depended on where it had been drawn.** The previous entry gave §4.2's
-  curvature gate a second reference and stopped it being blind on a full-bleed document. It did not stop it
-  being a coin toss. The gate asks whether the local form is round, and the second reference read a tone
-  region's curvature over its **whole** boundary — which contains the plane being judged. A straight band
-  drawn across a curved dome therefore read `curvedQ` **260** at one row and **248** at the next, against a
-  gate of 250: the defect was reported where the band crossed a wide part of the dome and excused where it
-  crossed a narrow part, because the band's own straight cut contributed boundary pixels and no corners to
-  the very ratio meant to describe the arc it was cutting. Nobody can act on "your defect was drawn in the
-  wrong place".
-  A new §3.3 quantity, `planeCurvedQ`, reads a region's curvature with **the plane's own boundary removed** —
-  the form the plane cuts, without the plane — and the gate takes the maximum of all three references. The
-  same band now reads 333 and 420, both clear of the gate, and `value/straight-band-over-terrain-64` is in
-  the corpus reporting `plane-crosses-form`. Two properties survive the change, and they are the test of
-  whether the reasoning that refused two shortcuts was sound: a region whose **only** boundary is the plane
-  is left with nothing and reads 0, still "cannot measure"; and a straight-edged box reads 93 before and
-  after, because excluding the band between two straight bands leaves straight runs on both sides.
-  It is per region **pair** and not per terminator, so it is one pass over the canvas rather than one
-  full-boundary rescan per plane — the largest committed scene has 1008 terminators.
-  What it costs, measured: `gated` moved on 8 rows and `curvedQ max` on 4, and **no score moved anywhere**.
-  Nine more planes on the committed artwork became judged and every one came back clean. That is the reason
-  improving rather than the number, and it is a weaker claim than it looks — it means nothing in the corpus
-  got worse, not that the artwork has no defects.
-- **Two bugs in the new curvature reference, both caught by the corpus on their first run.** The exclusion
-  counters were keyed by the *unordered* region pair, so both sides of a pair subtracted the same total and
-  a density came out as **7385** — impossible, since a density cannot exceed 1000. And a pixel with two
-  neighbours in the same region was counted twice, so the excluded boundary could exceed the boundary and
-  the density divided by zero, reading `NaN` on the largest committed scene. Both are recorded next to the
-  quantity rather than in a changelog, because the second is the kind of defect that only shows up on the
-  one document in the corpus with a one-pixel neck in it.
-
-
-
-- **§4.2's curvature gate can now read curvature that does not come from the silhouette.** This is the
-  coverage half of the entry below: the previous change made the form term *honest* about a full-bleed
-  scene, and this one makes it *able to judge* one. The gate asked whether the local form is round and
-  had a single door — the subject's own outline — and on a document that fills its canvas that door is
-  a wall, because the outline is the frame: `curvedQ` read 0–77 on all ten committed scenes against a
-  gate of 250, so every plane in every one of them was exempt. No threshold fixes that, because when
-  the mountain reaches the edges it *is* the frame.
-  A second reference, §3.3's new `regionCurvedQ`, reads the curvature off the shape of the document's
-  own tone regions, and the gate takes the **maximum** of the two. A maximum can only make the gate
-  more permissive, so every plane already judged is still judged with the same numbers and **no
-  `value`, `formQ` or `crossesQ` moved for any subject with a readable outline**; planes that used
-  to be exempt on curvature are now examined instead, and the reading itself changes on most rows
-  (measured: `curvedQ max` moved on 32 of 59). The ten scenes now read 667–880, three of them
-  acquire a measured `formQ` of 1000 that they previously reported as `unmeasured`, and
-  `value/hard-surface-terminator-32` — a straight-edged box, the gate's own negative control —
-  stays at 93 and keeps the exemption that a straight plane across a straight-edged form is
-  correct.
-  Measured limitation, recorded rather than tuned away: whether a straight cut is *caught* still depends
-  on which tone region it crosses (260 against 248 either side of the gate), so the honesty is fixed
-  everywhere and the coverage is not.
-- **The quality scorer's form term was reporting a perfect score on ten finished paintings it had
-  never looked at.** §4.2's curvature gate asks whether the local silhouette is round and reads it
-  off the subject's own outline — and a subject that fills its canvas has no outline, because its
-  boundary *is* the frame. Every plane on all ten of this repository's committed scenes was exempt,
-  every one of them scored zero, and nothing recorded that a zero there meant "not asked" rather
-  than "no defect", so the sub-term read `formQ` 1000 and `value` read 700–950 on a term that had
-  examined nothing. `formQ` is now `null` with a stated reason, and the dimension reports the half
-  it did measure.
-- **`QualityDimension` can now be partly unmeasured, and says which part.** A dimension that is
-  present and half-blind is a shape neither the report's `dimensions` map nor a score can express:
-  `dimensions` is partial, so absence means *not applicable*, and a score cannot say "this half is
-  1000 for a measurement nobody took". The new `unmeasured` field names the sub-scores that were not
-  measured and why, it is **required** rather than optional — a sub-score that is silently absent is
-  indistinguishable from one counted at its best — and an unmeasured sub-score drops its weight with
-  the remainder re-normalised, which is the rule a still sprite's absent `motion` already followed.
-  Two new reason strings are agent-facing API: `'no-judgeable-plane'` for a frame with no tone plane
-  to judge, and `'no-subject'` reused from the dimension-level enum for a full-bleed subject.
-- **The form term ranked a target above a sphere.** §4.2's `bendQ` divided the number of distinct
-  8-step orientations a boundary walks by the number of half-plane orientations, and an open
-  boundary on a convex body cannot use the fourth without closing — so a maximally-turning arc read
-  667 and the ring enclosing it read 1000. The product's own reference artwork, and the translated
-  contours the craft guide teaches, came out 250 per-mille *below* a level-set ring on the same body
-  with the same five tones, the same five planes and no defect on either side. The ladder now
-  saturates at three orientations; the band table did not move, the acceptance pair's separation
-  grew from 325 to 450 per-mille, and the straight-diagonal defect case is unchanged and still
-  blocking.
+- **The noise dimension's band table was written in descending-bound order and read in that order,
+  which inverted it.** A ratio of zero matched the loosest row and returned the *worst* sub-score,
+  so every clean negative control scored `noise` **200 of 1000** with all four measures reading
+  exactly zero. It was also wrong by a band. `pnpm test` is green and every declared clean control
+  now scores 1000.
+- **`ditherMask` could never return anything.** The alternation scan exited on the first pixel it
+  found, so the counter was capped at 1 and the ratio could not clear its own gate — on all 67
+  corpus cases, including a perfect 50% checkerboard. It reported "no dither anywhere" while
+  meaning "this counter cannot exceed 1".
+- **The neighbour counts included the pixel itself**, which made `isolated` and `diagOnly`
+  unsatisfiable and gave `spurs` the wrong shape: one-pixel antennas were invisible and two of the
+  dimension's five codes had never been emitted once.
+- **`colourOrphans` fired on the repository's own clean work.** It asked whether a pixel has a
+  same-bucket 4-neighbour, and on a 1px staircase outline the answer is no at every corner — so a
+  declared negative control read 31/1000 against a trigger of 8, and the ten committed scenes read
+  9..153 because in a gradient the neighbours are the steps either side. Two replacements were
+  measured and refuted before a third survived: the measure now asks whether anything within
+  Chebyshev 2 agrees *and* whether the pixel's own lightness sits inside the range its
+  surroundings span.
+- **The OpenCode configuration in the README was invalid.** Validated against the client's published
+  schema, `mcp.servers.dotloom-mcp` matches none of its branches: OpenCode read it as a server named
+  `servers` with no `type` and no `command`, and never configured anything — silently. The same bug
+  was in `docs/REFERENCE.md`, which is what a registry reviewer copies.
+- **`npx.cmd` is not a working command on Windows** for this server: `EINVAL` on every Node version
+  the package supports. The Windows configuration goes through `cmd` + `/c`.
+- **Two OpenCode claims that could not be verified have been removed rather than hedged** — the
+  non-interactive `opencode mcp add <name> -- <cmd>` form, and the `/mcps` slash command.
 
 ### Changed
 
-- **`docs/EVALUATION.md` §4.2 now describes the scorer that exists.** It specified the `dist`-spread
-  form term that the implementation replaced two tasks ago; `crossesQ`, `bendQ`, `splitQ`, `reachQ`
-  and `curvedQ` appeared nowhere in the specification, the scoring table keyed on a quantity nothing
-  computed, the issue-code row fired on it, and the worked example was arithmetic that had never been
-  run. The scoring table's 150 "no penalty" boundary had been carried across from the old
-  quantity's scale with its numbers unchanged and never re-derived, which is how it came to
-  penalise the product's own taught construction. The rewritten section keeps the rejected
-  alternative and the measurement that rejected it, and the worked example is now two committed
-  corpus cases rather than two sheets of arithmetic.
-- **The generated calibration report grew a column it needed.** §2 prints `curvedQ max` and
-  `reachQ max` — the maximum over every plane rather than the worst plane's readings, because
-  reading them off the worst plane prints `-` on exactly the rows the finding is about — plus a
-  `gated` column giving the count per gate, and §3 carries an `unmeasured sub-scores` column so an
-  absent sub-score is re-derived on every run instead of being remembered from a comment.
+- **§4.4 has no `dither-dominant` advisory.** With `ditherMask` working it fired on
+  `value/level-set-32`, a declared negative control, because a 1px contour line and a 1px stipple
+  are the same set of pixels — and no threshold separates two things that are equivalent on the same
+  pixels. `ditherShare` is reported as a measurement and nothing is asserted about intent.
 
-## [0.4.2] - 2026-09-27
+### Known limitations
+
+- **`near-duplicate-colours` is a false positive on smooth artwork, and the flat penalty is its own
+  argument against itself.** The shipped icon reads **7,842 pairs** across 4,871 distinct colours,
+  against `0,1,1,2,3,4,5,10,18,50` for the ten finished paintings — bimodal with a 157× gap, and
+  the outlier is the cleanest asset in the repository. The penalty is flat because the count cannot
+  *size* a decision error; the trigger is `pairs >= 1`, the same count. If it cannot size the
+  defect it cannot find it either. Separating the two needs a different measurement — membership in
+  one material's run, rather than proximity — not a different threshold.
+- **Registering a dimension can move a verdict away from a real defect.** On `lantern-keeper`,
+  adding a weight-120 dimension that reads 970 pushed the report 30‰ further from the sprite's one
+  advisory, because it outvoted the weight-300 dimension that has something to say. The floors do
+  not catch it. Whether a clean reading should offset a real advisory — or offset another
+  dimension's abstention, which is what happened to the two full-bleed margin cases — is an
+  open aggregator question.
+
+### Fixed
+
+- **Four committed scenes have no judged plane because their tone field is dithered, and the gate that
+  was supposed to be at fault is not.** The `reachQ` gate closes the last of the full-bleed scenes and## [0.4.2] - 2026-09-27
 
 ### Added
 

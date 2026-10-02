@@ -2236,7 +2236,7 @@
       "defects": [
         {
           "kind": "clean-control",
-          "note": "Nothing was injected; this is the ten real full-bleed scenes in miniature, and it is where T-012's bug lived. Measured on its own the mask scores 800 with a blocking shape-clipped, because borderTouch is 4 whenever ink runs to the frame. The report does not say that: it says the dimension does not apply, and records why."
+          "note": "Nothing was injected; this is the ten real full-bleed scenes in miniature, and it is where T-012's bug lived. Measured on its own the mask scores 800 with a blocking shape-clipped, because borderTouch is 4 whenever ink runs to the frame. The report does not say that: it says the dimension does not apply, and records why. T-015 moved this expectation from fail to warn, and the move is a property of the aggregate rather than of the picture. silhouette is EXCLUDED here with no-subject, because a full-bleed subject has no outline to read; before noise was registered the measured set was {value 400} and the verdict was fail. noise applies to a full-bleed document and reads 1000, so the third dimension netted a clean reading against the first dimension abstention. warn still says what the case exists to say - not a perfect subject - and whether an abstention should be netted at all is an aggregator question this task does not own."
         }
       ],
       "recipe": {
@@ -2288,7 +2288,7 @@
           "subject-undersized",
           "fragmented-silhouette"
         ],
-        "verdict": "fail",
+        "verdict": "warn",
         "noBlocking": true,
         "preconditions": {
           "silhouette": "no-subject"
@@ -2335,7 +2335,7 @@
       "defects": [
         {
           "kind": "clean-control",
-          "note": "Nothing injected. The knife-edge T-018 found and solved: identical ink, one pixel of frame, and the predicate has to answer 'cannot measure' rather than 'a perfect subject'. The measure block below is the measurement that was never delivered, which is why the corpus records measurements even for excluded cases."
+          "note": "Nothing injected. The knife-edge T-018 found and solved: identical ink, one pixel of frame, and the predicate has to answer 'cannot measure' rather than 'a perfect subject'. The measure block below is the measurement that was never delivered, which is why the corpus records measurements even for excluded cases. T-015 moved this expectation from fail to warn, and the move is a property of the aggregate rather than of the picture. silhouette is EXCLUDED here with no-subject, because a full-bleed subject has no outline to read; before noise was registered the measured set was {value 400} and the verdict was fail. noise applies to a full-bleed document and reads 1000, so the third dimension netted a clean reading against the first dimension abstention. warn still says what the case exists to say - not a perfect subject - and whether an abstention should be netted at all is an aggregator question this task does not own."
         }
       ],
       "recipe": {
@@ -2417,7 +2417,7 @@
             800
           ]
         },
-        "verdict": "fail"
+        "verdict": "warn"
       }
     },
     {
@@ -7077,7 +7077,8 @@
           "flat-value",
           "hue-carries-form",
           "key-light-inconsistent",
-          "narrow-value-range"
+          "narrow-value-range",
+          "near-duplicate-colours"
         ],
         "verdict": "fail",
         "preconditions": {
@@ -8116,6 +8117,589 @@
             "silhouette": "no-subject"
           }
         }
+      },
+    {
+      "id": "defect/stray-colour-16",
+      "label": "A 12x12 body with two single pixels of a far-off colour buried inside it: colourOrphans positive",
+      "tier": "synthetic",
+      "provenance": "generated",
+      "pair": [
+        "noise/stray-colour"
+      ],
+      "defects": [
+        {
+          "kind": "stray-colour",
+          "note": "Two pixels of #8a6a2f inside a #3a2f2a body, each at least 4px from any edge of it, so nothing within Chebyshev 2 is the same lightness and neither pixel bucket is inside the range its surroundings span. N is 144 and the count is 2, so the ratio is 14/1000 against the \"> 8/1000\" trigger of 4.4. **The trigger is why there are two of them and not one**: at 16x16 a single stray reads 7/1000 and is correctly silent. Only stray-colour is declared here, because every other expectation in this file is derived by hand and the codes this body also produces are not the ones under test."
+        }
+      ],
+      "recipe": {
+        "canvas": {
+          "w": 16,
+          "h": 16
+        },
+        "layers": [
+          "Base"
+        ],
+        "palette": [
+          "#3a2f2a",
+          "#8a6a2f"
+        ],
+        "ops": [
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              2,
+              2,
+              12,
+              12
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              7,
+              5,
+              1,
+              1
+            ],
+            "color": "pal:1",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              8,
+              8,
+              1,
+              1
+            ],
+            "color": "pal:1",
+            "fill": true
+          }
+        ]
+      },
+      "expect": {
+        "codes": [
+          "flat-value",
+          "key-light-inconsistent",
+          "stray-colour"
+        ],
+        "absent": [
+          "thin-profile",
+          "detached-pieces",
+          "interior-hole",
+          "shape-clipped",
+          "subject-undersized",
+          "fragmented-silhouette"
+        ],
+        "noBlocking": false,
+        "preconditions": {
+          "silhouette": null
+        },
+        "connectivity": {
+          "four": 1,
+          "eight": 1
+        },
+        "measure": {
+          "N": [
+            144
+          ],
+          "components": [
+            1
+          ],
+          "shareQ": [
+            1000
+          ]
+        }
       }
+    },
+    {
+      "id": "defect/near-duplicate-ramp-16",
+      "label": "Two ramp entries 8 apart on every channel, each covering 72 pixels: the flat near-duplicate penalty",
+      "tier": "synthetic",
+      "provenance": "generated",
+      "defects": [
+        {
+          "kind": "near-duplicate-colours",
+          "note": "#3a2f2a and #3a3732 are exactly 8 apart on every channel, which is the \"<= 8\" clause of 4.4 read as reached rather than passed, and each covers 72 solid pixels against the \">= 8\" floor. **The count cannot size this**: 4.4 makes it a flat -100 rather than a band, because two ramp entries three steps apart are a decision error rather than a frequency one, and this case is one pair. The two entries are drawn as flat fields rather than as a ramp because a ramp would put a boundary between them and colourOrphans would then have a gradient to disagree about."
+        }
+      ],
+      "recipe": {
+        "canvas": {
+          "w": 16,
+          "h": 16
+        },
+        "layers": [
+          "Base"
+        ],
+        "palette": [
+          "#3a2f2a",
+          "#3a3732"
+        ],
+        "ops": [
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              2,
+              2,
+              12,
+              12
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              2,
+              2,
+              12,
+              6
+            ],
+            "color": "pal:1",
+            "fill": true
+          }
+        ]
+      },
+      "expect": {
+        "codes": [
+          "flat-value",
+          "key-light-inconsistent",
+          "narrow-value-range",
+          "near-duplicate-colours"
+        ],
+        "absent": [
+          "thin-profile",
+          "detached-pieces",
+          "interior-hole",
+          "shape-clipped",
+          "subject-undersized",
+          "fragmented-silhouette",
+          "stray-colour"
+        ],
+        "noBlocking": false,
+        "preconditions": {
+          "silhouette": null
+        },
+        "connectivity": {
+          "four": 1,
+          "eight": 1
+        },
+        "measure": {
+          "N": [
+            144
+          ],
+          "components": [
+            1
+          ],
+          "shareQ": [
+            1000
+          ]
+        }
+      }
+    },
+    {
+      "id": "defect/isolated-pixels-18",
+      "label": "A 12x12 body with two single pixels floating two pixels clear of it: nothing solid within Chebyshev 1 of either",
+      "tier": "synthetic",
+      "provenance": "generated",
+      "defects": [
+        {
+          "kind": "isolated-pixels",
+          "note": "The body ends at x=14 and both loose pixels are at x=16, so the nearest body pixel to either is Chebyshev 2 away and nothing solid lies within Chebyshev 1: n8 == 0, which is §4.4's `isolated` — and the predicate `neighbourCounts` cannot satisfy at all unless a pixel is excluded from its own neighbour count. N is 144 + 2 = 146, so the ratio is rhu(2000, 146) = floor(2073 / 146) = 14 against the \"> 8/1000\" trigger, and 14 <= 20 puts isolatedQ on the 750 row. **Two and not one, and the trigger is why:** a single floating pixel is rhu(1000, 146) = 7, inside the trigger and correctly silent — the same arithmetic that puts two strays in `defect/stray-colour-16`. **The canvas is 18x18 on purpose:** two clear columns plus the body's 12 is 14, and on a 16-wide canvas the only column two away from a body ending at x=12 is x=14 — which is the last column, so the pixel would touch the border and `borderTouch` would fire. x=16 on 18 leaves the loose pixel interior with `borderTouch` 0, and the measurement under test is the neighbour count rather than a crop. **Dmax is 5** on a 12x12 body, so §4.4's thin-sprite doubling of the bounds does not apply and the 8/1000 trigger stands unchanged. **A floating pixel is also a detached component, and `detached-pieces` still does not fire:** §4.1's row needs `strayRatio > 2/100`, and two stray pixels of 146 is rhu(2000, 146) = 14/1000 — 1.4 per cent, inside the row — so the code is listed under `absent` and not declared here. That is a fact about §4.1's threshold rather than about this drawing, and it is recorded rather than tuned: §3.3 makes a threshold a product decision, and no cut on this count separates \"two pixels somebody left behind\" from \"a deliberate second mass\" without a question about intent that a pixel cannot answer. The two `value` codes are the fixture's, not the defect's: one bucket gives `flat-value` on `buckets <= 1` and `narrow-value-range` on `range 0 < 45`, while `colourOrphans` is 0 by §4.4's own exclusion — every body pixel has a same-bucket neighbour within Chebyshev 2, and the two loose pixels have no neighbours at all, which that predicate explicitly refuses to count because `isolated` is the measure for it."
+        }
+      ],
+      "recipe": {
+        "canvas": {
+          "w": 18,
+          "h": 18
+        },
+        "layers": [
+          "Base"
+        ],
+        "palette": [
+          "#3a2f2a"
+        ],
+        "ops": [
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              3,
+              3,
+              12,
+              12
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              16,
+              5,
+              1,
+              1
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              16,
+              12,
+              1,
+              1
+            ],
+            "color": "pal:0",
+            "fill": true
+          }
+        ]
+      },
+      "expect": {
+        "codes": [
+          "flat-value",
+          "isolated-pixels",
+          "narrow-value-range"
+        ],
+        "absent": [
+          "detached-pieces",
+          "diagonal-seam",
+          "fragmented-silhouette",
+          "interior-hole",
+          "shape-clipped",
+          "single-pixel-spur",
+          "stray-colour",
+          "subject-undersized",
+          "thin-profile"
+        ],
+        "noBlocking": false,
+        "verdict": "fail",
+        "preconditions": {
+          "silhouette": null
+        },
+        "connectivity": {
+          "four": 3,
+          "eight": 3
+        },
+        "measure": {
+          "N": [
+            146
+          ],
+          "components": [
+            3
+          ],
+          "largest": [
+            144
+          ],
+          "strayPixels": [
+            2
+          ],
+          "shareQ": [
+            986
+          ],
+          "perimeter": [
+            56
+          ],
+          "subjectPerimeter": [
+            48
+          ],
+          "holeCount": [
+            0
+          ],
+          "borderTouch": [
+            0
+          ],
+          "spanQ": [
+            667
+          ],
+          "compactnessQ": [
+            785
+          ],
+          "scoreQ": [
+            1000
+          ]
+        }
+      }
+    },
+    {
+      "id": "defect/single-pixel-spur-16",
+      "label": "A 10x10 body with a two-pixel antenna hung off its right edge: the tip has exactly one solid 8-neighbour",
+      "tier": "synthetic",
+      "provenance": "generated",
+      "defects": [
+        {
+          "kind": "single-pixel-spur",
+          "note": "The antenna at (13,8) and (14,8) is 4-connected to the body, so the drawing is one component and `silhouette` has nothing to say about it. The tip at (14,8) has exactly one solid 8-neighbour — (13,8), orthogonally — which is §4.4's `spurs` and nothing else; the pixel behind it has two. N is 100 + 2 = 102, so the ratio is rhu(1000, 102) = floor(1051 / 102) = 10 against the \"> 8/1000\" trigger, and 10 <= 20 puts spurQ on the 750 row. **The canvas is 16x16 on purpose and this is the case's arithmetic, not its framing:** §4.4's trigger is a ratio of the solid count, so the identical drawing is rhu(1000, 146) = 7 on an 18x18 canvas — inside the trigger, with spurQ 900 and no code at all. A case drawn at that size would have been a green row proving nothing, and §3.2's \"acceptance uses the discriminating case\" is the whole argument for the 16x16. **Dmax is 4** on a 10x10 body, so the bounds are not doubled and the antenna does not make the subject a line sprite (`Dmax <= 1`); a line sprite would drop `spurs` from the measurement altogether rather than grade it. `isolated` and `diagOnly` are 0: the antenna's pixels each have one orthogonal neighbour, and every body pixel has at least two. **`perimeter` is 44 and not 46, and that is worth reading twice:** a 10x10 body alone has 40, the antenna pixel behind the tip adds 2 (up and down) and the tip adds 3 (up, down and the open side), but hanging the antenna on the body's right edge also *removes* one of the body's own 10 boundary transitions — the pixel at (12,8) no longer has a transparent neighbour to its right — so 40 - 1 + 2 + 3 = 44. `compactnessQ` is read off the subject's own numbers, `rhu(4*355*1000*102, 113*44*44) = 662`. The two `value` codes are the fixture's — one bucket, so `flat-value` on `buckets <= 1` and `narrow-value-range` on `range 0 < 45`."
+        }
+      ],
+      "recipe": {
+        "canvas": {
+          "w": 16,
+          "h": 16
+        },
+        "layers": [
+          "Base"
+        ],
+        "palette": [
+          "#3a2f2a"
+        ],
+        "ops": [
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              3,
+              3,
+              10,
+              10
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              13,
+              8,
+              1,
+              1
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              14,
+              8,
+              1,
+              1
+            ],
+            "color": "pal:0",
+            "fill": true
+          }
+        ]
+      },
+      "expect": {
+        "codes": [
+          "flat-value",
+          "narrow-value-range",
+          "single-pixel-spur"
+        ],
+        "absent": [
+          "detached-pieces",
+          "diagonal-seam",
+          "fragmented-silhouette",
+          "interior-hole",
+          "isolated-pixels",
+          "shape-clipped",
+          "stray-colour",
+          "subject-undersized",
+          "thin-profile"
+        ],
+        "noBlocking": false,
+        "verdict": "fail",
+        "preconditions": {
+          "silhouette": null
+        },
+        "connectivity": {
+          "four": 1,
+          "eight": 1
+        },
+        "measure": {
+          "N": [
+            102
+          ],
+          "components": [
+            1
+          ],
+          "largest": [
+            102
+          ],
+          "strayPixels": [
+            0
+          ],
+          "shareQ": [
+            1000
+          ],
+          "perimeter": [
+            44
+          ],
+          "subjectPerimeter": [
+            44
+          ],
+          "holeCount": [
+            0
+          ],
+          "borderTouch": [
+            0
+          ],
+          "spanQ": [
+            625
+          ],
+          "compactnessQ": [
+            662
+          ],
+          "scoreQ": [
+            1000
+          ]
+        }
+      }
+    },
+    {
+      "id": "defect/diagonal-seam-24x20",
+      "label": "A 12x12 body with a six-pixel 1px diagonal run two columns clear of it: every pixel of the run touches the drawing diagonally only",
+      "tier": "synthetic",
+      "provenance": "generated",
+      "defects": [
+        {
+          "kind": "diagonal-seam",
+          "note": "The run runs (16,2) to (21,7). The body ends at x=13, so the nearest body pixel to (16,2) is Chebyshev 3 away and nothing solid is within Chebyshev 1 of the run's first pixel; along the run every pixel reaches only its two immediate neighbours, and both are diagonal, so n4 == 0 on all six and n8 == 2 on the four interior pixels. That is §4.4's `diagOnly`, and its ratio is rhu(6000, 150) = floor(6075 / 150) = 40 against the \"> 8/1000\" trigger, landing in the `<= 50/1000` row at diagQ 500. **The body is load-bearing and not decoration.** A bare 1px run is a line sprite — `Dmax <= 1`, so §4.4 drops `isolated`, `diagOnly` and `spurs` from the measurement and `diagQ` is `null` — which is exactly why `connectivity/diagonal-bridge-16` and `connectivity/contour-staircase-24` cannot carry this code: their `diag` of 1000/1000 was a raw ratio nobody was ever shown. The 12x12 body beside the run holds Dmax at 5, so the sub-score exists and the issue can be raised."
+        },
+        {
+          "kind": "single-pixel-spur",
+          "note": "**The run's two ends read `n8 == 1` as well** — (16,2) reaches only (17,3) and (21,7) only (20,6) — so `spurs` is 2 and the ratio is rhu(2000, 150) = 13, past the same trigger and into the same `<= 20/1000` row at spurQ 750. A 1px diagonal seam is simultaneously the shape `single-pixel-spur` names, and that is a true property of the drawing rather than a defect in it: the run has two endpoints and an endpoint of a 1px chain has exactly one neighbour by construction. It is declared here because `expect.codes` is an exact match, and left declared rather than suppressed because hiding it would be a fixture that disagrees with its own note."
+        },
+        {
+          "kind": "detached-pieces",
+          "note": "The run is 8-connected and 4-disconnected, so §4.1's `components` — 4-connected, per §3.3 — reads **7**, not 2: the body and six singletons. That is the same reading `connectivity/diagonal-bridge-16` already carries, and the row is worth checking against it rather than against the eye. 6 stray pixels of 150 is `rhu(6000, 150) = 40/1000`, past §4.1's `> 2/100` strayRatio, and `strayCount` 6 is `>= 2`, so the -150 row is the one that applies. §4.4's message for the two codes above is the same fact from two angles — at half scale, under a filter, or on a CRT a diagonal contact disappears — and both are the truth about this drawing. **The -450 adjustment floor is not reached:** the total is -150, `share` is rhu(144000, 150) = 960/1000 which is `>= 90/100` and `< 98/100`, so the base is the 900 row and `scoreQ` is 750. **`fragmented-silhouette` does not fire** — its own row needs `share < 0.50` and the largest piece is 144 of 150 — so the six strays cost 150 per-mille and no code that blocks delivery."
+        }
+      ],
+      "recipe": {
+        "canvas": {
+          "w": 24,
+          "h": 20
+        },
+        "layers": [
+          "Base"
+        ],
+        "palette": [
+          "#3a2f2a"
+        ],
+        "ops": [
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              2,
+              2,
+              12,
+              12
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "pixels",
+            "layer": "Base",
+            "color": "pal:0",
+            "points": [
+              [
+                16,
+                2
+              ],
+              [
+                17,
+                3
+              ],
+              [
+                18,
+                4
+              ],
+              [
+                19,
+                5
+              ],
+              [
+                20,
+                6
+              ],
+              [
+                21,
+                7
+              ]
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "codes": [
+          "detached-pieces",
+          "diagonal-seam",
+          "flat-value",
+          "narrow-value-range",
+          "single-pixel-spur"
+        ],
+        "absent": [
+          "fragmented-silhouette",
+          "interior-hole",
+          "isolated-pixels",
+          "shape-clipped",
+          "stray-colour",
+          "subject-undersized",
+          "thin-profile"
+        ],
+        "noBlocking": false,
+        "verdict": "fail",
+        "preconditions": {
+          "silhouette": null
+        },
+        "connectivity": {
+          "four": 7,
+          "eight": 2
+        },
+        "measure": {
+          "N": [
+            150
+          ],
+          "components": [
+            7
+          ],
+          "largest": [
+            144
+          ],
+          "strayPixels": [
+            6
+          ],
+          "shareQ": [
+            960
+          ],
+          "perimeter": [
+            72
+          ],
+          "subjectPerimeter": [
+            48
+          ],
+          "holeCount": [
+            0
+          ],
+          "borderTouch": [
+            0
+          ],
+          "spanQ": [
+            600
+          ],
+          "compactnessQ": [
+            785
+          ],
+          "scoreQ": [
+            750
+          ]
+        }
+      }
+    }
   ]
 }

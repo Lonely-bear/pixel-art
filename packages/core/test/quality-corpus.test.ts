@@ -33,7 +33,9 @@ import {
 } from '../src/quality/measure.js';
 import { measureSilhouette } from '../src/quality/silhouette.js';
 import { measureValue } from '../src/quality/value.js';
+import { measureNoise } from '../src/quality/noise.js';
 import { makeId } from '../src/ids.js';
+import type { Sprite } from '../src/document.js';
 import { serializeSprite } from '../src/serialize.js';
 import * as measure from '../src/quality/measure.js';
 import * as silhouette from '../src/quality/silhouette.js';
@@ -104,6 +106,21 @@ function row(id: string) {
 const synthetic = (): SyntheticCase[] => SPEC.cases.filter((c): c is SyntheticCase => c.tier === 'synthetic');
 const real = (): RealCase[] => SPEC.cases.filter((c): c is RealCase => c.tier === 'real');
 const human = (): HumanCase[] => SPEC.cases.filter((c): c is HumanCase => c.tier === 'human');
+
+/**
+ * `noise`'s own frame record for one case, measured here rather than read off the row.
+ *
+ * `CorpusRow` carries `silhouette`'s and `value`'s numbers because those two are the ones §7.2's
+ * findings are argued from; `noise`'s are not on the row, and reading them off the generated report
+ * instead would mean asserting against the artifact this test regenerates. Re-measuring through
+ * `measureNoise` — the same shared measurement §4.4 is written against — keeps the assertion on the
+ * analyzer rather than on the markdown.
+ */
+function noiseFrameOf(id: string) {
+  const sprite = buildCase(SPEC.cases.find((entry) => entry.id === id)!);
+  if (sprite === null) throw new Error(`the corpus has no buildable case "${id}"`);
+  return measureNoise(createQualityContext(sprite))[0];
+}
 
 /**
  * Every code `silhouette` can emit, from `docs/EVALUATION.md` Appendix A.
@@ -213,8 +230,21 @@ describe('the corpus is a regression guard, not a report', () => {
     // came to be missing from it, and why the sixth is the last one anyone should expect to add by
     // hand. A new dimension should add a case *and* a row here in the same commit, and the
     // companion test below is what notices when only one of the two happened.
+    //
+    // **Was 14, `noise` made it 16, and it is 19 now.** `defect/stray-colour-16` and
+    // `defect/near-duplicate-ramp-16` were that dimension's first two cases ever, and `noise`
+    // arriving with six codes is precisely the situation the paragraph above warns about. Two of its
+    // six were on this list and four were not, and the reason was not an oversight in the list but a
+    // measurement in the source: `noise`'s `neighbourCounts` counted each pixel as its own
+    // neighbour, so `isolated` (`n8 == 0`) and `diagOnly` (`n4 == 0`) were unsatisfiable and `spurs`
+    // (`n8 == 1`) had silently become `isolated`. `defect/isolated-pixels-18`,
+    // `defect/single-pixel-spur-16` and `defect/diagonal-seam-24x20` are the other three, so **five
+    // of `noise`'s five declared codes are now on this list**, and the sixth (`dither-dominant`) is
+    // retired in §4.4 rather than uncovered — see the coverage test below, which no longer needs an
+    // exception to say the same thing.
     expect([...emitted].sort()).toEqual([
       'detached-pieces',
+      'diagonal-seam',
       'empty-frame',
       'flat-value',
       'fragmented-silhouette',
@@ -222,10 +252,14 @@ describe('the corpus is a regression guard, not a report', () => {
       'highlight-blown',
       'hue-carries-form',
       'interior-hole',
+      'isolated-pixels',
       'narrow-value-range',
+      'near-duplicate-colours',
       'plane-crosses-form',
       'shadow-crushed',
       'shape-clipped',
+      'single-pixel-spur',
+      'stray-colour',
       'subject-undersized',
       'thin-profile',
     ]);
@@ -1152,17 +1186,65 @@ describe("this repository's own artwork, which is real and unlabelled", () => {
     // grows on real work is as loud here as a `silhouette` one is in the test above. Three of the
     // ten carry `key-light-inconsistent` and one of them carries `hue-carries-form` at the advisory
     // severity; nothing blocks, and the `value` scores run 750..950.
+    //
+    // **The union and the list below are RECORDED MEASUREMENTS, not derived expectations, and this is
+    // the one place in this block where that has to be said out loud.** They were read off the
+    // report, because §4.4's near-duplicate rule has no closed-form answer for an arbitrary committed
+    // artwork: it is a count of pairs over whatever ramp the picture happens to carry, and the only
+    // honest way to write it down is to record what the analyzer said. What *is* derived is each
+    // individual entry, and the numbers are in the two paragraphs below. `value`'s side of both
+    // lists is unchanged — §7.2's line-by-line diff has `silhouette` and `value` at zero movement —
+    // so what moved is `noise`'s contribution and nothing else.
     const scenes = real().filter((entry) => row(entry.id).preconditions.silhouette === 'no-subject');
     const said = [...new Set(scenes.flatMap((entry) => row(entry.id).actualCodes))].sort();
-    expect(said).toEqual(['hue-carries-form', 'key-light-inconsistent']);
+    expect(said).toEqual(['hue-carries-form', 'key-light-inconsistent', 'near-duplicate-colours', 'stray-colour']);
+    // **Nine of the ten, and every one of them for `noise`'s reason.** Before `noise` registered this
+    // was three; the six that joined are the six whose ramp has two entries within Chebyshev 8 of
+    // each other. The one scene still silent is `artwork/dusk-lake-valley-agent2.pixel`, measured
+    // `nearDuplicatePairs` 0 — and it is silent for a good reason rather than by luck, which is what
+    // makes it the control this test needs: it is the same painting as
+    // `artwork/dusk-lake-valley-agent.pixel` (same 256x256, same 12 buckets, 65,297 vs 65,536 solid
+    // pixels) and the two differ in the one thing this measure looks at. That is the cleanest
+    // evidence in the file that `nearDuplicatePairs` tracks the ramp and not the picture.
     const flagged = scenes
       .map((entry) => ({ id: entry.id, codes: row(entry.id).actualCodes }))
       .filter((entry) => entry.codes.length > 0);
     expect(flagged.map((entry) => entry.id).sort()).toEqual([
+      'artwork/autumn-dusk-lake-256.pixel',
+      'artwork/dusk-lake-valley-agent.pixel',
       'artwork/dusk-lake-valley-v2.pixel',
+      'artwork/dusk-lake-valley-v3.pixel',
+      'artwork/dusk-lake-valley.pixel',
       'artwork/moonlit-alpine-lake-fast.pixel',
+      'artwork/moonlit-alpine-lake.pixel',
       'artwork/sunset-lighthouse-512-baseline-model-a.pixel',
+      'artwork/sunset-lighthouse-512.pixel',
     ]);
+    // **The per-scene counts behind that list, so the reader can see which is which rather than
+    // taking nine names on trust.** `nearDuplicatePairs` over the ten, ascending: 0, 1, 1, 2, 3, 4, 5,
+    // 10, 18 and 50 — every scene with two ramp entries within Chebyshev 8 of each other. The tenth
+    // entry, `dusk-lake-valley-agent2`, reads 0.
+    const pairs = scenes
+      .map((entry) => ({ id: entry.id, nd: noiseFrameOf(entry.id).nearDuplicatePairs }))
+      .sort((a, b) => a.nd - b.nd);
+    expect(pairs.filter((entry) => entry.nd === 0).map((entry) => entry.id)).toEqual([
+      'artwork/dusk-lake-valley-agent2.pixel',
+    ]);
+    // **And `stray-colour`, which is the one real false positive on the committed artwork and stays
+    // on the record.** `artwork/moonlit-alpine-lake.pixel` reads `colourOrphans` 43 against `N` 4096,
+    // which is `rhu(43000, 4096) = 10` per-mille against §4.4's `> 8/1000` trigger. The other nine
+    // scenes read 0..8 per-mille, and the loudest of them —
+    // `artwork/sunset-lighthouse-512-baseline-model-a.pixel` at 2037 of 262,144, which is
+    // `rhu(2037000, 262144) = 8` — is exactly **on** the trigger rather than past it, so the corpus's
+    // nearest miss on this rule is one per-mille away and the false positive is one pixel-count past
+    // the same line. It is the same file `artwork/moonlit-alpine-lake-fast.pixel` is, at the other
+    // setting. It is an advisory at 0.35, so nothing blocks.
+    expect(row('artwork/moonlit-alpine-lake.pixel').actualCodes).toContain('stray-colour');
+    expect(row('artwork/moonlit-alpine-lake.pixel').blocking).toEqual([]);
+    expect(noiseFrameOf('artwork/moonlit-alpine-lake.pixel').colourOrphans).toBe(43);
+    expect(
+      noiseFrameOf('artwork/sunset-lighthouse-512-baseline-model-a.pixel').colourOrphans,
+    ).toBe(2037);
     // **§4.2's `keyLight` is a subject-level check being applied to scenes, and this is the
     // measurement.** It samples two ninths of `bounds` and subtracts, on the assumption that the
     // corners are two sides of one lit form. In a landscape they are different materials, so the
@@ -1422,11 +1504,81 @@ describe("this repository's own artwork, which is real and unlabelled", () => {
     const icon = row('app/icon.png');
     expect(icon.scores.silhouette).toBe(1000);
     // The icon is the one real asset `value` says nothing about: 12 buckets, a 479px `Dmax` and a
-    // `curvedQ` of 0, and no code from either dimension. Worth having, because it is the counterexample
+    // `curvedQ` of 0, and no code from that dimension. Worth having, because it is the counterexample
     // to "every real asset is a flat sticker the curvature gate cannot see".
-    expect(icon.actualCodes).toEqual([]);
+    //
+    // **`noise` says something, and this is a RECORDED MEASUREMENT on a committed clean asset, not a
+    // derived expectation — a known false positive, written down rather than updated away.** Nothing
+    // here is a claim that the icon is badly made. The numbers, all measured on
+    // `packages/app/build/icon.png` as committed:
+    //
+    //   1024x1024, 878,544 solid pixels, 4,871 distinct solid colours,
+    //   836 of them covering the ">= 8 pixels" floor §4.4 sets,
+    //   nearDuplicatePairs 7,842, noise 900 (1000 less the flat -100), one advisory at 0.35,
+    //   so nothing blocks and the verdict is still `pass`.
+    //
+    // **The disproof, in §3.3's form: the count cannot tell a mistake from a gradient, so no cut on it
+    // can either.**
+    //
+    //   1. The window is Chebyshev <= 8 on colour, and a twelve-step ramp puts *every* adjacent pair
+    //      inside it by construction. **A smooth ramp is structurally a field of near-duplicates**,
+    //      so the quantity grows with how finely the ramp is stepped, not with whether anyone made a
+    //      mistake. The icon's 7,842 pairs are spread essentially evenly across the whole window —
+    //      distance 1: 1,060, 2: 939, 3: 867, 4: 849, 5: 919, 6: 1,003, 7: 1,096, 8: 1,109 — while the
+    //      one declared defective case, `defect/near-duplicate-ramp-16`, has **one** pair, at distance
+    //      exactly 8. The defect sits on the far edge of the window and the clean ramp's mass sits in
+    //      the middle of it, so the icon is not "more of the same defect": it is a different thing
+    //      that the same window happens to include.
+    //   2. §4.4's own reasoning defeats itself here, and that is the finding. The penalty is flat
+    //      because "two ramp entries three steps apart are a decision error rather than a frequency
+    //      one", so the count cannot *size* it. But the trigger is `pairs >= 1` — the same count — and
+    //      if the count cannot size the defect it cannot find it either. The reasoning carefully
+    //      removes the number from the *severity* and never asks what it is doing at the *trigger*,
+    //      and a smoothly shaded logo is what is on the other side of that gap.
+    //   3. The distribution over the repository's own work is bimodal with a 157x gap, and the
+    //      outlier is the cleanest asset in it. Ten finished paintings read `nearDuplicatePairs`
+    //      0, 1, 1, 2, 3, 4, 5, 10, 18 and 50; the shipped logo reads 7,842. A measure whose
+    //      distribution on good work is bimodal is measuring the resolution of its own input. And
+    //      `dusk-lake-valley-agent2.pixel` reading 0 against its own twin
+    //      `dusk-lake-valley-agent.pixel` reading 50 — the same painting, same 12 buckets, same
+    //      256x256 canvas — says the number is a property of the ramp and not of the picture.
+    //
+    // **The fix is a different measurement, not a different threshold.** §3.3 forbids moving the
+    // number, and the disproof says there is nowhere to move it to: any cut puts the icon on the
+    // defective side or on the clean side, and neither is defensible. The question that *would*
+    // separate them is about membership rather than proximity — a decision error is two entries
+    // inside one material's run, while a gradient has every entry inside a monotone ramp, and an
+    // entry that is not in the artist's declared palette at all is `palette`'s `off-palette` rather
+    // than `noise`'s. 4,871 distinct solid colours over 878,544 pixels on a file loaded from a PNG
+    // with no document palette is the tell: the honest finding on this asset is "this raster has not
+    // been quantised", which is a `palette` statement (T-014) on a different question, and not a
+    // `noise` one. Until that exists, this stays a recorded false positive on a committed clean
+    // asset — and it is worth its cost here, because §3.5's rule is that an analyzer which fires on
+    // clean work is worse than one which misses a defect, and a false positive nobody wrote down is
+    // how that rule gets lost.
+    expect(icon.actualCodes).toEqual(['near-duplicate-colours']);
+    expect(icon.blocking).toEqual([]);
     expect(icon.actualVerdict).toBe('pass');
     expect(icon.frames[0].margin).toBe(32);
+    // And the measurement, pinned so the disproof above can be re-checked rather than believed. These
+    // two are the whole argument: a count that a shipped logo reaches 7,842 of and a deliberate
+    // two-entry mistake reaches 1 of is not counting mistakes.
+    const iconNoise = noiseFrameOf('app/icon.png');
+    expect(iconNoise.nearDuplicatePairs).toBe(7842);
+    expect(iconNoise.scoreQ).toBe(900);
+    // The control half: every declared negative control reads zero pairs, so the analyzer is not
+    // firing on flat two-colour fields either. It is specifically a *ramp* that trips it.
+    for (const id of [
+      'control/clean-blob-16',
+      'control/clean-figure-20',
+      'control/clean-union-16',
+      'control/clean-banner-64x24',
+      'control/partial-alpha-glow-28x24',
+      'control/outline-ring-32',
+    ]) {
+      expect(noiseFrameOf(id).nearDuplicatePairs, id).toBe(0);
+    }
+    expect(noiseFrameOf('defect/near-duplicate-ramp-16').nearDuplicatePairs).toBe(1);
   });
 
   it('reads 0 convex corners on every real asset, so §3.3\'s quantity is inert in the wild too', () => {
@@ -1644,19 +1796,29 @@ describe('the report', () => {
 
 
   it('per-dimension score distribution covers every dimension that exists', () => {
-    // Was `only the dimension that exists`, and the rename is the finding: `value` landed and the
-    // assertion went stale, exactly as the hard-coded defect list above did. Both dimensions are
-    // measured on the same rows and on opposite halves of the range — `silhouette` reaches 1000 on
-    // a clean blob and 0 on a 1px staircase, `value` 1000 and 125 — which is the distribution a
-    // gate argument is made from.
+    // Was `only the dimension that exists`, and each rename is the finding: `value` landed and the
+    // assertion went stale, exactly as the hard-coded defect list above did, and then `noise` landed
+    // and it went stale again. All three are measured on the same rows and on opposite halves of the
+    // range — `silhouette` reaches 1000 on a clean blob and 0 on a 1px staircase, `value` 1000 and
+    // 125, `noise` 1000 and 825 — which is the distribution a gate argument is made from.
+    //
+    // **`noise`'s floor is 825 and its median is 1000, and both numbers are derived rather than read
+    // off.** The floor is `artwork/moonlit-alpine-lake.pixel` alone: `colourOrphans` 43 of
+    // `N` 4096 is `rhu(43000, 4096) = 10` per-mille, which is past §4.4's `> 8/1000` trigger and so
+    // lands in the `<= 20/1000` band at 750, giving rhu(300*1000 + 200*1000 + 300*750 + 200*1000,
+    // 1000) = 925, and that sprite's two `nearDuplicatePairs` take the flat −100 to 825. It is the
+    // one real asset where `noise` fires two codes, and both are recorded as findings rather than
+    // suppressed — see the scene-union test above.
     const measured = DISTRIBUTION.scores.filter((entry) => entry.values.length > 0);
-    expect(measured.map((entry) => entry.dimension)).toEqual(['silhouette', 'value']);
+    expect(measured.map((entry) => entry.dimension)).toEqual(['silhouette', 'value', 'noise']);
     expect(measured[0].min).toBeLessThan(measured[0].max);
     expect(measured[1].min).toBeLessThan(measured[1].max);
     expect(measured[1].min).toBe(125);
-    // The four that do not exist are absent rather than zero, which is the `not-implemented`
+    expect(measured[2].min).toBe(825);
+    expect(measured[2].max).toBe(1000);
+    // The three that do not exist are absent rather than zero, which is the `not-implemented`
     // bookkeeping working and not a gap in the corpus.
-    expect(DISTRIBUTION.scores.filter((entry) => entry.values.length === 0)).toHaveLength(4);
+    expect(DISTRIBUTION.scores.filter((entry) => entry.values.length === 0)).toHaveLength(3);
   });
 });
 
@@ -2002,16 +2164,28 @@ describe('coverage is aimed at the failures that were found, not exhaustive', ()
     expect(SPEC_GATES.compactnessQ - row('sweep/rect-28x3').frames[0].compactnessQ).toBe(25);
   });
 
-  it('has at least one case per defect kind the loader allows', () => {
+  it('has a case for every defect kind the loader allows', () => {
     // **Derived from the loader's own closed list, not from a copy of it.** The question here is
     // "does every code the loader accepts have a case that says what it means?", and the closed enum
     // is a specification rather than an implementation — so reading it is not the circularity the
     // re-export test above warns about, and a hard-coded list is exactly the second copy that went
     // stale when `value` landed. The floor below is what stops the derivation from being vacuous: a
     // truncated `DEFECT_KINDS` satisfies the comparison, and only the count stops that.
+    //
+    // **The comparison is against `DEFECT_KINDS` itself, with no exceptions, and that used to be a
+    // subtraction.** Three of the twenty kinds had no case, all three of them `noise`'s, and they
+    // were excluded by a named `NOT_COVERED` list — which was right at the time, because
+    // `neighbourCounts` counted each pixel as its own neighbour, so `isolated` and `diagOnly` were
+    // unsatisfiable and `spurs` had become `isolated`. **The exception list was a measurement of the
+    // implementation wearing the clothes of a specification**, and it had to be written twice: once
+    // here and once in `format.ts`'s comment on `DEFECT_KINDS`. With the count corrected and
+    // `defect/isolated-pixels-18`, `defect/single-pixel-spur-16` and `defect/diagonal-seam-24x20` in
+    // the corpus, both are gone, and **a kind that later loses its case goes red here again** — which
+    // is the property the subtraction had quietly given away.
     const declared = new Set(synthetic().flatMap((entry) => entry.defects.map((d) => d.kind)));
-    expect([...declared].sort()).toEqual([...DEFECT_KINDS].sort());
-    expect(DEFECT_KINDS.length).toBeGreaterThanOrEqual(15);
+    expect([...declared].sort()).toEqual(DEFECT_KINDS.slice().sort());
+    expect(DEFECT_KINDS.length).toBe(20);
+    expect(DEFECT_KINDS.filter((kind) => !declared.has(kind)).sort()).toEqual([]);
     // And the gap, named rather than left to be inferred. `key-light-inconsistent` is the one
     // `value` code with no case that *declares* it, because §4.2's `keyLight` is a subject-level
     // check and a case that declared it would be asserting that a valley is lit from the wrong
@@ -2028,11 +2202,203 @@ describe('coverage is aimed at the failures that were found, not exhaustive', ()
       'shadow-crushed',
     ];
     expect(VALUE_CODES.filter((kind) => !declared.has(kind))).toEqual(['key-light-inconsistent']);
-    expect(DEFECT_KINDS.filter((kind) => !declared.has(kind))).toEqual([]);
     // The code is not dead, which is the part that matters: it fires on a real fixture and on three
     // of the ten committed scenes, and both are asserted elsewhere in this file. A code that quietly
     // stops appearing is a code that quietly stops working.
     expect(row('value/hue-carries-form-32').actualCodes).toContain('key-light-inconsistent');
+  });
+
+  it("exercises three of noise's five codes, and the arithmetic behind each", () => {
+    // **This test used to assert the opposite of everything below, and it was right to.** It pinned
+    // `loose.isolated === 0`, `loose.spurs === 2`, the antenna tip reading `n8 == 2` and staying
+    // silent, `diagonal.diagOnly === 0`, and a closing loop over every corpus row requiring that
+    // none of them report `isolated-pixels`, `diagonal-seam` or `single-pixel-spur`. **Every one of
+    // those assertions was correct, and every one of them was correct about a defect**: `noise`'s
+    // `neighbourCounts` counted each pixel as its own neighbour, so `n8` was `>= 1` everywhere,
+    // `isolated` (`n8 == 0`) and `diagOnly` (`n4 == 0`) were unsatisfiable, and `spurs` (`n8 == 1`)
+    // had silently become `isolated` — which is why a genuine one-pixel antenna read `n8 == 2` and
+    // was invisible. The closing loop existed to go red on the day the count was fixed. **That day
+    // was the day the three missing cases got written**, so it has gone, and so has the loop: three
+    // corpus cases now report all three codes, and a guard against that is a guard against the
+    // corpus working.
+    //
+    // **§3.3 defines the quantities and §4.4 settles the reading in one row.** `n4(p)` and `n8(p)`
+    // are the "number of solid 4- and 8-**neighbours** of `p`", and §4.4's worked-example table
+    // records "one wrong-coloured pixel inside a solid block (`n8 == 8`)" — eight, not nine, because
+    // a pixel is not its own neighbour. So the three predicates are:
+    //
+    //     isolated    n8 == 0              a pixel with nothing solid beside it
+    //     diagOnly    n4 == 0 && n8 >= 1   attached to the body only diagonally
+    //     spurs       n8 == 1              one solid 8-neighbour: a one-pixel antenna
+    //
+    // and each has a case now: `defect/isolated-pixels-18`, `defect/single-pixel-spur-16` and
+    // `defect/diagonal-seam-24x20`. What is left in this file is the independent measurement that
+    // caught the defect — `neighboursAt`, §3.3's sentence computed from the pixels rather than read
+    // out of the analyzer — and the record of what the analyzer used to say on the same geometry.
+
+    const block = (x: number, y: number, w: number, h: number) => ({ op: 'rect', layer: 'Base', color: 'pal:0', rect: [x, y, w, h], fill: true });
+    const build = (id: string, recipe: unknown) => buildFromRecipe(id, recipe as never);
+    const read = (id: string, recipe: unknown) => measureNoise(createQualityContext(build(id, recipe)))[0];
+
+    // **The specification's reading, computed here from the pixels rather than quoted from
+    // `noise.ts`, so the table at the bottom is a check and not a transcription.** `neighboursAt` is
+    // §3.3's sentence written out: the number of solid 4- and 8-neighbours of `p`, which excludes
+    // `p` because a pixel is not its own neighbour. **This function is unchanged by the fix, and that
+    // is why it is the thing to keep**: it was already the §3.3 reading while the analyzer was not,
+    // so it disagreed on the day and the disagreement is what made the defect visible. A transcription
+    // of the analyzer would have agreed with it and proved nothing.
+    const neighboursAt = (sprite: Sprite, x: number, y: number) => {
+      const context = createQualityContext(sprite);
+      const { mask } = buildSolidMask(context.composite[0], context.width, context.height);
+      let n4 = 0;
+      let n8 = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= context.width || ny >= context.height) continue;
+          if (mask[ny * context.width + nx] !== 1) continue;
+          if (dx === 0 || dy === 0) n4++;
+          n8++;
+        }
+      }
+      return { n4, n8 };
+    };
+
+    // A 5x5 block, for the row §4.4 settles the convention with.
+    const square = build('probe/square-5', {
+      canvas: { w: 9, h: 9 },
+      layers: ['Base'],
+      palette: ['#3a2f2a'],
+      ops: [block(2, 2, 5, 5)],
+    });
+    // **§4.4's own worked-example row, asserted rather than paraphrased: "one wrong-coloured pixel
+    // inside a solid block (`n8 == 8`)". Eight, not nine.** This is the one assertion in the file
+    // that says which reading the pipeline holds, and it is written against the specification's row
+    // rather than against `noise.ts` — so on the day the analyzer counted itself, this pair said 9
+    // and everything else in this block said nothing at all.
+    expect(neighboursAt(square, 4, 4)).toEqual({ n4: 4, n8: 8 });
+    expect(neighboursAt(square, 2, 2)).toEqual({ n4: 2, n8: 3 });
+
+    // A 12x12 body on an 18x18 canvas with two pixels floating two pixels clear of it: nothing solid
+    // within Chebyshev 1, which is `isolated` in §4.4's words and nothing else.
+    const looseRecipe = {
+      canvas: { w: 18, h: 18 },
+      layers: ['Base'],
+      palette: ['#3a2f2a'],
+      ops: [block(3, 3, 12, 12), block(16, 5, 1, 1), block(16, 12, 1, 1)],
+    };
+    const loose = read('probe/two-loose-pixels', looseRecipe);
+    // The same body with a 1px antenna hung off its right edge: the tip has exactly one solid
+    // 8-neighbour, and it is orthogonal.
+    const antennaRecipe = {
+      canvas: { w: 20, h: 18 },
+      layers: ['Base'],
+      palette: ['#3a2f2a'],
+      ops: [block(3, 3, 12, 12), block(15, 8, 1, 1), block(16, 8, 1, 1)],
+    };
+    const antenna = read('probe/one-antenna', antennaRecipe);
+    // And a 1px diagonal run clear of the body: every pixel of it touches the drawing diagonally only.
+    const diagonalRecipe = {
+      canvas: { w: 24, h: 20 },
+      layers: ['Base'],
+      palette: ['#3a2f2a'],
+      ops: [
+        block(2, 2, 12, 12),
+        { op: 'pixels', layer: 'Base', color: 'pal:0', points: [[16, 2], [17, 3], [18, 4], [19, 5], [20, 6], [21, 7]] },
+      ],
+    };
+    const diagonal = read('probe/one-diagonal-run', diagonalRecipe);
+
+    // **What §4.4 says each of those three shapes is, written out from the geometry above and checked
+    // against the mask rather than asserted as prose.** A floating pixel has no neighbour: `isolated`.
+    // An antenna's tip has exactly one, and it is orthogonal: `spurs`. A diagonal run's interior pixel
+    // has two, both of them diagonal: `diagOnly`.
+    expect(neighboursAt(build('probe/two-loose-pixels', looseRecipe), 16, 5)).toEqual({ n4: 0, n8: 0 });
+    expect(neighboursAt(build('probe/one-antenna', antennaRecipe), 16, 8)).toEqual({ n4: 1, n8: 1 });
+    expect(neighboursAt(build('probe/one-diagonal-run', diagonalRecipe), 18, 4)).toEqual({ n4: 0, n8: 2 });
+
+    // **The readings, and every one of them derived from the geometry above rather than observed.**
+    // The banding is what makes the flip legible: `rhu(2000, 146) = 14` for the two floating pixels,
+    // which is past §4.4's `> 8/1000` trigger and lands in the `<= 20/1000` row, so `isolatedQ` is
+    // **750 for the defect the code is named for** — where before the fix it read **1000** for that
+    // code and 750 for a code it had nothing to do with.
+    expect(loose.N).toBe(146);
+    expect(loose.isolated).toBe(2);
+    expect(loose.diagOnly).toBe(0);
+    expect(loose.spurs).toBe(0);
+    expect(loose.isolatedQ).toBe(750);
+    expect(loose.spurQ).toBe(1000);
+    expect(loose.issues.map((issue) => issue.code)).toEqual(['isolated-pixels']);
+    // And the dimension's own arithmetic on top of that, because a correct count and a correct score
+    // are two sentences: `rhu(300*750 + 200*1000 + 300*1000 + 200*1000, 1000) = 925`.
+    expect(loose.scoreQ).toBe(925);
+
+    // **The antenna is the shape `single-pixel-spur` is *named* for, and the tip is now counted.**
+    // Exactly one solid 8-neighbour, and it is orthogonal, so `n8 == 1`; the pixel behind it has two
+    // and is neither a spur nor diagonal-only.
+    //
+    // **`spurs` is 1 and no issue fires, and the reason is the trigger rather than the count.** `N`
+    // is 146 here, so the ratio is `rhu(1000, 146) = floor(1073 / 146) = 7` — inside §4.4's
+    // `<= 8/1000` band at `spurQ` 900 and under the `> 8/1000` trigger, so the dimension drops from
+    // 1000 to 980 without saying anything. **That is the whole reason the corpus case for this code
+    // is a 16x16 canvas** (`defect/single-pixel-spur-16`), where the same drawing is 102 pixels and
+    // the ratio is `rhu(1000, 102) = 10`: this probe proves the count, the corpus case proves the
+    // code, and a case drawn at this size would have been a green row proving nothing.
+    expect(antenna.N).toBe(146);
+    expect(antenna.isolated).toBe(0);
+    expect(antenna.diagOnly).toBe(0);
+    expect(antenna.spurs).toBe(1);
+    expect(antenna.spurQ).toBe(900);
+    expect(antenna.issues).toEqual([]);
+    expect(antenna.scoreQ).toBe(980);
+
+    // **The diagonal run, six pixels long and touching nothing but diagonally, is the shape
+    // `diagonal-seam` is named for.** `n4 == 0` on all six, so `diagOnly` is 6 and the ratio is
+    // `rhu(6000, 150) = floor(6075 / 150) = 40`, which lands in the `<= 50/1000` row at `diagQ` 500.
+    //
+    // **`Dmax` 5 is load-bearing and it is why `connectivity/diagonal-bridge-16` and
+    // `connectivity/contour-staircase-24` cannot carry this code.** A bare 1px run is a line sprite
+    // (`Dmax <= 1`), so `diagQ` is `null` and the issue is suppressed before a pixel is counted —
+    // their `diag` of 1000/1000 was a raw ratio nobody was ever shown, not a code. The 12x12 body
+    // beside the run is what keeps `Dmax` at 5, and it is the same reason the corpus case is a body
+    // plus a run rather than the run alone.
+    expect(diagonal.N).toBe(150);
+    expect(diagonal.Dmax).toBe(5);
+    expect(diagonal.lineSprite).toBe(false);
+    expect(diagonal.isolated).toBe(0);
+    expect(diagonal.diagOnly).toBe(6);
+    expect(diagonal.diagQ).toBe(500);
+    // **And the run's two ends read `n8 == 1` as well**, each having only its neighbour along the
+    // run, so `spurs` is 2 and the same drawing also reports `single-pixel-spur` at
+    // `rhu(2000, 150) = 13` and `spurQ` 750. A 1px diagonal seam *is* simultaneously the shape
+    // `single-pixel-spur` names; that is a true property of the drawing rather than a defect in it,
+    // and `defect/diagonal-seam-24x20` declares both codes for exactly that reason.
+    expect(diagonal.spurs).toBe(2);
+    expect(diagonal.spurQ).toBe(750);
+    expect(diagonal.issues.map((issue) => issue.code)).toEqual(['diagonal-seam', 'single-pixel-spur']);
+    expect(diagonal.scoreQ).toBe(850);
+
+    // **What this geometry used to read, kept as the record of why the fix was needed.** "spec" is
+    // §3.3's sentence, computed above by `neighboursAt`, which excludes the pixel itself; "read" is
+    // what `noise`'s own `n4`/`n8` were holding, inferred from the counts and codes those readings
+    // produced on these exact shapes. **Every reading was one higher than the specification, without
+    // exception, and the consequences were structural rather than gradual:**
+    //
+    //     a 5x5 block's centre      spec 4 / 8   read 5 / 9   -> `n8` is never 0 and never 8
+    //     a 5x5 block's corner      spec 2 / 3   read 3 / 4   -> `n4` is never 0
+    //     a pixel with no neighbour spec 0 / 0   read 1 / 1   -> `isolated` unsatisfiable
+    //     a 1px antenna's tip       spec 1 / 1   read 2 / 2   -> `spurs` blind to a real antenna
+    //     a 1px diagonal run's end  spec 0 / 1   read 1 / 2   -> `diagOnly` unsatisfiable
+    //
+    // `n8 == 1` therefore meant "this pixel and nothing beside it", which is `isolated`: the two
+    // floating pixels above read `isolated` 0 and `spurs` 2, and `single-pixel-spur` fired on a
+    // drawing whose specks are `isolated-pixels`. `isolatedQ` was a constant 1000 and `diagOnly` a
+    // constant 0 across every case in the corpus at the time, and not one of the three codes had
+    // ever been reported once. **A sub-score that cannot fail is not a sub-score** — the third time
+    // this repository has had to write that sentence, after `ditherMask`'s early exit and the band
+    // table read in descending order.
   });
 
   it('reports a format error with the case that caused it, not a stack trace', () => {

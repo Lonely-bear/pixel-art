@@ -127,7 +127,12 @@ export type DefectKind =
   | 'flat-value'
   | 'narrow-value-range'
   | 'shadow-crushed'
-  | 'highlight-blown';
+  | 'highlight-blown'
+  | 'stray-colour'
+  | 'isolated-pixels'
+  | 'single-pixel-spur'
+  | 'diagonal-seam'
+  | 'near-duplicate-colours';
 
 /** One injected defect and why it is there. The note is the reviewer's context, not the assertion. */
 export interface CorpusDefect {
@@ -812,6 +817,44 @@ export const DEFECT_KINDS: readonly DefectKind[] = [
   'narrow-value-range',
   'shadow-crushed',
   'highlight-blown',
+  // T-015: `noise`'s five codes. **`dither-dominant` is deliberately absent**, and the omission is the
+  // measurement rather than an oversight — with `ditherMask` working it fires on
+  // `value/level-set-32`, a negative control, because a 1px contour line and a 1px stipple are the
+  // same set of pixels. `near-duplicate-colours` is here too: it is the flat `-100` penalty, and
+  // `defect/near-duplicate-ramp-16` is the case that says it means something.
+  //
+  // **All five of these members have a case now, and two of those cases carry a second fact about
+  // their own fixture.** §3.3 defines `n4(p)` and `n8(p)` as the "number of solid 4- and 8-**neighbours**
+  // of `p`" — §4.4's own worked-example row settles it at "one wrong-coloured pixel inside a solid
+  // block (`n8 == 8`)", which is eight, not nine — and `noise.ts`'s `neighbourCounts` used to count
+  // the pixel itself, which made `isolated` (`n8 == 0`) and `diagOnly` (`n4 == 0`) unsatisfiable and
+  // turned `spurs` (`n8 == 1`) into `isolated`. **The count is corrected**, so `isolated-pixels`,
+  // `single-pixel-spur` and `diagonal-seam` are carried by `defect/isolated-pixels-18`,
+  // `defect/single-pixel-spur-16` and `defect/diagonal-seam-24x20`.
+  //
+  // Both of those facts are recorded here because `expect.codes` is an exact match and a reader who
+  // does not expect them will read the row as a second opinion rather than as the geometry:
+  //
+  //   - a 1px diagonal seam is **8-connected and 4-disconnected**, so `defect/diagonal-seam-24x20`
+  //     fires `single-pixel-spur` as well: the run's two ends read `n8 == 1`. That is a true property
+  //     of the drawing, not a defect in it, and it is the same reason
+  //     `connectivity/diagonal-bridge-16` cannot be the home for `diagonal-seam` — a bare 1px run is
+  //     a line sprite (`Dmax <= 1`), `diagQ` is `null`, and the issue is suppressed before a pixel is
+  //     counted. The body beside the run is what keeps `Dmax` at 5.
+  //   - `defect/single-pixel-spur-16`'s **canvas size is a design decision, not a framing.** §4.4's
+  //     trigger is `spurs / N > 8/1000`, and the same 1px antenna reads `rhu(1000, 146) = 7` on an
+  //     18² canvas — inside the trigger, so the count is right and the code does not fire — against
+  //     `rhu(1000, 102) = 10` on the 16² canvas the case uses. **A case drawn at the larger size
+  //     would have been a green row proving nothing**, which is what §3.2's "acceptance uses the
+  //     discriminating case" is about.
+  //
+  // The members stay in this list rather than being deleted: `DefectKind` and `DEFECT_KINDS` are the
+  // closed set of codes §4.4 specifies, so removing one would hide a code rather than cover it.
+  'stray-colour',
+  'isolated-pixels',
+  'single-pixel-spur',
+  'diagonal-seam',
+  'near-duplicate-colours',
 ];
 
 const MEASURED_QUANTITIES: readonly MeasuredQuantity[] = [

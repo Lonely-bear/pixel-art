@@ -1,0 +1,149 @@
+{
+  "piece": "ironhold-knight",
+  "ops": "ops.json",
+  "opsCount": 14,
+  "server": {
+    "name": "dotloom-mcp-link",
+    "version": "0.4.2"
+  },
+  "session": {
+    "promotedToolCount": 43
+  },
+  "totals": {
+    "calls": 14,
+    "wallClockMs": 178.951,
+    "argumentBytes": 19134,
+    "resultBytes": 16567,
+    "meanWallClockMs": 12.782
+  },
+  "source": {
+    "path": "ironhold-knight.pixel",
+    "byteStable": false,
+    "bytes": 3828,
+    "note": "the .pixel container embeds session-generated frame and document ids, so its bytes move between runs even when the artwork does not. Everything under out/ is byte-stable."
+  },
+  "files": {
+    "ironhold-knight.png": {
+      "bytes": 1044,
+      "sha256": "c3efaf5893aa109bcb1bfdd159cd2be80669d91ed79b56cb3e2ad9037e440a4b"
+    },
+    "ironhold-knight@4x.png": {
+      "bytes": 7328,
+      "sha256": "202b286e86638f36d20a3cc4bf8182fb53b98003677d081080b634dc15af6b65"
+    }
+  },
+  "calls": [
+    {
+      "index": 0,
+      "label": "create the 64x64 sprite with a cape / body / shade / outline stack",
+      "tool": "create_document",
+      "wallClockMs": 6.426,
+      "argumentBytes": 92,
+      "resultBytes": 1073
+    },
+    {
+      "index": 1,
+      "label": "steel ramp (replaces the default palette)",
+      "tool": "apply_ops",
+      "wallClockMs": 8.938,
+      "argumentBytes": 185,
+      "resultBytes": 612
+    },
+    {
+      "index": 2,
+      "label": "crimson ramp - tabard and plume",
+      "tool": "apply_ops",
+      "wallClockMs": 1.949,
+      "argumentBytes": 150,
+      "resultBytes": 605
+    },
+    {
+      "index": 3,
+      "label": "gold ramp - trim, pommel, crossguard, buckle",
+      "tool": "apply_ops",
+      "wallClockMs": 2.315,
+      "argumentBytes": 151,
+      "resultBytes": 581
+    },
+    {
+      "index": 4,
+      "label": "leather ramp - belt and grip",
+      "tool": "apply_ops",
+      "wallClockMs": 2.159,
+      "argumentBytes": 152,
+      "resultBytes": 598
+    },
+    {
+      "index": 5,
+      "label": "cape ramp - a violet mass that stays behind the steel",
+      "tool": "apply_ops",
+      "wallClockMs": 1.648,
+      "argumentBytes": 149,
+      "resultBytes": 596
+    },
+    {
+      "index": 6,
+      "label": "glow ramp - the visor lights",
+      "tool": "apply_ops",
+      "wallClockMs": 1.844,
+      "argumentBytes": 148,
+      "resultBytes": 582
+    },
+    {
+      "index": 7,
+      "label": "block the cape in one flat violet",
+      "tool": "apply_ops",
+      "wallClockMs": 7.029,
+      "argumentBytes": 337,
+      "resultBytes": 404
+    },
+    {
+      "index": 8,
+      "label": "block the body: one flat colour per material",
+      "tool": "apply_ops",
+      "wallClockMs": 29.807,
+      "argumentBytes": 3048,
+      "resultBytes": 2363
+    },
+    {
+      "index": 9,
+      "label": "shade: bands follow the form, light comes from the top left",
+      "tool": "apply_ops",
+      "wallClockMs": 53.188,
+      "argumentBytes": 9292,
+      "resultBytes": 6007
+    },
+    {
+      "index": 10,
+      "label": "the one dither seam: specular to light across the helm",
+      "tool": "apply_ops",
+      "wallClockMs": 5.882,
+      "argumentBytes": 226,
+      "resultBytes": 472
+    },
+    {
+      "index": 11,
+      "label": "break the tasset hem line so it is not one straight step",
+      "tool": "apply_ops",
+      "wallClockMs": 1.527,
+      "argumentBytes": 278,
+      "resultBytes": 481
+    },
+    {
+      "index": 12,
+      "label": "contour the composite, then open it where the light hits",
+      "tool": "apply_ops",
+      "wallClockMs": 11.477,
+      "argumentBytes": 4688,
+      "resultBytes": 601
+    },
+    {
+      "index": 13,
+      "label": "save the editable source and render the shippable exports",
+      "tool": "finalize_document",
+      "wallClockMs": 44.762,
+      "argumentBytes": 238,
+      "resultBytes": 1592
+    }
+  ]
+}

@@ -50,5 +50,10 @@ export * from './import.js';
 // the quality pipeline together, which is one namespace instead of two ways in.
 export * from './quality/index.js';
 
+// The recipe format (T-030). Re-exported for the same reason as the quality pipeline above: a
+// consumer that cannot reach `validateRecipe` cannot check a recipe before acting on it, and a
+// schema nobody outside the package can import is a schema that cannot be held to.
+export * from './recipes.js';
+
 // Brings in the command bus (`Editor`, `applyCommand`, `undo`, ...) transitively.
 export * from './commands/index.js';

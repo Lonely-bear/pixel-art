@@ -22,6 +22,7 @@ import {
 } from '../src/quality/index.js';
 import { silhouetteAnalyzer } from '../src/quality/silhouette.js';
 import { valueAnalyzer } from '../src/quality/value.js';
+import { noiseAnalyzer } from '../src/quality/noise.js';
 import {
   assertReportInvariants,
   DEFAULT_QUALITY_WEIGHTS,
@@ -392,16 +393,16 @@ describe('motion applicability is the aggregator\'s, and stays the contract\'s t
 });
 
 describe('a dimension with no analyzer is reported as unmeasured, not as perfect', () => {
-  it('accounts for every id exactly once while four of six do not exist', () => {
-    // **Was "five of six"**, and the rename is the point: `value` landed with an analyzer and a
-    // registration, so four remain. The invariant underneath is unchanged and is the reason this
-    // test exists — no id is in neither map, which is the silent hole a `Record` would have had no
-    // way to express.
+  it('accounts for every id exactly once while three of six do not exist', () => {
+    // **Was "five of six", then "four of six"**, and each rename is the point rather than a chore:
+    // `value` landed with an analyzer and a registration, and then `noise` did, so two of the six
+    // ids that §4 specifies now have a measurement and four are still a promise. The invariant
+    // underneath is unchanged and is the reason this test exists — no id is in neither map, which
+    // is the silent hole a `Record` would have had no way to express.
     const report = evaluate(firstContext(insetBy(2)));
-    expect(Object.keys(report.dimensions)).toEqual(['silhouette', 'value']);
+    expect(Object.keys(report.dimensions)).toEqual(['silhouette', 'value', 'noise']);
     expect(report.excluded).toEqual({
       palette: 'not-implemented',
-      noise: 'not-implemented',
       outline: 'not-implemented',
       motion: 'not-implemented',
     });
@@ -589,18 +590,25 @@ describe('the blocking list is assembled from present dimensions and the aggrega
  * ------------------------------------------------------------------ */
 
 describe('the registry is partial on purpose and works that way', () => {
-  it('registers silhouette and value today, and DEFAULT_ANALYZERS is a projection of it', () => {
-    // **Was "registers silhouette today"**, and the rename is the finding rather than a chore:
+  it('registers silhouette, value and noise today, and DEFAULT_ANALYZERS is a projection of it', () => {
+    // **Was "registers silhouette today"**, and the renames are the finding rather than a chore:
     // `value` registered with **no `applies` at all**, which is the decision the whole aggregator
     // exists to make expressible — a full-bleed scene has no silhouette and does have value
-    // structure. The assertion below is that the projection is a projection and not a second list.
-    expect(DEFAULT_DIMENSIONS.map((dimension) => dimension.id)).toEqual(['silhouette', 'value']);
-    expect(DEFAULT_ANALYZERS).toEqual([silhouetteAnalyzer, valueAnalyzer]);
+    // structure — and `noise` then registered the same way, for the same reason and one step
+    // further: a full-bleed landscape is precisely the document where a stray highlight or a leaked
+    // pixel is most likely, because it is the one with thousands of individual marks in it. **Two of
+    // the three measured dimensions therefore abstain on nothing**, and that is the mechanism behind
+    // T-015's finding five in the other direction: a dimension that abstains is offset by a
+    // dimension that abstains nowhere. The assertion below is that the projection is a projection
+    // and not a second list.
+    expect(DEFAULT_DIMENSIONS.map((dimension) => dimension.id)).toEqual(['silhouette', 'value', 'noise']);
+    expect(DEFAULT_ANALYZERS).toEqual([silhouetteAnalyzer, valueAnalyzer, noiseAnalyzer]);
     expect(analyzerFor('silhouette')).toBe(silhouetteAnalyzer);
     expect(analyzerFor('value')).toBe(valueAnalyzer);
-    // Four dimensions have no analyzer, which is a fact about the build rather than about
+    expect(analyzerFor('noise')).toBe(noiseAnalyzer);
+    // Three dimensions have no analyzer, which is a fact about the build rather than about
     // any document, and is reported as such.
-    for (const id of ['palette', 'noise', 'outline', 'motion'] as const) {
+    for (const id of ['palette', 'outline', 'motion'] as const) {
       expect(analyzerFor(id)).toBeUndefined();
     }
   });
@@ -797,22 +805,50 @@ describe('the repository\'s own artwork, measured through evaluate', () => {
     // An advisory, not a gate: the sprite is a subject, it reads, and the report says so
     // without pretending the measurement is settled.
     expect(report.blocking).toEqual([]);
-    // **The total is 823 over the active set, and it is unchanged by T-099 — which is the result
-    // worth having.** The first attempt at the fix treated every gated plane as unmeasured, and
-    // this sprite dropped 850 to 800: its five tone boundaries are 4 to 7 pixels on a 32-pixel
-    // body, all of them gated by `reachQ` as fragments rather than cross-sections, so half the
-    // dimension was thrown away and the report fell. That was the distortion, not the fix: this
-    // sprite has an outline, the gate read it, and "these are fragments, not a cross-section, so
-    // there is nothing here to fail" is an answer. The subject is not full-bleed, so the form term
-    // is measured and `unmeasured` is empty — which is the half of T-099 that is about the ten
-    // full-bleed scenes and explicitly not about this one.
+    // **The total is 849 over the active set, and it was 823 before `noise` registered — which is the
+    // finding, not a repair.** The arithmetic is written out because "the score moved and nothing
+    // about the art did" is exactly the kind of diff a reviewer should not have to reconstruct, and
+    // because the direction of the move is the whole point:
     //
-    // The arithmetic is written out because "the score moved and nothing about the art did" is
-    // exactly the kind of diff a reviewer should not have to reconstruct.
+    //   before: (300*800 + 260*850) / 560                      = 461000 / 560 = 823.2  -> 823
+    //   after:  (300*800 + 260*850 + 120*970) / 680             = 577400 / 680 = 849.1  -> 849
+    //
+    // `noise` registers at weight 120, it registers with **no applicability precondition** (§4.4 lists
+    // none, and a still sprite is not a reason to skip a speck detector), and it reads **970** on
+    // this sprite — higher than either dimension it joins. 970 is not a free pass and is not derived
+    // from the implementation's own output: `colourOrphans` is 2 against `N` 432, which is
+    // `rhu(2000, 432) = 5` per-mille, and §4.4's `<= 8/1000` row is the 900 band, so the dimension is
+    // rhu(300*1000 + 200*1000 + 300*900 + 200*1000, 1000) = 970. Two stray colours, nothing above
+    // the trigger, no code — and `ditherShare` 574, the highest of the ten committed scenes.
+    //
+    // **The dilution runs upward, and this is not the art improving.** `thin-profile` is severity
+    // 0.30, the blocking cut is 0.50, and `report.blocking` is empty three lines above — so the
+    // verdict is `pass` either way and the advisory has no veto; all the move did was lift the mean
+    // past it. Had `noise` read 800 rather than 970, the same three dimensions would total
+    // (300*800 + 260*850 + 120*800) / 680 = 557000 / 680 = 819, so registering `noise` moved the
+    // report **30 per-mille away from the one defect this sprite actually has**. A weight-120
+    // dimension with nothing to say about a character's profile can outvote the weight-300 dimension
+    // that does, because the mean is a mean: this is T-015's finding five with the sign flipped —
+    // there an abstention was offset by an unrelated clean reading, and here a clean reading offsets
+    // a real advisory. §5.3's floors are the mechanism that was built for this (`FLOOR_FAIL.silhouette`
+    // is 400 and `silhouette` is at 800, so it does not catch it either) and the total cannot.
+    //
+    // **What T-099 fixed on this sprite is still fixed.** It was 850 before that task and 823 after
+    // it, and neither number is the one T-099 was about: its first attempt at the fix treated every
+    // gated plane as unmeasured, and this sprite dropped 850 to 800 — its five tone boundaries are 4
+    // to 7 pixels on a 32-pixel body, all of them gated by `reachQ` as fragments rather than
+    // cross-sections, so half the dimension was thrown away and the report fell. That was the
+    // distortion, not the fix: this sprite has an outline, the gate read it, and "these are
+    // fragments, not a cross-section, so there is nothing here to fail" is an answer. The subject is
+    // not full-bleed, so the form term is measured and `unmeasured` is empty — which is the half of
+    // T-099 that is about the ten full-bleed scenes and explicitly not about this one, and which
+    // `noise`'s arrival does not disturb.
     expect(report.dimensions.silhouette?.scoreQ).toBe(800);
     expect(report.dimensions.value?.scoreQ).toBe(850);
     expect(report.dimensions.value?.unmeasured).toEqual({});
-    expect(report.score).toBe(0.823);
+    expect(report.dimensions.noise?.scoreQ).toBe(970);
+    expect(report.dimensions.noise?.unmeasured).toEqual({});
+    expect(report.score).toBe(0.849);
     expect(report.verdict).toBe('pass');
   });
 });

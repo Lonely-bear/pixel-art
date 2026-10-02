@@ -202,29 +202,43 @@ Client configuration (Claude Desktop, or any `mcpServers` JSON):
 }
 ```
 
+On Windows both entries need `"command": "cmd"` with `"/c"` prepended to the argument list, so
+`"args": ["/c", "npx", "-y", "dotloom-mcp", ...]`. Bare `npx` is not an executable Windows can
+launch without a shell (`ENOENT`), and Node refuses to run `npx.cmd` directly (`EINVAL`).
+Per-client paths and verified JSON for all four clients are in [`CLIENTS.md`](CLIENTS.md).
+
 ### OpenCode project configuration
 
-OpenCode V2 can load the published stdio server from a project or global configuration:
+OpenCode reads the published stdio server from `opencode.json` / `opencode.jsonc`, either
+globally (`~/.config/opencode/`) or per project:
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "servers": {
-      "dotloom-mcp": {
-        "type": "local",
-        "command": ["npx", "-y", "dotloom-mcp"]
-      }
+    "dotloom-mcp": {
+      "type": "local",
+      "command": ["npx", "-y", "dotloom-mcp"],
+      "enabled": true
     }
   }
 }
 ```
 
-The equivalent CLI command is:
+On Windows the `command` array is `["cmd", "/c", "npx", "-y", "dotloom-mcp"]`.
 
-```bash
-opencode mcp add dotloom-mcp -- npx -y dotloom-mcp
-```
+**`mcp` is not `mcpServers`, and the server name is a key directly under it.** OpenCode maps a
+name straight to a server entry: `mcp` → `dotloom-mcp` → `{type, command}`. There is no
+intermediate `servers` key. `mcp.servers.dotloom-mcp` is read as a server literally named
+`servers` with no `type` and no `command`, so `dotloom-mcp` is never configured at all, and
+OpenCode's published JSON Schema rejects the object. `command` is one array that includes the
+program, not a string plus a separate argument list, and `type` is required.
+
+`opencode mcp add` is an interactive guide: run it with no arguments and answer the prompts.
+OpenCode's CLI documentation lists no positional arguments and no flags for it, so there is no
+non-interactive form to transcribe here. Verify the result with `opencode mcp list`.
+
+Per-client paths and every Windows variant: [`CLIENTS.md`](CLIENTS.md).
 
 No `--attach` is needed: the server finds a running app on its own and reconnects if the
 app appears later. Append `--attach http://127.0.0.1:7331/mcp` only to pin one endpoint
@@ -232,16 +246,18 @@ and fail loudly when it is not there.
 
 ### What it exposes
 
-- **A small declared surface plus an on-demand command catalog.** The advertised list is 35 tools
-  — the session, perception, export and discovery tools: `create_document`, `create_sprite_spec`,
+- **A small declared surface plus an on-demand command catalog.** The advertised list is 36
+  tools over stdio, measured with `node scripts/mcp-call.mjs list`; that number drifts, so
+  re-measure it rather than copying it out of a document. 35 of them are shared with the app's
+  HTTP host — the session, perception, export and discovery tools: `create_document`, `create_sprite_spec`,
   `open_document`, `save_document`, `finalize_document`, `import_image` (PNG or Aseprite),
   `select_document`, `close_document`, `list_documents`, `get_document`, `get_preview`, `preview_pose`,
   `preview_animation`, `preview_tilemap`, `read_grid`, `get_pixels`, `histogram`, `get_selection`,
   `set_selection`, `get_palette`, `get_history`, `undo`, `redo`, `apply_ops`, `export_png`,
   `export_sheet`, `export_tiled`, `export_gif`, `list_commands`, `describe_command`,
   `find_workflow`, `read_skill`, and the scripting tools `run_script`, `load_plugin`, `list_plugins`.
-  The stdio server adds `get_connection_status` on top (36), so the agent can tell whether
-  it is editing the app or an in-memory store.
+  The stdio server adds `get_connection_status` on top of that 35, so the agent can tell
+  whether it is editing the app or an in-memory store.
 
   The ~90 core commands (`draw_rect`, `autotile`, `create_tileset`, `add_palette_ramp`, …) are **not**
   in that list up front: shipping all 127 cost ~55K tokens of tool definitions in the context of every

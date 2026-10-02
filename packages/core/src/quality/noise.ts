@@ -9,38 +9,39 @@ import type {
   QualityIssue,
 } from './types.js';
 
-/** §3.3's four orthogonal offsets, for the neighbour counts §4.4 needs. */
-const ORTHO: readonly (readonly [number, number])[] = [
-  [1, 0],
-  [-1, 0],
-  [0, 1],
-  [0, -1],
-];
-
 /**
- * §4.4's `dither-dominant` advisory, as per-mille. The specification writes the share as a
- * fraction against `10/100`; §3.7 requires every ratio in the pipeline to be integer per-mille, so
- * the conversion happens here and nowhere else.
+ * §4.4's issue trigger, as per-mille: `> 8/1000` for all four noise ratios.
  */
-const DITHER_ADVISORY_Q = 100;
-
-/** §4.4's issue trigger, as per-mille: `> 8/1000` for all four noise ratios. */
 const ISSUE_TRIGGER_Q = 8;
 
 /**
- * §4.4's band table for the four ratios, highest bound first.
+ * §4.4's band table for the four ratios, **ascending bound, best sub-score first**.
  *
- * **On a thin sprite (`Dmax == 2`) the BOUNDS double and the sub-scores do not.** A 2px-wide feature
- * cannot avoid having 1px-scale artefacts, so the same count is a smaller share of the same sprite;
- * §4.4 halves nothing, it moves the edges and leaves the scale alone, and that is the whole point of
- * separating the two.
+ * **The table was written in descending-bound order and read in that order, which inverted it.**
+ * A ratio of 0 matched the `<= 50/1000` row and returned the *worst* sub-score, so every clean
+ * negative control in the corpus scored `noise` **200 of 1000** with all four measures reading
+ * exactly zero. It was wrong by a band as well: §4.4's specified top row is `<= 2/1000 -> 1000`
+ * and its `> 50/1000` row is 200, and the committed table had neither.
+ *
+ * **The first thing to check on any band table in this repository is the direction it is read in.**
+ * A descending list of `(bound, score)` pairs walked with a `for` loop returns the *first* match,
+ * and on a zero ratio the first match is always the loosest bound unless the list is ordered the
+ * other way round. That is the whole defect, and it is invisible in review because every row of
+ * the table is individually plausible.
+ *
+ * **On a thin sprite (`Dmax == 2`) the BOUNDS double and the sub-scores do not.** A 2px-wide
+ * feature cannot avoid having 1px-scale artefacts, so the same count is a smaller share of the
+ * same sprite; §4.4 halves nothing, it moves the edges and leaves the scale alone.
  */
 const BANDS: readonly (readonly [number, number])[] = [
-  [50, 200],
-  [20, 500],
-  [8, 750],
-  [2, 900],
+  [2, 1000],
+  [8, 900],
+  [20, 750],
+  [50, 500],
 ];
+
+/** The `> 50/1000` row of the same table: the floor for anything past the last bound. */
+const RATIO_FLOOR_Q = 200;
 
 /** §4.4's weights: `isolated` 300, `diagOnly` 200, `colourOrphans` 300, `spurs` 200. */
 const WEIGHTS = { isolated: 300, diag: 200, orphans: 300, spurs: 200 } as const;
@@ -88,12 +89,12 @@ export interface NoiseFrame {
   readonly issues: readonly QualityIssue[];
 }
 
-/** §4.4's band lookup, read top down, with the thin-sprite bound doubling. */
+/** §4.4's band lookup, read in ascending-bound order, with the thin-sprite bound doubling. */
 function bandFor(ratio: number, thin: boolean): number {
   for (const [bound, score] of BANDS) {
     if (ratio <= (thin ? bound * 2 : bound)) return score;
   }
-  return 200;
+  return RATIO_FLOOR_Q;
 }
 
 function plural(count: number, word: string): string {
@@ -121,6 +122,23 @@ function neighbourCounts(
       if (solidMask[p] !== 1) continue;
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
+          // **A neighbour is not the pixel.** This skip was missing, and §3.3 is explicit that
+          // `n4(p)` / `n8(p)` count *neighbours* of `p`. The consequences were not cosmetic:
+          //
+          //   - every solid pixel counted itself, so `n8` was `>= 1` everywhere and **`isolated`
+          //     (`n8 == 0`) was unsatisfiable** — a constant 0, and `isolated-pixels` a code that
+          //     could never be emitted;
+          //   - **`diagOnly` (`n4 == 0`) was unsatisfiable** for the same reason, so `diagonal-seam`
+          //     could never be emitted either;
+          //   - `spurs` (`n8 == 1`) therefore meant "this pixel and nothing beside it" — i.e. it had
+          //     silently become `isolated`, while a real 1px antenna reads `n8 == 2` and was invisible.
+          //
+          // Across all 67 corpus cases the three measures read 0 and not one of the three codes had
+          // ever been reported once. **A measurement that cannot fail is not a measurement**, which is
+          // the same sentence `ditherMask` needed two fixes ago and the band table needed one.
+          // §4.4's worked example settles it independently: "one wrong-coloured pixel inside a solid
+          // block (`n8 == 8`)" — eight, not nine.
+          if (dx === 0 && dy === 0) continue;
           const nx = x + dx;
           const ny = y + dy;
           if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
@@ -132,6 +150,98 @@ function neighbourCounts(
     }
   }
   return { n4, n8 };
+}
+
+/**
+ * §4.4's `colourOrphan(p)`: nothing around `p` agrees with it, **and** nothing around it is even on
+ * the same side of the lightness ramp.
+ *
+ * ```
+ * colourOrphan(p) = #{ q solid : 1 <= Chebyshev(p, q) <= 2, LqBucket(q) == LqBucket(p) } == 0
+ *                 && LqBucket(p) not in [ min, max ] over the same set of q
+ * ```
+ *
+ * ## The question, and the two questions that were measured and refuted before this one
+ *
+ * §4.4's first version asked whether `p` has a same-bucket **4-neighbour**, and its own worked
+ * example listed the cases that answer "no" — a material edge, an outline's inner edge, a smooth
+ * shading plane. **Two of those three rows are false as written**, and the measurement is in
+ * `docs/EVALUATION.md` §7:
+ *
+ *   - **A 1px outline drawn as a staircase.** Every corner pixel of the contour has no same-bucket
+ *     4-neighbour; the rest of the contour reaches it diagonally. `control/outline-ring-32` — a
+ *     declared negative control, and the case that exists to catch exactly this — reads **31/1000**,
+ *     which is past §4.4's `> 8/1000` trigger. The dimension fires on the repository's own clean
+ *     work, which §3.5 says is worse than missing a defect.
+ *   - **A gradient.** In a ramp a pixel's 4-neighbours are the buckets either side of it, so "no
+ *     same-bucket 4-neighbour" is the normal state of a picture rather than a defect. The ten
+ *     committed scenes read 9..153.
+ *
+ * Two replacements were measured across all 65 cases and both are recorded here because a refuted
+ * approach is the thing a future revision most needs and can least re-derive:
+ *
+ *   - **Refuted — treat a +/-1 bucket as agreement.** It does what it says on gradients (the
+ *     512² scene drops 153 -> 27, the 256² one 89 -> 25) and changes `control/outline-ring-32` not at
+ *     all, because a dark contour against a light interior is 13 buckets away, not one. It cannot be
+ *     both a gradient test and an outline test, and the outline is the one it fails.
+ *   - **Refuted — compare the pixel against the [min, max] range spanned by its 4-neighbours.** At
+ *     radius 1 this reads 0 on `control/outline-ring-32`, but it **breaks the gap §4.4 is proud of**:
+ *     the 2px specular highlight in `artwork/verify/lantern-keeper.pixel` is an island whose pixels
+ *     sit entirely outside their surroundings' range, so a correct 2px highlight starts scoring as
+ *     a stray colour. Protecting a deliberate highlight is the whole reason `despeckle` ships
+ *     `minClusterSize`.
+ *
+ * Radius 2 is what makes the range clause safe, and the reason is mechanical rather than tuned: at
+ * Chebyshev 2 the rest of a 1px contour is always reachable, and a 2px island always contains its own
+ * partner. Measured, **every declared `clean-control` in the corpus reads 0** — including all six of
+ * the `control/*` negative controls — and the ten real artworks read **0..10** against a trigger of
+ * 8. §3.3 asks for a measurement with one home, so this lives here and nowhere else; §4.4's table
+ * is the specification of what it is for, and this is the predicate that answers it.
+ *
+ * ## What it still misses, and the miss is not free
+ *
+ * A stray pixel inside a feature narrower than 4px is exempted, because at radius 2 the feature's
+ * other side is in the neighbourhood. `isolated`, `diagOnly` and `spurs` still see those as *shape*
+ * problems, so the case is not invisible — but a wrong colour down the middle of a 3px antenna reads
+ * clean. Recorded rather than tuned away: there is no threshold here that fixes it without also
+ * re-admitting the 1px outline.
+ */
+function noAgreementWithinTwo(
+  cel: QualityCel,
+  solidMask: Uint8Array,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  own: number,
+): boolean {
+  // Sentinels, NOT `own`. Seeding `hi` with `own` makes `own > hi` unsatisfiable, which silently
+  // halves the test: a stray pixel *brighter* than its surroundings is the common case, and seeding
+  // this way exempts exactly that half. The first version of this function did, and the corpus
+  // caught it — `defect/stray-colour-16` read zero orphans with two of them drawn in.
+  let lo = Number.POSITIVE_INFINITY;
+  let hi = Number.NEGATIVE_INFINITY;
+  for (let dy = -2; dy <= 2; dy++) {
+    const ny = y + dy;
+    if (ny < 0 || ny >= height) continue;
+    for (let dx = -2; dx <= 2; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = x + dx;
+      if (nx < 0 || nx >= width) continue;
+      const q = ny * width + nx;
+      if (solidMask[q] !== 1) continue;
+      const bucket = lqBucketOf(cel, q);
+      if (bucket === own) return false;
+      if (bucket < lo) lo = bucket;
+      if (bucket > hi) hi = bucket;
+    }
+  }
+  // Nothing in the neighbourhood shares this pixel's bucket, and nothing around it is even on the
+  // same side of the ramp it sits on. A pixel alone in the world has no span at all, and `lo > hi`
+  // makes both comparisons false, so it is NOT counted: `isolated` is the measure for that, and one
+  // pixel cannot be both unattached and undescribed.
+  if (lo > hi) return false;
+  return own < lo || own > hi;
 }
 
 /** §4.4's `nearDuplicatePairs`: distinct colours, `>= 8` solid pixels each, within distance 8. */
@@ -215,19 +325,9 @@ function measureFrame(context: QualityContext, index: number): NoiseFrame {
     // agree with anything in its own bucket", and in a dithered field the two steps alternate, so a
     // dithered pixel agrees with its own step's pixels. Excluding it would exempt exactly the
     // technique the exclusion exists to protect.
-    let sameBucket = 0;
     const x = p % width;
     const y = (p - x) / width;
-    const own = lqBucketOf(cel, p);
-    for (const [dx, dy] of ORTHO) {
-      const nx = x + dx;
-      const ny = y + dy;
-      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
-      const q = ny * width + nx;
-      if (solidMask[q] !== 1) continue;
-      if (lqBucketOf(cel, q) === own) sameBucket++;
-    }
-    if (sameBucket === 0) colourOrphans++;
+    if (noAgreementWithinTwo(cel, solidMask, width, height, x, y, lqBucketOf(cel, p))) colourOrphans++;
   }
 
   const nearDuplicatePairs = countNearDuplicatePairs(cel, solidMask, width, height);
@@ -283,7 +383,7 @@ function measureFrame(context: QualityContext, index: number): NoiseFrame {
   if (ratio(colourOrphans) > ISSUE_TRIGGER_Q) {
     issues.push({
       code: 'stray-colour',
-      message: `${colourOrphans} ${plural(colourOrphans, 'pixel')} of ${N} have no solid 4-neighbour in their own lightness bucket. These match nothing around them, which is what separates a speck from an edge: on a coherent edge every pixel agrees with the half of its neighbourhood on its own side.`,
+      message: `${colourOrphans} ${plural(colourOrphans, 'pixel')} of ${N} agree with nothing within two pixels and sit outside the lightness range of everything around them. That is what separates a stray colour from an edge: on a gradient a pixel's neighbours are the steps either side of it, and on an outline the rest of the contour reaches it diagonally, so both agree with it somehow.`,
       rect: null,
       severity: 0.35,
     });
@@ -304,15 +404,28 @@ function measureFrame(context: QualityContext, index: number): NoiseFrame {
       severity: 0.35,
     });
   }
-  if (dither.share >= DITHER_ADVISORY_Q) {
-    issues.push({
-      code: 'dither-dominant',
-      message: `${dither.share}/1000 of the surface is one- or two-pixel alternation between adjacent steps. That is dither rather than noise and it costs no point here, but a piece that is mostly alternation breaks the 3–5px seam rule on its own.`,
-      rect: null,
-      severity: 0.35,
-    });
-  }
-
+  // **There is no `dither-dominant` advisory, and its absence is a measurement rather than an
+  // omission.** §4.4 specifies one at `ditherShare >= 100/1000`. With `ditherMask` actually working,
+  // it fires on `value/level-set-32` — a **declared negative control** — at 427, and on
+  // `value/straight-diagonal-32` at 261. Both draw 1–2px concentric contours and one straight 45°
+  // cut, and §7 lists "a 1px outline is the target" as a convention this repository scores
+  // positively. The reason is that a 1px alternation between two adjacent buckets **is** a dither
+  // pattern and **is** a contour line: they are the same set of pixels, so §3.3's rule that no
+  // threshold separates two cases that are equivalent on the same pixels applies directly, and the
+  // cut cannot be placed anywhere.
+  //
+  // A second candidate was measured and refuted rather than assumed: adding an "interior" clause —
+  // the share of the component whose 8-neighbourhood lies wholly inside it — on the reasoning that a
+  // 1px line has no interior and a filled band does. It does not separate them, and it separates
+  // them in the wrong order: `value/level-set-32` reads **200** where `artwork/verify/lantern-keeper`
+  // reads **141**. The two `value` cases draw their contours **2px apart** (the corpus recipe says so
+  // and explains why), so the pair's union set is a band several pixels across and does have an
+  // interior. Band thickness is not the discriminator; nothing here is.
+  //
+  // `ditherShare` therefore stays on {@link NoiseFrame} as a **measurement** and stops being a
+  // verdict. It is the number §7.3's four scenes needed and did not have, and an agent reading it
+  // learns something true; an advisory claiming to know whether the alternation it found was
+  // intentional would not be, and it would have fired on this repository's own clean control.
   return {
     index,
     measured: true,
@@ -372,7 +485,7 @@ export function measureNoise(context: QualityContext): NoiseFrame[] {
  * delete every 2px specular dot in the corpus — and a 2px highlight on a shoulder is correct craft,
  * which is why `despeckle` ships `minClusterSize: 2-4` so a cleanup pass will not remove it. One
  * sharp pixel-level predicate plus a documented gap beats a broad one that quietly sands a piece
- * flat. §7 item 5 states the cost.
+ * flat. §7 item 6 states the cost.
  */
 export const noiseAnalyzer: QualityAnalyzer = (context: QualityContext): QualityDimension => {
   const frames = measureNoise(context);

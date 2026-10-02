@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "dotloom-mcp": {
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "dotloom-mcp"]
+    }
+  }
+}

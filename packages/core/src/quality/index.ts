@@ -1,6 +1,6 @@
 import { buildSolidMask, silhouetteAnalyzer } from './silhouette.js';
 import { valueAnalyzer } from './value.js';
-// `noiseAnalyzer` is imported by nothing yet, and importing it here would register it by accident.
+import { noiseAnalyzer } from './noise.js';
 import { edgeGapOf, SUBJECT_REQUIRED_MARGIN } from './measure.js';
 import {
   assertReportInvariants,
@@ -312,15 +312,10 @@ export interface QualityDimensionRegistration {
 export const DEFAULT_DIMENSIONS: readonly QualityDimensionRegistration[] = [
   { id: 'silhouette', analyze: silhouetteAnalyzer, applies: requiresReadableSubject },
   { id: 'value', analyze: valueAnalyzer },
-  // `noise` is NOT registered yet, and that is a measured decision rather than an oversight. The
-  // analyzer and §3.3's `ditherMask` are on disk and compile; what is missing is a distribution. See
-  // `docs/EVALUATION.md` §7 for the two findings that stopped the registration, the worse of which is
-  // that §4.4's `colourOrphans` cannot tell a speck from a gradient — on the committed artwork it
-  // reads 79/1000 on a hand-authored character sprite and 153/1000 on a 512² landscape, because in a
-  // smooth ramp a pixel having no same-bucket 4-neighbour is the normal state and not a defect. A
-  // dimension that fires on every gradient in the corpus is the T-012 failure, and registering it
-  // would put that into the report. `ditherMask` also reads 0 on every case, including the dithered
-  // scenes T-102 measured, so the quantity T-102's whole conclusion points at does not yet work.
+  // `noise` registers with no `applies`, for §4.2's reason and not §4.1's: a full-bleed landscape has
+  // no subject to read a shape out of, but it is exactly the document where a snapping fill or a
+  // leaked pixel is most likely, because it is made of thousands of individual marks.
+  { id: 'noise', analyze: noiseAnalyzer },
 ];
 
 /**
@@ -569,5 +564,4 @@ export * from './context.js';
 export * from './silhouette.js';
 export * from './types.js';
 export * from './value.js';
-// `noise.ts` is deliberately NOT re-exported: it is unregistered work in progress, and exporting it
-// would make `measureNoise` reachable from the package while `evaluate` refuses to run it.
+export * from './noise.js';

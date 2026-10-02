@@ -408,9 +408,13 @@ const DITHER_ORTHO: readonly (readonly [number, number])[] = [
  *
  * A 2px checkerboard is legitimate craft at 32×32 and above — it reads as a soft tonal step rather
  * than as digital stipple. The predicate cannot tell that from a mistaken 1px stipple, so **both** are
- * detected, **both** are exempted from §4.4's noise measures, and a heavily-textured sprite picks up
- * the `dither-dominant` advisory. Treating visible grain as defect is the failure this whole dimension
- * has to avoid, and `despeckle`'s own `minClusterSize` option exists for the same reason. A `sparse`
+ * detected and **both** are exempted from §4.4's noise measures. **That exemption is the whole cost and
+ * it is a false positive that cannot be removed**, and it is also why §4.4 has no `dither-dominant`
+ * advisory any more: with this predicate working, such an advisory fired on `value/level-set-32`,
+ * a **declared negative control**, because a 1px contour line and a 1px stipple are the same set of
+ * pixels. `ditherShare` is reported as a measurement and nothing is asserted about intent. Treating
+ * visible grain as defect is the failure this whole dimension has to avoid, and `despeckle`'s own
+ * `minClusterSize` option exists for the same reason. A `sparse`
  * pattern at low coverage is a further false negative, since at low coverage a region stops being a
  * connected set of two adjacent buckets and falls out of the mask entirely.
  *
@@ -492,26 +496,41 @@ export function ditherMask(
       }
       if (component.length < DITHER_MIN_REGION) continue;
       let alternating = 0;
-      let done = false;
       for (const p of component) {
         const own = lqBucketOf(cel, p);
         const other = own === k ? k + 1 : k;
         const x = p % width;
         const y = (p - x) / width;
-        for (let dy = -1; dy <= 1 && !done; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
+        // "in R of the OTHER bucket": the neighbour is in the same component by construction, since it
+        // is 4-adjacent to a member of R and in the pair's union set. Only the inner scan breaks — the
+        // outer loop deliberately keeps going, because `alternating` is a COUNT and the ratio below
+        // compares it against the size of R.
+        //
+        // **The first version of this loop early-exited the outer scan on the first alternating
+        // pixel**, as an optimisation, and that capped `alternating` at 1 for every component. Since
+        // `|R| >= 8`, the gate `1 * 1000 < 400 * |R|` is then true for every component that can
+        // reach it, so `ditherMask` returned nothing on all 65 corpus cases — including a perfect
+        // 50% checkerboard, which is exactly the structure it exists to find. It read "no dither
+        // anywhere" and meant "this counter cannot exceed 1". A measurement that cannot fail is not
+        // a measurement, and the honest reading of a structural zero is a broken instrument rather
+        // than an absence in the world.
+        //
+        // Measured after the fix, per-mille `ditherShare`: every declared `clean-control` in the
+        // corpus reads **0**, which is the property that matters and the one the broken version
+        // also appeared to satisfy. The ten real artworks read 1..574, and the reason §7.3 could
+        // not say "these four scenes are dithered" is now said.
+        for (let dy = -1; dy <= 1; dy++) {
+          let hit = false;
+          for (let dx = -1; dx <= 1 && !hit; dx++) {
             if (dx === 0 && dy === 0) continue;
             const nx = x + dx;
             const ny = y + dy;
             if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
             const q = ny * width + nx;
-            // "in R of the OTHER bucket": the neighbour is in the same component by construction,
-            // since it is 4-adjacent to a member of R and in the pair's union set.
             if (inPair[q] === 0) continue;
             if (lqBucketOf(cel, q) !== other) continue;
             alternating++;
-            done = true;
-            break;
+            hit = true;
           }
         }
       }

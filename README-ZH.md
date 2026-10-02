@@ -94,6 +94,9 @@ pixel demo -> /…/out/crowned-slime.png
 编辑器，去编辑窗口里显示的同一批文档、共用同一份撤销历史；如果没有编辑器在运行，
 它就在内存中提供同一套引擎，并在之后出现编辑器时自动重连。
 
+在 Windows 上，这段配置需要把 `"command"` 换成 `"cmd"`，并把 `"/c"` 加到 `args` 开头 ——
+见[连接 MCP 客户端](#连接-mcp-客户端)。
+
 `tools/list` 返回 **36 个工具**。它们背后的 94 条命令 —— `draw_ellipse`、
 `add_palette_ramp`、`outline`、`stroke_tilemap`、`autotile`、绑定、瓦片地图 ——
 一开始并不在列表里。Agent 只能像任何 MCP 客户端那样，通过 `list_commands`、
@@ -242,34 +245,70 @@ console.log(VERSION, document.width, typeof mcp.createPixelServer, typeof script
 }
 ```
 
-在 Windows 上，部分客户端需要使用 `"command": "npx.cmd"`。
-
-<details>
-<summary><strong>OpenCode V2 配置</strong></summary>
-
-在希望使用该服务器的项目中添加：
-
-```bash
-opencode mcp add dotloom-mcp -- npx -y dotloom-mcp
-```
-
-也可以在 `opencode.json` / `.opencode/opencode.json` 中手动配置：
+在 Windows 上，`npx` 和 `npx.cmd` 都用不了。`npx` 本身不是 Windows 能在没有 shell 的情况
+下启动的可执行文件（`ENOENT`）；而自 CVE-2024-27980 的修复起，Node 拒绝直接运行 `.cmd`
+（`EINVAL`）—— 也就是说在本项目支持的每一个 Node 版本上，启动都必须经过 `cmd.exe`，而它
+是一个真正的可执行文件，因此有无 shell 都能工作：
 
 ```json
 {
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "servers": {
-      "dotloom-mcp": {
-        "type": "local",
-        "command": ["npx", "-y", "dotloom-mcp"]
-      }
+  "mcpServers": {
+    "dotloom-mcp": {
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "dotloom-mcp"]
     }
   }
 }
 ```
 
-使用 `opencode mcp list` 或 `/mcps` 检查连接状态。
+Claude Desktop、Claude Code、Cursor、Windsurf 和 OpenCode 各自的配置文件路径、每一家的
+Windows 变体，以及一个三步检查法（用来区分「已连接」和「已连接且在内存中运行」），都在
+[`docs/CLIENTS.md`](docs/CLIENTS.md)（[中文](docs/CLIENTS-ZH.md)）。
+
+<details>
+<summary><strong>OpenCode 配置</strong></summary>
+
+写进 `opencode.json` 或 `opencode.jsonc`：全局放在 `~/.config/opencode/`，或按项目放在
+项目根目录。macOS / Linux：
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "dotloom-mcp": {
+      "type": "local",
+      "command": ["npx", "-y", "dotloom-mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+Windows：
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "dotloom-mcp": {
+      "type": "local",
+      "command": ["cmd", "/c", "npx", "-y", "dotloom-mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+**OpenCode 是唯一一个不使用 `mcpServers` 的客户端。** `mcp` 直接把服务器名映射到它的配置，
+所以服务器名就是 `mcp` **正下方**的键 —— 中间并没有一层 `servers`。`mcp.servers.dotloom-mcp`
+会被读成一个名字叫 `servers`、既没有 `type` 也没有 `command` 的服务器，而 `dotloom-mcp`
+根本没有被配置过；OpenCode 公开的 JSON Schema 会直接拒绝这个对象。`command` 是一个包含
+程序本身的数组，而不是字符串加一个单独的 `args` 列表；`type` 是必填的。
+
+`opencode mcp add` 是一个交互式向导：不带参数运行它，然后按提示回答。OpenCode 的 CLI 文档
+没有为它记录任何位置参数或标志，所以没有可以照抄的非交互形式 —— 直接粘贴上面的 JSON 即可。
+
+用 `opencode mcp list` 检查结果。
 
 </details>
 
@@ -562,6 +601,7 @@ electron-builder 读取。
 
 ## 文档
 
+- [客户端接入](docs/CLIENTS-ZH.md) — Claude Desktop、Claude Code、Cursor、OpenCode 和 Windsurf 的配置文件与验证过的 JSON，以及三步连接检查（[English](docs/CLIENTS.md)）
 - [English README](README.md) — 英文项目介绍与完整使用说明
 - [库 API](docs/API-ZH.md) — 构建期生成资产的任务形接口、确定性契约与版本策略（[English](docs/API.md)）
 - [技术参考](docs/REFERENCE.md) — 命令目录、MCP 内部机制、脚本、动画、瓦片地图和设计决策

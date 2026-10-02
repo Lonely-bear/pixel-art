@@ -1,0 +1,248 @@
+{
+  "schemaVersion": 1,
+  "id": "platformer",
+  "title": "Platformer character",
+  "summary": "A side-view character that has to read at 32px while moving, on a busy background, in a game the player has already decided what it is. The hard part is not the drawing: it is that every craft decision here is made once and must survive four things that erase it — the downscale, the tint, the loop, and the fact that the character is animated and therefore cannot be judged from a single still. The decision that separates a good platformer sprite from a bad one is where the shadow goes. A core shadow nested one step inside the silhouette describes a body with volume; the same tone step cut as a straight diagonal across the torso describes a sticker. Both have the same number of planes and the same contrast, and the eye picks them apart instantly at 1:1 and never at 8x zoom. Everything else in this recipe follows from that one: block the silhouette flat, wrap the shadow around it rather than slicing it, and outline last and selectively.",
+  "canvas": {
+    "sizes": [
+      {
+        "w": 16,
+        "h": 16,
+        "use": "Small player or enemy. Every decision gets harder: the head is 6px, so an eye is one pixel and a highlight is two. Cheapest silhouette to read and the hardest place to earn one."
+      },
+      {
+        "w": 32,
+        "h": 32,
+        "use": "Default player character. Room for four tone planes and a visible stride. This is the size the craft rules below assume."
+      },
+      {
+        "w": 64,
+        "h": 64,
+        "use": "Named or boss character, where the face has to survive. Interior structure (belt, collar, buckle) becomes affordable; the silhouette budget does not change."
+      }
+    ],
+    "note": "Below about 64px, dither is a mistake rather than a technique. A 3px dithered seam is a tenth of a 32px character's width, so the pattern becomes the read — a checkerboard ladder running down the figure. Build every transition on 32x32 and below from two or three solid steps with a jittered boundary, and spend dither on at most one narrow seam. Above 64px the 3-5px seam rule applies normally, and on a large canvas prefer `cluster2`/`cluster4` over 1px Bayer because the same coverage lands as blocks and stops reading as digital stipple. Work in `rect` regions and batch with `apply_ops` rather than inspecting the whole canvas after every edit."
+  },
+  "palette": {
+    "base": "dawnbringer16",
+    "locked": true,
+    "roles": [
+      {
+        "role": "skin",
+        "from": "#854c30",
+        "to": "#d2aa99",
+        "steps": 3,
+        "hueShift": 25
+      },
+      {
+        "role": "cloth",
+        "from": "#30346d",
+        "to": "#8595a1",
+        "steps": 3,
+        "hueShift": 20
+      },
+      {
+        "role": "metal",
+        "from": "#4e4a4e",
+        "to": "#d2aa99",
+        "steps": 3,
+        "hueShift": 15
+      }
+    ],
+    "colourBudget": 12,
+    "rules": [
+      "Twelve is the number of swatches the finished character should actually *use*, not the size of the palette. `dawnbringer16` seeds 16 entries and the three ramps append to it, so the document palette is bigger than twelve on purpose — it is the constraint set the artwork is snapped into, and twelve is what you paint with. `histogram` on the finished frame is what tells you whether you stayed inside it.",
+      "Three materials is a character; the accent comes out of the cloth ramp's light end rather than a fourth ramp. A fourth material is a decision you should be able to name.",
+      "Keep every ramp's two anchors close in hue. `add_palette_ramp` interpolates along the HSL wheel by the shorter path, so a plum-to-tan pair (hue 244 to 50) passes through magenta and every material comes out pink in the middle. Two short ramps with a small hue delta beat one ramp with a large one.",
+      "No pure black as a shadow and no pure white as a highlight. Use the near-black and near-white entries; reserve the extremes for a specular core or the outline.",
+      "Three steps per material, never five — nine ramp colours, and the remaining three of the twelve are the accent plus two transition steps between materials. At 32x32 a five-step ramp puts four steps inside a torso that is 10px wide, and the extra steps are indistinguishable while the budget is being spent.",
+      "`paletteLocked: true` keeps every painted colour on a declared swatch, which is what makes the asset tintable. The cost is real: it will also snap an off-ramp colour you wanted. Use opaque layers, because a translucent layer composites two swatches into a colour that is in no palette."
+    ]
+  },
+  "layers": [
+    {
+      "name": "base",
+      "purpose": "Flat blocked shapes in one colour per material. No shading, no highlight, no outline. This is the layer the silhouette is judged on, and it stays that way for the whole build so a shape change never costs you the shading on top of it."
+    },
+    {
+      "name": "shade",
+      "purpose": "Value planes: core shadow, occlusion, rim, highlight. Everything that is tone rather than shape. Keep it above `base` so a shading pass can be re-run or hidden without touching the silhouette."
+    },
+    {
+      "name": "outline",
+      "purpose": "A 1px contour, drawn last. Selective by design — it is dropped where the key light hits, so this layer is not meant to be closed."
+    }
+  ],
+  "tone": {
+    "lightFrom": "top-left",
+    "planes": [
+      {
+        "name": "highlight",
+        "rule": "One or two pixels on the top-left-facing planes only: the shoulder, the brow, the top of the cap. Never a ring — a highlight ring inside the silhouette that ignores the light direction is the single most recognisable sign of a shaded blob."
+      },
+      {
+        "name": "lit",
+        "rule": "The base plane. Leave it as the dominant area of every material; if it is not dominant, the sprite has no body left."
+      },
+      {
+        "name": "core-shadow",
+        "rule": "A band nested one step inside the silhouette on the side away from the light, following the body's contour. It is a *translated* contour, not a level set and not a straight cut: walk the silhouette rows in by 2px and displace them along the light axis. A straight diagonal across the torso at the same contrast is a flat sticker, and it reads as one even though it has the same planes."
+      },
+      {
+        "name": "occlusion",
+        "rule": "One ramp step below the core shadow, only where forms meet: under the chin, inside the raised arm, between the legs. Never on a free edge, where there is nothing casting the shadow."
+      }
+    ],
+    "contrast": "The darkest plane must sit at least two ramp steps below the lit plane — a one-step difference at 32x32 does not separate under a tint. Keep the shadow side two steps down, not to the darkest swatch in the palette: a character with a black shadow reads as a cut-out. Check the value structure with `read_grid {view: \"value\"}`, where a collapsed ramp shows up as two tones reading as one glyph."
+  },
+  "motion": {
+    "loops": [
+      {
+        "name": "idle",
+        "frames": 2,
+        "durationMs": 500,
+        "direction": "pingpong"
+      },
+      {
+        "name": "walk",
+        "frames": 4,
+        "durationMs": 120,
+        "direction": "forward"
+      },
+      {
+        "name": "run",
+        "frames": 6,
+        "durationMs": 80,
+        "direction": "forward"
+      }
+    ],
+    "note": "The last frame has to lead back into the first: that is the frame the eye sees twice per cycle, so a 1px snap there is a twitch once per stride and is invisible on a contact sheet. Build each frame by duplicating the previous one and moving exactly one thing — the parts that should not move stay byte-identical, and a frame that was redrawn from scratch always drifts. Move the whole silhouette rather than a limb for squash and stretch: `squash {layer: \"*\", scaleY: 0.9, scaleX: 1.08, pivot: \"bottom\"}` then `translate {layer: \"*\", dy: 1}`, in that order, because `translate` clears the band it vacates and would wipe the squashed artwork if it ran first. Review with `preview_animation {tag, onion: {before: 1, after: 1}}`, which follows the tag's real playback order, rather than inspecting timeline frames."
+  },
+  "steps": [
+    {
+      "id": "block-silhouette",
+      "layer": "base",
+      "goal": "The whole character in flat colour, one mass, no shading. Get the pose right before anything else: this is the frame that has to read at 32px on a busy background, and every later pass only decorates it."
+    },
+    {
+      "id": "verify-silhouette",
+      "layer": "base",
+      "goal": "Read the shape back as text and fix what is actually wrong with it — asymmetry, a detached pixel, an arm that is one pixel short. `read_grid {view: \"mask\", scope: \"cel\", layer: \"base\"}` answers proportion and symmetry exactly and costs a fraction of a preview. Do this before shading: a silhouette defect is invisible once there are six tones on top of it, and it is the defect that survives every downscale the game applies."
+    },
+    {
+      "id": "build-palette",
+      "layer": "base",
+      "goal": "Create the document with the three ramps and `paletteLocked: true` before painting anything that depends on them, so every later colour snaps to a declared swatch. `create_sprite_spec {paletteRoles}` does the structure, tags and roles in one call; `add_palette_ramp {role}` is the individual ramp."
+    },
+    {
+      "id": "core-shadow",
+      "layer": "shade",
+      "goal": "Lay the shadow planes on top of the flat shape. This is the step that decides whether the character has a body. Clip to the layer you are shading (`clip: {layer: \"base\"}`) so a band cannot spill into the transparent corners of its bounding box."
+    },
+    {
+      "id": "rim-and-highlight",
+      "layer": "shade",
+      "goal": "The highlight, last and smallest. It goes on the top-left-facing planes only, it is one or two pixels, and it is added after the shadow so it cannot be muddied by a shadow pass run over the top of it."
+    },
+    {
+      "id": "outline",
+      "layer": "outline",
+      "goal": "A 1px contour in a dark desaturated version of the local colour — not black, and not one colour for the whole sprite. Run `outline {scope: \"composite\"}` to trace the frame as the other layers define it, then erase the segments where the light hits. Selective is the point: a closed contour is a style choice, and the gap where the light hits is what makes it read as a lit form."
+    },
+    {
+      "id": "animate",
+      "layer": "base",
+      "goal": "Only once the still frame is right. Duplicate and move one thing per frame, then close the loop."
+    }
+  ],
+  "avoid": [
+    {
+      "what": "A straight diagonal shadow band across the torso, at any contrast.",
+      "why": "Two tone planes of equal contrast describe a flat sticker rather than a volume, and the difference is invisible in a thumbnail and unmistakable at 1:1. It is the most common way an agent shades a character and the hardest to see in its own output.",
+      "instead": "Nest the band inside the silhouette and let it follow the body's contour: walk the silhouette rows in by 2px and displace them along the light axis."
+    },
+    {
+      "what": "Punching the eyes and the gap between the legs out as transparent holes.",
+      "why": "A hole in a sprite is a see-through pixel in the game, not an eye — the sprite composites over a scene. A 2px gap between the legs reads as a hole in the character at every zoom level and in every lighting condition.",
+      "instead": "Paint the eye and the gap as a dark ramp step. A true hole is only correct for a genuinely hollow asset, and a character is not one."
+    },
+    {
+      "what": "Two or three floating pixels next to the head — an antenna, a raised hand, a dropped tool.",
+      "why": "A detached 2px piece reads as a second, broken head. It is invisible at 8x, where a speck looks like a highlight, and obvious in motion.",
+      "instead": "Connect it, or delete it. If the silhouette is wrong after connecting it, the pose was wrong."
+    },
+    {
+      "what": "A dithered transition anywhere on a 32x32 or smaller canvas.",
+      "why": "A 3px dithered seam is a tenth of the sprite's width, so the pattern becomes the read and the figure grows a checkerboard ladder down it.",
+      "instead": "Two or three solid steps with a single-pixel jitter along the boundary, and at most one narrow dithered seam if the seam must be soft."
+    },
+    {
+      "what": "A closed pure-black outline around everything.",
+      "why": "The outline is 10-20% of a small sprite's pixels, so it is its most visible feature. Black on a dark palette swallows the top of the character and the top of the character is the face.",
+      "instead": "1px, in a dark desaturated version of the neighbouring fill, and dropped where the light hits."
+    },
+    {
+      "what": "A highlight ring inside the silhouette, or a highlight on the side away from the light.",
+      "why": "Shade in bands, not rings. A ring ignores the light direction, and the whole value structure stops agreeing with itself.",
+      "instead": "Bands, all displaced along the same light axis as the core shadow."
+    },
+    {
+      "what": "Four or five ramp steps inside a material at 32x32.",
+      "why": "A torso is about 10px wide. Four steps inside it are indistinguishable, and they spend the palette budget the next material needed.",
+      "instead": "Three steps per material and a wider gap between the lit and shadow planes than between the planes within a material."
+    },
+    {
+      "what": "Shading placed below the crest of the layer above it.",
+      "why": "The band is invisible, so the sprite reads flat no matter how many colours went into it. This is invisible on the isolated layer and only shows up once the frame composites.",
+      "instead": "Measure the visible extent first (`measure_region` per layer), then place every band inside it."
+    },
+    {
+      "what": "Redrawing every frame from scratch to animate it.",
+      "why": "A redrawn frame always drifts by a pixel somewhere, and the drift is different on each frame, so the character shimmers while it walks.",
+      "instead": "`duplicate_frame` and move one thing. For squash and stretch, `squash` then `translate` on `layer: \"*\"`."
+    },
+    {
+      "what": "A clean-up pass run over the whole sprite at the end.",
+      "why": "Sparkle, grain and small clusters read as noise to a cleanup rule and as texture to an eye. Removing every last speckle sands the piece flat, and a sprite that has lost both light and depth is finished, not improved.",
+      "instead": "Fix only what you can still see at 100% — a clipped highlight, a stray speck, a silhouette that lost its shape."
+    }
+  ],
+  "checks": [
+    {
+      "question": "Does the silhouette read as one mass, with nothing floating next to it?",
+      "tool": "read_grid",
+      "view": "view: \"mask\", scope: \"cel\", layer: \"base\" — count the rows, compare left against right, and look for a gap that is not an intentional hole."
+    },
+    {
+      "question": "Are the shadow planes following the body, or cutting across it?",
+      "tool": "read_grid",
+      "view": "view: \"value\" — a collapsed ramp shows up as two tones reading as one glyph, and a straight terminator is visible as a tone change with no staircase in it."
+    },
+    {
+      "question": "Does every colour in the sprite come from the declared palette?",
+      "tool": "histogram",
+      "view": "Full frame, and compare the distinct count against the palette and against the recipe's colour budget."
+    },
+    {
+      "question": "Is the subject where I think it is, and how big?",
+      "tool": "measure_region",
+      "view": "Before centring a character in its canvas — the bounds are the measurement, and guessing them is how a sprite ends up a pixel off the ground line."
+    },
+    {
+      "question": "At 100%, does this still read as the character, and is the shading inside the visible band?",
+      "tool": "get_preview",
+      "view": "scale: 1 for the judgement, then crop-zoom a face or a hand. Never judge the whole piece from a zoom: upscaling exaggerates dither blocks and the usual result is deleting dithering that was correct."
+    },
+    {
+      "question": "Does the walk loop close, and does the silhouette stay the same size and position across frames?",
+      "tool": "preview_animation",
+      "view": "tag: \"walk\", onion: { before: 1, after: 1 } — this follows the tag's real playback order, so the seam between the last frame and the first is actually looked at."
+    },
+    {
+      "question": "Does the character drift from its first frame?",
+      "tool": "read_grid",
+      "view": "allFrames: true — the per-frame driftFromFirst names the worst row, which is the number for \"this animation flickers\" and is what a contact sheet cannot tell you."
+    }
+  ],
+  "notes": "The recipe says nothing about what the character *is*. That is deliberate and it is the limit of everything in this directory: these files describe how to make an asset class well, and nothing in the tool surface can tell you whether the silhouette you blocked is the right silhouette for this particular creature. Look at it before you build it."
+}

@@ -99,6 +99,9 @@ on the loopback interface and edits the same documents the window shows, with th
 undo history; with no editor running it serves the same engine from memory and
 reconnects if one appears later.
 
+On Windows that block needs `"command": "cmd"` with `"/c"` prepended to `args` — see
+[Connect an MCP client](#connect-an-mcp-client).
+
 `tools/list` returns **36 tools**. The 94 commands behind them — `draw_ellipse`,
 `add_palette_ramp`, `outline`, `stroke_tilemap`, `autotile`, the rig, the tilemaps —
 are not in that list up front. An agent finds them the way any MCP client would,
@@ -250,34 +253,72 @@ Most desktop MCP clients use an `mcpServers` object:
 }
 ```
 
-On Windows, some clients require `"command": "npx.cmd"`.
-
-<details>
-<summary><strong>OpenCode V2 configuration</strong></summary>
-
-Add the server from the project you want it available in:
-
-```bash
-opencode mcp add dotloom-mcp -- npx -y dotloom-mcp
-```
-
-Or configure it manually in `opencode.json` / `.opencode/opencode.json`:
+On Windows, neither `npx` nor `npx.cmd` works. `npx` is not an executable Windows can launch
+without a shell (`ENOENT`), and Node has refused to run `npx.cmd` directly (`EINVAL`) since
+the CVE-2024-27980 fix — so on every Node version this project supports, the launch has to go
+through `cmd.exe`, which is a real executable and therefore works with or without a shell:
 
 ```json
 {
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "servers": {
-      "dotloom-mcp": {
-        "type": "local",
-        "command": ["npx", "-y", "dotloom-mcp"]
-      }
+  "mcpServers": {
+    "dotloom-mcp": {
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "dotloom-mcp"]
     }
   }
 }
 ```
 
-Check the connection with `opencode mcp list` or `/mcps`.
+Exact file paths for Claude Desktop, Claude Code, Cursor, Windsurf and OpenCode, the Windows
+variant of each, and a three-step check that tells "connected" apart from "connected and
+running in memory", are in [`docs/CLIENTS.md`](docs/CLIENTS.md).
+
+<details>
+<summary><strong>OpenCode configuration</strong></summary>
+
+Write it into `opencode.json` or `opencode.jsonc` — globally in `~/.config/opencode/`, or per
+project in the project root. macOS / Linux:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "dotloom-mcp": {
+      "type": "local",
+      "command": ["npx", "-y", "dotloom-mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+Windows:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "dotloom-mcp": {
+      "type": "local",
+      "command": ["cmd", "/c", "npx", "-y", "dotloom-mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+**OpenCode is the one client that does not use `mcpServers`.** `mcp` maps a server name
+straight to its configuration, so the name is a key *immediately* under `mcp` — there is no
+`servers` object in between. `mcp.servers.dotloom-mcp` is read as a server literally named
+`servers`, with no `type` and no `command`, and `dotloom-mcp` is never configured at all;
+OpenCode's published JSON Schema rejects the object outright. `command` is a single array
+that includes the program, not a string plus a separate `args` list, and `type` is required.
+
+`opencode mcp add` is an interactive guide: run it with no arguments and answer the prompts.
+OpenCode's CLI documentation gives it no positional arguments and no flags, so there is no
+non-interactive equivalent to type here — paste the JSON above instead.
+
+Check the result with `opencode mcp list`.
 
 </details>
 
@@ -577,6 +618,7 @@ or config change is needed:
 
 ## Documentation
 
+- [Client setup](docs/CLIENTS.md) — configuration files and verified JSON for Claude Desktop, Claude Code, Cursor, OpenCode and Windsurf, plus a three-step connection check ([中文](docs/CLIENTS-ZH.md))
 - [Library API](docs/API.md) — build-time asset generation, the determinism contract, and the versioning policy ([中文](docs/API-ZH.md))
 - [Technical reference](docs/REFERENCE.md) — command catalogue, MCP internals, scripting, animation, tilemaps, and design decisions
 - [Changelog](CHANGELOG.md) — release history and scope ([中文](CHANGELOG-ZH.md))
