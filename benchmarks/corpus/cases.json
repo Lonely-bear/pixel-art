@@ -4294,7 +4294,7 @@
     },
     {
       "id": "app/icon.png",
-      "label": "packages/app/build/icon.png — a 1024x1024 app icon, the second real SUBJECT in the repository",
+      "label": "packages/app/build/icon.png — a 1024x1024 app icon, the second real SUBJECT in the repository. Not quiet under `palette`: 4,871 distinct colours against a 16-entry palette, so every one of its 878,544 solid pixels is off-palette and `off-palette` blocks",
       "tier": "real",
       "provenance": "repo-png",
       "source": "packages/app/build/icon.png",
@@ -4302,7 +4302,7 @@
         "preconditions": {
           "silhouette": null
         },
-        "noBlocking": true,
+        "noBlocking": false,
         "measure": {
           "N": [
             878544
@@ -8697,6 +8697,1850 @@
           ],
           "scoreQ": [
             750
+          ]
+        }
+      }
+    },
+    {
+      "id": "control/six-hue-families-32",
+      "label": "Six declared hue families 60 degrees apart on a 32x32: one below §4.3's `hue-sprawl` gate of seven, and drawn entirely from the palette",
+      "tier": "synthetic",
+      "provenance": "generated",
+      "pair": [
+        "palette/hue-sectors"
+      ],
+      "defects": [
+        {
+          "kind": "clean-control",
+          "note": "**The negative control for `hue-sprawl`, and the first half of the `palette/hue-sectors` contrast pair.** Six vertical bands at hues 0, 60, 120, 180, 240 and 300, every one of them a declared swatch. §4.3's row is `hueSectors >= 7` on a canvas that is not `scene`-class, so this reads 6 and says nothing; the partner `defect/hue-sprawl-32` is the identical construction with a seventh band at hue 30 and differs by exactly that one band. **The colours are spread in luminance as well as hue by construction** (`Lq` 40 to 137 across the six), so `value` sees six tone regions and a range of 164 rather than a flat field — with six colours of one luminance it would fire `flat-value`, and a negative control that carries a code has stopped being one."
+        }
+      ],
+      "recipe": {
+        "canvas": {
+          "w": 32,
+          "h": 32
+        },
+        "layers": [
+          "Base"
+        ],
+        "palette": [
+          "#3a2f2a",
+          "#c00000",
+          "#c0c000",
+          "#00c000",
+          "#00c0c0",
+          "#0000c0",
+          "#c000c0"
+        ],
+        "ops": [
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              4,
+              4,
+              3,
+              24
+            ],
+            "color": "pal:1",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              7,
+              4,
+              3,
+              24
+            ],
+            "color": "pal:2",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              10,
+              4,
+              3,
+              24
+            ],
+            "color": "pal:3",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              13,
+              4,
+              3,
+              24
+            ],
+            "color": "pal:4",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              16,
+              4,
+              3,
+              24
+            ],
+            "color": "pal:5",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              19,
+              4,
+              3,
+              24
+            ],
+            "color": "pal:6",
+            "fill": true
+          }
+        ]
+      },
+      "expect": {
+        "codes": [],
+        "absent": [
+          "colour-budget-exceeded",
+          "hue-sprawl",
+          "invented-colours",
+          "muddy-mix",
+          "grey-colours",
+          "off-palette",
+          "stray-colour",
+          "near-duplicate-colours"
+        ],
+        "verdict": "pass",
+        "noBlocking": true,
+        "preconditions": {
+          "silhouette": null
+        },
+        "measure": {
+          "N": [
+            432
+          ],
+          "components": [
+            1
+          ]
+        }
+      }
+    },
+    {
+      "id": "defect/hue-sprawl-32",
+      "label": "The same six bands plus a seventh at hue 30: seven 30-degree sectors on a `compact` canvas, and nothing else wrong",
+      "tier": "synthetic",
+      "provenance": "generated",
+      "pair": [
+        "palette/hue-sectors"
+      ],
+      "defects": [
+        {
+          "kind": "hue-sprawl",
+          "note": "A seventh 3px band at `#c08000`, hue 30, which is sector 1 — and sector 1 is not among the six the partner case uses (0, 2, 4, 6, 8, 10), so `hueSectors` is **7** and §4.3's `>= 7` row fires. Everything else about the drawing is clean and is asserted rather than assumed: `offPalette` 0, `distinctColours` 7 against the `compact` budget of 16, `muddy` 0 because nothing is off the palette, `maxNearestDistance` 0 because every band is a swatch, and a mean saturation of 100% so `grey-colours` is silent. **The class is the only exemption §4.3 gives this row**, so the same seven families on a 256x256 canvas are not reported; `docs/EVALUATION.md` §7 records that as item 8's standing complaint, and the corpus measures the other side of it rather than arguing it."
+        }
+      ],
+      "recipe": {
+        "canvas": {
+          "w": 32,
+          "h": 32
+        },
+        "layers": [
+          "Base"
+        ],
+        "palette": [
+          "#3a2f2a",
+          "#c00000",
+          "#c0c000",
+          "#00c000",
+          "#00c0c0",
+          "#0000c0",
+          "#c000c0",
+          "#c08000"
+        ],
+        "ops": [
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              4,
+              4,
+              3,
+              24
+            ],
+            "color": "pal:1",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              7,
+              4,
+              3,
+              24
+            ],
+            "color": "pal:2",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              10,
+              4,
+              3,
+              24
+            ],
+            "color": "pal:3",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              13,
+              4,
+              3,
+              24
+            ],
+            "color": "pal:4",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              16,
+              4,
+              3,
+              24
+            ],
+            "color": "pal:5",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              19,
+              4,
+              3,
+              24
+            ],
+            "color": "pal:6",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              22,
+              4,
+              3,
+              24
+            ],
+            "color": "pal:7",
+            "fill": true
+          }
+        ]
+      },
+      "expect": {
+        "codes": [
+          "hue-sprawl"
+        ],
+        "absent": [
+          "colour-budget-exceeded",
+          "invented-colours",
+          "muddy-mix",
+          "grey-colours",
+          "off-palette"
+        ],
+        "verdict": "pass",
+        "noBlocking": true,
+        "preconditions": {
+          "silhouette": null
+        },
+        "measure": {
+          "N": [
+            504
+          ],
+          "components": [
+            1
+          ]
+        }
+      }
+    },
+    {
+      "id": "control/washed-one-hue-32",
+      "label": "Three bands at a mean saturation of 10% of full carrying one hue family: §4.3's `grey-colours` conjunct, on its own",
+      "tier": "synthetic",
+      "provenance": "generated",
+      "pair": [
+        "palette/washed-hues"
+      ],
+      "defects": [
+        {
+          "kind": "clean-control",
+          "note": "**The negative control for `grey-colours`, and the one that isolates the conjunct.** §4.3's row is `meanSat < 15/100` **and** `hueSectors >= 3`. This drawing satisfies the first clause absolutely: `#e8d9a0` at `s255 79` over two pure greys at `s255 0` gives a mean of 26.3 of 255, which is **10.3% of full**, well under the gate. What it does not have is three hue families — `hueSectors` is 1, because §3.4 counts a hue family only at `s255 >= 12` and the two greys are at 0. So a washed-out palette with one hue is disciplined, and a gate written as \"low saturation\" without the conjunct would fire on it. The partner `defect/grey-washed-hues-32` is the same construction with three tints of three hues and **is** reported."
+        }
+      ],
+      "recipe": {
+        "canvas": {
+          "w": 32,
+          "h": 32
+        },
+        "layers": [
+          "Base"
+        ],
+        "palette": [
+          "#3a2f2a",
+          "#e8d9a0",
+          "#787878",
+          "#8a8a8a"
+        ],
+        "ops": [
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              4,
+              4,
+              8,
+              24
+            ],
+            "color": "pal:1",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              12,
+              4,
+              8,
+              24
+            ],
+            "color": "pal:2",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              20,
+              4,
+              8,
+              24
+            ],
+            "color": "pal:3",
+            "fill": true
+          }
+        ]
+      },
+      "expect": {
+        "codes": [],
+        "absent": [
+          "colour-budget-exceeded",
+          "hue-sprawl",
+          "invented-colours",
+          "muddy-mix",
+          "grey-colours",
+          "off-palette",
+          "stray-colour",
+          "near-duplicate-colours"
+        ],
+        "verdict": "pass",
+        "noBlocking": true,
+        "preconditions": {
+          "silhouette": null
+        },
+        "measure": {
+          "N": [
+            576
+          ],
+          "components": [
+            1
+          ]
+        }
+      }
+    },
+    {
+      "id": "defect/grey-washed-hues-32",
+      "label": "Four bands: a skin tone and three tints at `s255 15` in three different 30-degree sectors, so the hues are present and washed out",
+      "tier": "synthetic",
+      "provenance": "generated",
+      "pair": [
+        "palette/washed-hues"
+      ],
+      "defects": [
+        {
+          "kind": "grey-colours",
+          "note": "`#807878`, `#788078` and `#787880` each have `s255 = floor(8 * 255 / 128) = 15`, which is `>= 12` and so counts as a hue family, at hues 0, 120 and 240 — sectors 0, 4 and 8. With the skin band the sprite has **four** hue families and a mean `s255` of 15, i.e. **5.9% of full** against §4.3's 15% gate, and the row fires at -100. **This case is also the one that decides which document was right.** §4.3 defines `meanSat` as the mean `s255` divided by 255, so the integer test is `sumS255 * 100 < 15 * 255 * N`; §3.7 transcribed it as `sumS255 * 100 < 15 * N`, which asks for a mean `s255` below 0.15 and, `s255` being an integer, is satisfiable only by pixels that are *exactly* grey. On this drawing the first test is `900 * 100 < 15 * 255 * 576` (true) and the second is `900 * 100 < 15 * 576` (false), so with the old transcription in `palette.ts` this code could not have fired at all."
+        },
+        {
+          "kind": "near-duplicate-colours",
+          "note": "**A co-fire from `noise`, and it is not incidental.** The three tints differ by 8 per channel from each other, which is inside §4.4's Chebyshev 8 and over its `>= 8` pixel floor, so `nearDuplicatePairs` is 3. A washed-out palette is *made of* near-identical colours — that is what washed out means — so this code and `grey-colours` are two readings of one artwork from two different questions: one says \"you have three hue families\", the other says \"two of them are the same colour\". It is declared rather than hidden because `expect.codes` is an exact match and a fixture that disagrees with its own note is worse than one that is untidy."
+        }
+      ],
+      "recipe": {
+        "canvas": {
+          "w": 32,
+          "h": 32
+        },
+        "layers": [
+          "Base"
+        ],
+        "palette": [
+          "#3a2f2a",
+          "#e8d9a0",
+          "#807878",
+          "#788078",
+          "#787880"
+        ],
+        "ops": [
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              4,
+              4,
+              6,
+              24
+            ],
+            "color": "pal:1",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              10,
+              4,
+              6,
+              24
+            ],
+            "color": "pal:2",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              16,
+              4,
+              6,
+              24
+            ],
+            "color": "pal:3",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              22,
+              4,
+              6,
+              24
+            ],
+            "color": "pal:4",
+            "fill": true
+          }
+        ]
+      },
+      "expect": {
+        "codes": [
+          "grey-colours",
+          "near-duplicate-colours"
+        ],
+        "absent": [
+          "colour-budget-exceeded",
+          "hue-sprawl",
+          "invented-colours",
+          "muddy-mix",
+          "off-palette"
+        ],
+        "verdict": "pass",
+        "noBlocking": true,
+        "preconditions": {
+          "silhouette": null
+        },
+        "measure": {
+          "N": [
+            576
+          ],
+          "components": [
+            1
+          ]
+        }
+      }
+    },
+    {
+      "id": "control/colour-budget-at-limit-32",
+      "label": "Sixteen declared greys on a 32x32, tiled 4x4: exactly §4.3's `compact` budget of sixteen, and nothing else wrong",
+      "tier": "synthetic",
+      "provenance": "generated",
+      "pair": [
+        "palette/colour-budget"
+      ],
+      "defects": [
+        {
+          "kind": "clean-control",
+          "note": "**The negative control for `colour-budget-exceeded`, and the near-miss half of its pair.** Sixteen greys 15 apart, so every pair is more than §4.4's Chebyshev 8 and `nearDuplicatePairs` is 0; they are **pure** greys (`s255 0`), so `hueSectors` is 0 and both `hue-sprawl` and `grey-colours` are silent on their own clauses; and all sixteen are declared, so `offPalette` and `muddy` are 0. `distinctColours` is exactly 16 and the budget is exactly 16, so §4.3's `>` does not fire — **a `>=` written for a `>` would pass this row and fail the next.** The partner adds one grey and differs by nothing else."
+        }
+      ],
+      "recipe": {
+        "canvas": {
+          "w": 32,
+          "h": 32
+        },
+        "layers": [
+          "Base"
+        ],
+        "palette": [
+          "#0f0f0f",
+          "#1e1e1e",
+          "#2d2d2d",
+          "#3c3c3c",
+          "#4b4b4b",
+          "#5a5a5a",
+          "#696969",
+          "#787878",
+          "#878787",
+          "#969696",
+          "#a5a5a5",
+          "#b4b4b4",
+          "#c3c3c3",
+          "#d2d2d2",
+          "#e1e1e1",
+          "#f0f0f0"
+        ],
+        "ops": [
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              4,
+              4,
+              4,
+              4
+            ],
+            "color": "pal:15",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              8,
+              4,
+              4,
+              4
+            ],
+            "color": "pal:15",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              12,
+              4,
+              4,
+              4
+            ],
+            "color": "pal:14",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              16,
+              4,
+              4,
+              4
+            ],
+            "color": "pal:13",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              20,
+              4,
+              4,
+              4
+            ],
+            "color": "pal:12",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              24,
+              4,
+              4,
+              4
+            ],
+            "color": "pal:11",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              4,
+              8,
+              4,
+              4
+            ],
+            "color": "pal:10",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              8,
+              8,
+              4,
+              4
+            ],
+            "color": "pal:9",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              12,
+              8,
+              4,
+              4
+            ],
+            "color": "pal:8",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              16,
+              8,
+              4,
+              4
+            ],
+            "color": "pal:7",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              20,
+              8,
+              4,
+              4
+            ],
+            "color": "pal:6",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              24,
+              8,
+              4,
+              4
+            ],
+            "color": "pal:5",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              4,
+              12,
+              4,
+              4
+            ],
+            "color": "pal:4",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              8,
+              12,
+              4,
+              4
+            ],
+            "color": "pal:3",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              12,
+              12,
+              4,
+              4
+            ],
+            "color": "pal:2",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              16,
+              12,
+              4,
+              4
+            ],
+            "color": "pal:1",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              20,
+              12,
+              4,
+              4
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              24,
+              12,
+              4,
+              4
+            ],
+            "color": "pal:10",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              4,
+              16,
+              4,
+              4
+            ],
+            "color": "pal:11",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              8,
+              16,
+              4,
+              4
+            ],
+            "color": "pal:12",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              12,
+              16,
+              4,
+              4
+            ],
+            "color": "pal:13",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              16,
+              16,
+              4,
+              4
+            ],
+            "color": "pal:14",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              20,
+              16,
+              4,
+              4
+            ],
+            "color": "pal:15",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              24,
+              16,
+              4,
+              4
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              4,
+              20,
+              4,
+              4
+            ],
+            "color": "pal:1",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              8,
+              20,
+              4,
+              4
+            ],
+            "color": "pal:2",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              12,
+              20,
+              4,
+              4
+            ],
+            "color": "pal:3",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              16,
+              20,
+              4,
+              4
+            ],
+            "color": "pal:4",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              20,
+              20,
+              4,
+              4
+            ],
+            "color": "pal:5",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              24,
+              20,
+              4,
+              4
+            ],
+            "color": "pal:11",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              4,
+              24,
+              4,
+              4
+            ],
+            "color": "pal:2",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              8,
+              24,
+              4,
+              4
+            ],
+            "color": "pal:3",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              12,
+              24,
+              4,
+              4
+            ],
+            "color": "pal:4",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              16,
+              24,
+              4,
+              4
+            ],
+            "color": "pal:5",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              20,
+              24,
+              4,
+              4
+            ],
+            "color": "pal:6",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              24,
+              24,
+              4,
+              4
+            ],
+            "color": "pal:12",
+            "fill": true
+          }
+        ]
+      },
+      "expect": {
+        "codes": [],
+        "absent": [
+          "colour-budget-exceeded",
+          "hue-sprawl",
+          "invented-colours",
+          "muddy-mix",
+          "grey-colours",
+          "off-palette",
+          "stray-colour",
+          "near-duplicate-colours"
+        ],
+        "verdict": "pass",
+        "noBlocking": true,
+        "preconditions": {
+          "silhouette": null
+        },
+        "measure": {
+          "N": [
+            576
+          ],
+          "components": [
+            1
+          ]
+        }
+      }
+    },
+    {
+      "id": "defect/colour-budget-32",
+      "label": "The same tiling with a seventeenth grey: 17 distinct colours against a `compact` budget of 16",
+      "tier": "synthetic",
+      "provenance": "generated",
+      "pair": [
+        "palette/colour-budget"
+      ],
+      "defects": [
+        {
+          "kind": "colour-budget-exceeded",
+          "note": "One extra declared grey makes `distinctColours` 17 against §4.3's `compact` budget of 16, which is -200 and lands the dimension at 800. **The budget is keyed on canvas area and not on the solid count, and this pair is the evidence:** both members have `N` 576 on a 32x32 canvas and differ in nothing but how many swatches the artist declared. The tiling is 4x4 blocks rather than single pixels **on purpose** — thirteen one-pixel accents were measured first, and every one of them is a `colourOrphan` to §4.4, which fired `stray-colour` at 13 of 576 and made the case about `noise` instead of about `palette`. A 4x4 block has a same-bucket neighbour within Chebyshev 2 for every one of its pixels, so `colourOrphans` is 0 here."
+        }
+      ],
+      "recipe": {
+        "canvas": {
+          "w": 32,
+          "h": 32
+        },
+        "layers": [
+          "Base"
+        ],
+        "palette": [
+          "#0f0f0f",
+          "#1e1e1e",
+          "#2d2d2d",
+          "#3c3c3c",
+          "#4b4b4b",
+          "#5a5a5a",
+          "#696969",
+          "#787878",
+          "#878787",
+          "#969696",
+          "#a5a5a5",
+          "#b4b4b4",
+          "#c3c3c3",
+          "#d2d2d2",
+          "#e1e1e1",
+          "#f0f0f0",
+          "#ffffff"
+        ],
+        "ops": [
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              4,
+              4,
+              4,
+              4
+            ],
+            "color": "pal:16",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              8,
+              4,
+              4,
+              4
+            ],
+            "color": "pal:15",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              12,
+              4,
+              4,
+              4
+            ],
+            "color": "pal:14",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              16,
+              4,
+              4,
+              4
+            ],
+            "color": "pal:13",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              20,
+              4,
+              4,
+              4
+            ],
+            "color": "pal:12",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              24,
+              4,
+              4,
+              4
+            ],
+            "color": "pal:11",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              4,
+              8,
+              4,
+              4
+            ],
+            "color": "pal:10",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              8,
+              8,
+              4,
+              4
+            ],
+            "color": "pal:9",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              12,
+              8,
+              4,
+              4
+            ],
+            "color": "pal:8",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              16,
+              8,
+              4,
+              4
+            ],
+            "color": "pal:7",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              20,
+              8,
+              4,
+              4
+            ],
+            "color": "pal:6",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              24,
+              8,
+              4,
+              4
+            ],
+            "color": "pal:5",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              4,
+              12,
+              4,
+              4
+            ],
+            "color": "pal:4",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              8,
+              12,
+              4,
+              4
+            ],
+            "color": "pal:3",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              12,
+              12,
+              4,
+              4
+            ],
+            "color": "pal:2",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              16,
+              12,
+              4,
+              4
+            ],
+            "color": "pal:1",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              20,
+              12,
+              4,
+              4
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              24,
+              12,
+              4,
+              4
+            ],
+            "color": "pal:10",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              4,
+              16,
+              4,
+              4
+            ],
+            "color": "pal:11",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              8,
+              16,
+              4,
+              4
+            ],
+            "color": "pal:12",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              12,
+              16,
+              4,
+              4
+            ],
+            "color": "pal:13",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              16,
+              16,
+              4,
+              4
+            ],
+            "color": "pal:14",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              20,
+              16,
+              4,
+              4
+            ],
+            "color": "pal:15",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              24,
+              16,
+              4,
+              4
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              4,
+              20,
+              4,
+              4
+            ],
+            "color": "pal:1",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              8,
+              20,
+              4,
+              4
+            ],
+            "color": "pal:2",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              12,
+              20,
+              4,
+              4
+            ],
+            "color": "pal:3",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              16,
+              20,
+              4,
+              4
+            ],
+            "color": "pal:4",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              20,
+              20,
+              4,
+              4
+            ],
+            "color": "pal:5",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              24,
+              20,
+              4,
+              4
+            ],
+            "color": "pal:11",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              4,
+              24,
+              4,
+              4
+            ],
+            "color": "pal:2",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              8,
+              24,
+              4,
+              4
+            ],
+            "color": "pal:3",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              12,
+              24,
+              4,
+              4
+            ],
+            "color": "pal:4",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              16,
+              24,
+              4,
+              4
+            ],
+            "color": "pal:5",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              20,
+              24,
+              4,
+              4
+            ],
+            "color": "pal:6",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              24,
+              24,
+              4,
+              4
+            ],
+            "color": "pal:12",
+            "fill": true
+          }
+        ]
+      },
+      "expect": {
+        "codes": [
+          "colour-budget-exceeded"
+        ],
+        "absent": [
+          "hue-sprawl",
+          "invented-colours",
+          "muddy-mix",
+          "grey-colours",
+          "off-palette"
+        ],
+        "verdict": "pass",
+        "noBlocking": true,
+        "preconditions": {
+          "silhouette": null
+        },
+        "measure": {
+          "N": [
+            576
+          ],
+          "components": [
+            1
+          ]
+        }
+      }
+    },
+    {
+      "id": "defect/off-palette-over-skin-32",
+      "label": "Four declared bands, one replaced by a colour a few channel steps off its swatch: a quarter of the ink is not in the palette",
+      "tier": "synthetic",
+      "provenance": "generated",
+      "defects": [
+        {
+          "kind": "off-palette",
+          "note": "The third band is `#9c9c36` where the declared swatch is `#a0a030` — four per channel. §4.3 defines off-palette as **exact** non-membership, not \"not close to a swatch\", so 144 of 576 pixels is `rhu(144000, 576) = 250` per-mille: the base is §4.3's `<= 40/100` row at 550, and the issue is **blocking** at severity 0.55 because 250 is above §4.3's 0.20. **This is the snapping-miss case the specification describes**, and it is deliberately *not* reported as `invented-colours`: the redmean distance from `#9c9c36` to the nearest swatch is 190 against §4.3's gate of 12000, and §4.3 exists to separate exactly those two failure modes. `defect/invented-colour-32` is the other half of that pair, and the reason it carries a *different* ratio for the same kind of mistake is §4.3's: how far off you are, not how much of you is."
+        }
+      ],
+      "recipe": {
+        "canvas": {
+          "w": 32,
+          "h": 32
+        },
+        "layers": [
+          "Base"
+        ],
+        "palette": [
+          "#3a2f2a",
+          "#7a4a2a",
+          "#e8d9a0",
+          "#a0a030"
+        ],
+        "ops": [
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              4,
+              4,
+              6,
+              24
+            ],
+            "color": "pal:2",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              10,
+              4,
+              6,
+              24
+            ],
+            "color": "pal:1",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              16,
+              4,
+              6,
+              24
+            ],
+            "color": "#9c9c36",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              22,
+              4,
+              6,
+              24
+            ],
+            "color": "pal:0",
+            "fill": true
+          }
+        ]
+      },
+      "expect": {
+        "codes": [
+          "off-palette"
+        ],
+        "absent": [
+          "colour-budget-exceeded",
+          "hue-sprawl",
+          "invented-colours",
+          "muddy-mix",
+          "grey-colours"
+        ],
+        "verdict": "fail",
+        "noBlocking": false,
+        "preconditions": {
+          "silhouette": null
+        },
+        "measure": {
+          "N": [
+            576
+          ],
+          "components": [
+            1
+          ]
+        }
+      }
+    },
+    {
+      "id": "defect/invented-colour-32",
+      "label": "The same four declared bands with one pixel of `#ff0080` inside them: a colour 87019 away from every swatch",
+      "tier": "synthetic",
+      "provenance": "generated",
+      "defects": [
+        {
+          "kind": "invented-colours",
+          "note": "A single pixel of magenta among 575 pixels of declared swatches. Its redmean distance to the nearest swatch is 87019 against §4.3's 12000, so `invented-colours` fires at severity 0.40 — **and `off-palette` does not**, because 1 of 576 is `rhu(1000, 576) = 2` per-mille, inside §4.3's `<= 2/100` row at 950. That isolation is the point: it is the only shape in the corpus where `invented-colours` is reachable on its own rather than as a passenger, and §4.3's justification for carrying the quantity at all is that it separates \"one step off a ramp entry, one `quantize_to_palette` call\" from \"30000 away from every swatch, the fix is a decision\". `noise` reads 1 `colourOrphan` here, which is `rhu(1000, 576) = 2` against §4.4's `<= 8/1000` row, so `stray-colour` does not fire."
+        }
+      ],
+      "recipe": {
+        "canvas": {
+          "w": 32,
+          "h": 32
+        },
+        "layers": [
+          "Base"
+        ],
+        "palette": [
+          "#3a2f2a",
+          "#7a4a2a",
+          "#e8d9a0",
+          "#a0a030"
+        ],
+        "ops": [
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              4,
+              4,
+              6,
+              24
+            ],
+            "color": "pal:2",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              10,
+              4,
+              6,
+              24
+            ],
+            "color": "pal:1",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              16,
+              4,
+              6,
+              24
+            ],
+            "color": "pal:3",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              22,
+              4,
+              6,
+              24
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "pixels",
+            "layer": "Base",
+            "points": [
+              [
+                6,
+                6
+              ]
+            ],
+            "color": "#ff0080"
+          }
+        ]
+      },
+      "expect": {
+        "codes": [
+          "invented-colours"
+        ],
+        "absent": [
+          "colour-budget-exceeded",
+          "hue-sprawl",
+          "muddy-mix",
+          "grey-colours",
+          "off-palette"
+        ],
+        "verdict": "pass",
+        "noBlocking": true,
+        "preconditions": {
+          "silhouette": null
+        },
+        "measure": {
+          "N": [
+            576
+          ],
+          "components": [
+            1
+          ]
+        }
+      }
+    },
+    {
+      "id": "defect/muddy-over-skin-32",
+      "label": "The same four bands with thirty pixels of undeclared olive in three 2x5 patches: off the palette and inside §3.4's muddy window",
+      "tier": "synthetic",
+      "provenance": "generated",
+      "defects": [
+        {
+          "kind": "muddy-mix",
+          "note": "`#605850` has `s255 = floor(16 * 255 / 96) = 42` and `v255 = 96`, so it is inside §3.4's window of `s255 <= 76` and `64 <= v255 <= 204`. Thirty such pixels of 576 is `rhu(30000, 576) = 52` per-mille against §4.3's `>= 5/100` = 50, and the row fires at -100. **The patches are 2x5 rather than one block so that `noise` sees nothing**: 30 pixels of a colour that nothing around it agrees with would be 30 `colourOrphans` and would carry `stray-colour` as well, and the case would then be about two dimensions at once."
+        },
+        {
+          "kind": "off-palette",
+          "note": "**Declared because §4.3's own numbers make it unavoidable, and the arithmetic is the finding.** `muddy` is defined over *off-palette* pixels, so `muddyRatio <= offPaletteRatio` pixel for pixel and always; a muddy ratio of 50 per-mille is an off-palette ratio of at least 50, and §4.3's `off-palette` trigger is `> 2/100` = 20. **`muddy-mix` therefore cannot fire alone** — the nesting is in the threshold table rather than in the fixture, and a report that shows only one of the two has been shown a partial fact. At 52 per-mille the issue is the advisory 0.35 rather than the blocking 0.55."
+        }
+      ],
+      "recipe": {
+        "canvas": {
+          "w": 32,
+          "h": 32
+        },
+        "layers": [
+          "Base"
+        ],
+        "palette": [
+          "#3a2f2a",
+          "#7a4a2a",
+          "#e8d9a0",
+          "#a0a030"
+        ],
+        "ops": [
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              4,
+              4,
+              6,
+              24
+            ],
+            "color": "pal:2",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              10,
+              4,
+              6,
+              24
+            ],
+            "color": "pal:1",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              16,
+              4,
+              6,
+              24
+            ],
+            "color": "pal:3",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              22,
+              4,
+              6,
+              24
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              16,
+              6,
+              2,
+              5
+            ],
+            "color": "#605850",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              16,
+              12,
+              2,
+              5
+            ],
+            "color": "#605850",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "rect": [
+              16,
+              18,
+              2,
+              5
+            ],
+            "color": "#605850",
+            "fill": true
+          }
+        ]
+      },
+      "expect": {
+        "codes": [
+          "muddy-mix",
+          "off-palette"
+        ],
+        "absent": [
+          "colour-budget-exceeded",
+          "hue-sprawl",
+          "invented-colours",
+          "grey-colours"
+        ],
+        "verdict": "pass",
+        "noBlocking": true,
+        "preconditions": {
+          "silhouette": null
+        },
+        "measure": {
+          "N": [
+            576
+          ],
+          "components": [
+            1
           ]
         }
       }

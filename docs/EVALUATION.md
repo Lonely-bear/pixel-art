@@ -517,6 +517,35 @@ mode a partial record was supposed to eliminate.
 animation, so motion does not apply" from "the motion analyzer crashed and left a hole"
 without pattern-matching prose. §4.6 specifies the detection for each.
 
+#### What crosses the boundary, and under what name
+
+`types.ts` is frozen and the shape above is the contract, so everything *inside* a
+`QualityReport` keeps the spelling `types.ts` gives it: `score` is the 0..1 float
+`unitScore(totalQ)` produced, and an issue's `severity` is the 0..1 constant from Appendix A.
+Two surfaces project that report outward and both rename its numbers, which looks like drift and
+is not:
+
+| surface | units | why |
+| --- | --- | --- |
+| `QualityReport`, and the MCP `evaluate` tool that re-renders it verbatim | `score` 0..1, `severity` 0..1, `scoreQ` per-mille inside a dimension | it is the **record**. §3.6 freezes the shape, so the units in it are part of the contract and the MCP tool re-renders rather than projects. |
+| the `evaluate`, `fix` and `verify` commands | per-mille for **every** number: `scoreQ`, `severityQ`, `thresholdQ`, `measuredQ` | these are the numbers a caller may compare against a threshold, and §3.7's rule is that such a comparison is an integer test with no epsilon. |
+
+The conversion is one line per surface (`Math.round(severity * 1000)`) and it is exact for every
+severity in Appendix A, all of which are two-decimal. One unit on the side of the boundary a
+caller acts on is worth more than one unit everywhere.
+
+**Two targeting arguments are spelled differently on the two sides, and both choices are
+deliberate.** The three commands take `frames` — an array, because the bus needs to name a whole
+sequence and a one-element array *is* a per-frame pass — and `focus`, which is `QualityContext`'s
+own internal name. The session tool takes `frame`, a scalar, because it has exactly one such
+option and its own `tag` for the loop, and because `frame` is what its 36 neighbours in that
+namespace already use; and `rect`, because that is what every other region argument on the wire is
+called and a tool argument should not be named after the field of the object it happens to
+populate. `pixel://quality/{doc}` follows the tool (`?frame=N`) because a URI query cannot carry a
+JSON object, which is also why that resource points a caller who wants a scoped report at the
+tool. The rule underneath all three is the one that matters: **they select the same frames and the
+same region, so the same document returns the same report on every channel.**
+
 ### 3.7 Every ratio, in integer form
 
 Rule 2 above means no threshold in §4 is ever evaluated as a float. This is the complete list,
@@ -536,7 +565,7 @@ so there is nothing left to guess. `rhu(a, b) = Math.floor((a + b/2) / b)` throu
 | `cornerDensity` | `>= 250/1000` | `corners * 1000 >= 250 * edgePixelsNearby` |
 | `offPaletteRatio` | `<= 20/100` | `offPalette * 100 <= 20 * N` |
 | `muddyRatio` | `>= 5/100` | `muddyCount * 100 >= 5 * N` |
-| `meanSat` | `< 15/100` | `sumS255 * 100 < 15 * N` |
+| `meanSat` | `< 15/100` | `sumS255 * 100 < 15 * 255 * N` |
 | noise ratios | `> 8/1000` | `count * 1000 > 8 * N` |
 | dither alternation | `>= 400/1000` | `alternating * 1000 >= 400 * \|R\|` |
 | `outlineShare` | `>= 80/100` | `inkCount * 100 >= 80 * edgePixels` |
@@ -563,6 +592,22 @@ subject's own half-thickness.
 `areaSpread`'s denominator is `meanArea`, a rational number; compute it as
 `rhu(sumArea, n)` once rather than dividing per frame, so the whole quantity is integer from
 the first comparison onward.
+
+#### One threshold deliberately not in that table
+
+`severity` is absent from the table above, and the reason is that it is not a ratio. It is a
+**fixed per-code constant** from Appendix A, not a measurement of this sprite — §3.5 says so in
+as many words: "the severity is the code's stated severity, not a per-sprite measurement". A
+constant has no arithmetic to transcribe: there is one number per code, and `SEVERITY_BLOCKING` is
+`0.5`, which every value in Appendix A clears or misses by at least 0.05.
+
+The one float comparison this leaves in the pipeline is `isBlocking(issue)`, which evaluates
+`severity >= 0.5` directly. It is recorded here rather than argued away because rule 2 above is
+stated about §4 and this one lives in the frozen `types.ts`. **It is exact today** — every severity
+in Appendix A is two-decimal, so `round(severity * 1000) >= 500` and `severity >= 0.5` are the
+same predicate, and the command boundary publishes both fields side by side without them ever
+disagreeing. It would stop being exact the moment a code shipped a three-decimal severity, which is
+why §3.6's projection table puts the per-mille form on the side of the boundary a caller acts on.
 
 ## 4. The six dimensions
 
@@ -1228,6 +1273,44 @@ what the artist chose and the budget follows from the room available:
 | `<= 40/100` | 550 |
 | `> 40/100` | 300 |
 
+**The bounds above are hundredths while the pipeline is per-mille, and reading one as the other
+is the one arithmetic mistake this table invites.** `2/100` is 2 *per cent*, which is **20
+per-mille**; `20/100` is 200 per-mille. §3.7 tests this dimension in hundredths
+(`offPalette * 100 <= 20 * N`), which is right for them, so an implementation that holds its own
+ratios per-mille has to convert **once, at the top of the file** — and the first version of
+`palette.ts` converted twice, comparing the *issue*'s trigger `offPaletteRatio > 2/100` against a
+per-mille `200` rather than `20`. `off-palette` then fired a tenth as late as this section
+specifies: a sprite with a quarter of its pixels off the palette sat inside the `<= 20/100` band at
+720 with **no issue at all**. **The direction of that error is the worst one available in this
+dimension** — a silent miss on real drift — and it was invisible on a corpus of disciplined assets
+for the reason §7 records three times over: nothing in the corpus was off-palette enough to reach
+the line, so "the measures read zero everywhere" was true of the corpus and of a broken instrument
+alike.
+
+**`muddy-mix` can never fire on its own, and the threshold table says so whether or not this
+section says it in words.** `muddy` is defined over *off-palette* pixels, so
+`muddyRatio <= offPaletteRatio` holds pixel for pixel and always; `muddyRatio >= 5/100` is
+therefore an `offPaletteRatio` of at least 5/100, and `off-palette` fires above `2/100`. The code
+is still worth carrying — it says the undeclared pixels are low-saturation mid-value *mixes*
+rather than arbitrary hexes, and its fix is a decision about how the colour was made rather than
+one `quantize_to_palette` call — but it is a **refinement** of `off-palette` rather than a peer of
+it, and a report that shows only one of the two has shown a partial fact. A client asking "is
+this disciplined" should read `off-palette` alone; a client asking "is this drifting or mixing"
+wants both. `defect/muddy-over-skin-32` is the corpus case that declares both, and says why in
+its own note.
+
+**A sprite cannot exceed the colour budget on a small canvas without also being a `noise`
+defect, and that was measured rather than argued.** §4.3's budgets are 10 on a 16×16, 16 on a
+32×32 and 28 on a 64×64, so on any of those canvases 11, 17 or 29 distinct colours have to be
+packed into regions of a few dozen pixels each — and §4.4's `colourOrphan` counts a pixel whose
+`LqBucket` matches nothing within Chebyshev 2 *and* sits outside the range its neighbours span,
+which is every pixel of a small colour island. Thirteen one-pixel accents added to a 32×32 were
+measured first and read `colourOrphans` 13 of 576, which fires `stray-colour`; 4×4 blocks of the
+same colours read `colourOrphans` 0 and carry `colour-budget-exceeded` alone. **The fix was the
+fixture's tiling, not either gate.** Real artists hitting this budget use large regions, and the
+budget is generous enough on `medium` and `large` canvases for that; the interaction is a fact
+about small canvases and it is recorded rather than tuned away.
+
 | Condition | Δ | code |
 | --- | --- | --- |
 | `distinctColours > budget` | −200 | `colour-budget-exceeded` |
@@ -1401,6 +1484,36 @@ The weights changed with the measurement, and the reasoning is that the two shar
 now carry the dimension: `isolated` (a stray *shape*) and `colourOrphans` (a stray *colour*)
 are the two things an agent actually produces, and `diagOnly`/`spurs` are shape-integrity
 defects that overlap with `silhouette`'s territory. 350/250/250/150 became 300/200/300/200.
+
+#### `nearDuplicatePairs` and `palette` are two questions, not one measurement twice
+
+Both dimensions look at colour distance and they do not measure the same thing, so §3.3's
+warning — two dimensions measuring one fact two ways is the likeliest way for this pipeline to
+produce a confident wrong answer — has to be answered with cases rather than with prose. It is:
+three, one per direction, in `quality-corpus.test.ts`.
+
+| | §4.4 `nearDuplicatePairs` | §4.3 `maxNearestDistance` / `off-palette` |
+| --- | --- | --- |
+| reference set | colours **the sprite used** | the **declared palette** |
+| metric | Chebyshev max-channel, `<= 8` | `colorDistanceWeighted` (redmean), `> 12000` |
+| question | "did you use two colours that are the same colour?" | "did you use a colour nobody declared?" |
+| fix | merge the two entries | `quantize_to_palette`, or a decision |
+
+- `defect/near-duplicate-ramp-16` — two **declared** swatches a few steps apart. `noise` fires,
+  `palette` reads 1000 with `offPalette` 0 and `maxNearestDistance` 0.
+- `defect/off-palette-over-skin-32` — 144 undeclared pixels and `nearDuplicatePairs` 0, because
+  the drifted colour is far from every colour in the picture. `palette` blocks, `noise` says
+  nothing.
+- `app/icon.png` — **both fire, and they are two different false positives.** `noise`'s 7,842
+  pairs is a smooth twelve-step ramp being structurally a field of near-duplicates; `palette`'s
+  1,000 per-mille is a raster that was never quantised into its document palette. Different
+  faults, different upstream fixes, one asset.
+
+**Neither dimension can be derived from the other, and a colour three steps from a swatch is 0 to
+one of them and a pair to the other.** So neither is retired in favour of the other, and the
+question "who owns colour discipline" has the answer "both do, each on its own question". What
+is *not* allowed is quoting one as evidence about the other, and the icon is the row where that
+would be tempting.
 
 #### Thin sprites: the exclusion the old version did not have
 
@@ -2003,6 +2116,156 @@ involved, because an agent that duplicated frame 0 needs to know *which* tag it 
 Both are emitted from the same branch as the exclusions in §4.6, and both are facts about the
 input rather than scores about the art.
 
+### 5.5 The delivery gate
+
+`evaluate` reports; a second thing refuses. §2.1's third audience is the CI / `verify` gate, and
+this is its rule. It is deliberately not `evaluate` with a stricter threshold bolted on, because it
+answers a question the report does not: whether anything failed to be measured at all.
+
+Three commands on the bus, and the split between them is the whole design.
+
+| command | verb | what it does |
+| --- | --- | --- |
+| `evaluate` | reports | The whole report: one entry per measured dimension with its per-mille `scoreQ`, its verdict sentence, its issues and its `unmeasured` map, plus `excluded` and the reason for each absent dimension. |
+| `fix` | plans | `{command, params}` pairs for the issues that have one unambiguous repair, and prose for the ones that do not. **Never executes them.** |
+| `verify` | refuses | A `CommandError` naming the failing code and its measured number — or, with `bypass`, a decision that says out loud that the asset was released anyway. |
+
+All three are `readOnly`: asking a question must not push an undo entry or discard a redo stack.
+`fix` returning its ops rather than running them is the same rule seen from the other side — every
+mutation goes through `applyCommand`, so a repair lands as one undo step that the caller controls
+and can inspect first.
+
+#### The threshold
+
+| `threshold` | refuses when | what it adds |
+| --- | --- | --- |
+| `fail` (default) | the verdict is `fail` | nothing. This is §5.3's rule, unchanged |
+| `warn` | the verdict is anything but `pass` | `FLOOR_WARN` on every measured dimension, and `SCORE_PASS_THRESHOLD` on the weighted total |
+
+`fail` is the default because §2.1's tolerance column says a gate nobody has measured is a gate
+that blocks good work, and §6.2 has run exactly once, on one sprite (§7.10). `fail` refuses on
+things that are **named** — an issue at or above `SEVERITY_BLOCKING`, whose codes and severities
+are fixed in Appendix A, or a *measured* dimension below its `FLOOR_FAIL`. `warn` additionally
+refuses on the weighted total, which is the one channel where an abstention is netted against
+unrelated clean readings (§7's open question) and which nobody should switch on without having run
+§6 on their own assets first.
+
+The property the gate is written to hold is one equation:
+
+> `passed === (verdict !== 'fail')` at `fail`, and `passed === (verdict === 'pass')` at `warn`.
+
+The refusal list is therefore **not** a second opinion on the verdict. It is the verdict's own
+definition decomposed into the named reasons behind it, so every refusal can say which code and
+which measured per-mille number. There is no channel in the gate that can refuse for a reason the
+verdict does not already hold.
+
+#### "Failed" is not "not applicable"
+
+Floors apply to present dimensions only, exactly as in §5.3, and the gate adds one case on top of
+that. A target where **no** dimension applied totals 0, and §5.2 records that as `fail` only
+because 0 is the only way a *required number* can say "nothing was measured". The gate passes it,
+and says `measured: false` rather than pretending either way: refusing on an absence is the
+fake-defect failure this whole layer exists to prevent.
+
+A full-bleed scene is the ordinary version of the same thing. `silhouette` is excluded with
+`no-subject`, that is a fact about the document rather than a defect, and no refusal ever mentions
+it. `notApplicable` travels in the same result as `refusals` so a reader cannot mistake one for
+the other.
+
+#### What a refusal says
+
+The code first and the measured per-mille number second, with the analyzer's own sentence clipped
+behind both, because **a refusal an agent cannot act on is indistinguishable from a broken tool**.
+
+```
+shape-clipped (0,4 12x12) at 800/1000 against 500/1000 in silhouette (the shape reaches 3 of
+the 4 canvas edges, so the sprite is cut off; add margin or shrink the subject)
+```
+
+is an action. "The quality is 0.68" is a to-do list. Up to three reasons are named and the rest
+are counted, and the message never carries a 0..1 score: §3 deleted a `quality_report` tool over
+that number and this section is written so it cannot come back through the gate.
+
+#### The bypass
+
+`bypass: true` requires `bypassReason` and releases the asset **without making it pass**:
+`passed` stays `false`, and the result carries `bypassed: true`, the reason, and a `notice`
+string stating that the asset does not meet the gate and was released anyway. A delivery path
+puts that string in its own result. The escape hatch is deliberately loud in three places,
+because an agent will otherwise reach for it silently and a gate that can be turned off without a
+trace is not a gate.
+
+#### Where it lives
+
+`verify` is the command, and it **throws**, because returning `passed: false` would not be a
+refusal: a client would read it as a successful command and move on. A session tool holding a
+`Sprite` rather than a `Draft` should call `assertFinalizable(sprite, options)` from
+`@pixel/core` instead — it measures, refuses with the same message and a `CommandError` carrying
+code `command_failed`, and returns the report alongside the decision so both can be shown to
+whoever asked for the bypass. `finalize_document` calls it before it writes anything.
+
+#### Wired: `finalize_document`
+
+`finalize_document` is the one tool that writes, so it is the one place a gate that returned
+`passed: false` would be reported as a successful delivery. It calls
+`assertFinalizable(doc.editor.sprite, { threshold: 'fail' })` **before anything is rendered or
+written**, for two reasons: a client that treats a failed tool call as a failed write is correct
+by construction, and a refused asset must leave no half-written bundle for the next run to skip as
+"unchanged".
+
+`threshold` is fixed at `fail` and **not exposed**. `warn` is the total-score channel, and this
+section already says nobody should switch it on without having run §6 on their own assets; a
+delivery path is the last place to put that switch. The two extra arguments are `bypass` and
+`bypassReason`, on the tool's own input schema — no new session tool, so the advertised surface
+stays where it was.
+
+What the three paths look like on the wire:
+
+```
+refusal
+  { ok: false, isError: true, code: "command_failed",
+    error: "quality gate refused (threshold `fail`): off-palette at 550/1000 against 500/1000 in
+            palette (64 of 64 solid pixels are a colour that is not in the document palette
+            (100% of the surface). …); palette at 200/1000 against its floor 400/1000. Fix the
+            named defects and re-run, or re-run with `bypass: true` and a reason.",
+    refusals: [ { kind, dimension, code, rect, measuredQ, thresholdQ, message }, … ],
+    notApplicable: { outline: "not-implemented", motion: "not-implemented" },
+    remediation: "Call `evaluate` for the full report, then `fix` for the repairs it can plan.
+                  Re-run this call once the named defects are gone, or pass `bypass: true` with
+                  a `bypassReason`." }
+
+bypass
+  { ok: true,
+    qualityGate: { threshold, passed: false, measured, refusals, notApplicable },
+    bypassed: true, bypassReason: "…",
+    notice: "QUALITY GATE BYPASSED: this asset does not meet the quality gate (off-palette
+             550/1000 vs 500/1000; palette 200/1000 vs 400/1000) and was released anyway.
+             Reason given: …" }
+
+bypass without a reason
+  { ok: false, code: "invalid_params", … }    // and never command_failed
+```
+
+The two failure codes mean different things and the distinction is load-bearing: `invalid_params`
+is "your arguments were incomplete", `command_failed` is "the document refused". Telling an agent
+the *document* refused when the truth is that it passed `bypass: true` with no reason would send
+it looking for defects that are not there.
+
+**A passing result carries the decision and the abstentions and nothing else.** `refusals` is
+present even when empty so the shape is identical either way — a reader seeing `refusals: []`
+beside `notApplicable: { silhouette: "no-subject" }` learns "nothing refused, and this is what was
+not measured", rather than reading an empty list as "nothing was looked at". And **no `score`,
+`quality` or `grade` field appears on any of the three paths**: this section deleted a
+`quality_report` tool over exactly that number, and the delivery result is the last surface it
+could come back through.
+
+**One known cost of the strict setting, recorded rather than tuned.** At `threshold: "warn"` the
+`bleed/` full-bleed cases refuse, on `value`'s reading and on the total, because `silhouette`'s
+`no-subject` abstention drops 300 of the 1000 denominator and the remaining dimensions are then
+read against a scale they were not tuned for. That is §7's open question about an abstention being
+netted, it belongs to §5 and not to the gate, and it is the concrete reason `fail` is the default
+rather than the permissive one.
+
 ## 6. Calibration
 
 ### 6.1 The part that cannot be automated
@@ -2202,6 +2465,16 @@ default that a good artist will dispute:
 | 2–3px islands of tone are not noise | §4.4 | Nobody will argue this, which is why it is written down: the gap is ours, not theirs. |
 | Anything is better than 0 | §4.4 | Artists who prefer visible grain. |
 
+**`palette` is registered, and the colour budget is the row it disputes most.** The only real
+character sprite in this repository uses **19 declared swatches on a 32×32** — a `compact`
+canvas, budget 16 — so it reports `colour-budget-exceeded` and `hue-sprawl` and scores 700. The
+19 colours are 19 entries of its own DawnBringer palette, used as declared: `offPalette` is 0 and
+the dimension's own verdict says "every colour declared". **The sprite is disciplined and the
+budget says otherwise, and the budget is what §4.3 defines.** At 64×64 the same sprite would fit,
+which is the convention in one sentence: the budget follows the canvas, not the asset. §4.3
+keys it on area for a good reason — the canvas is what the artist chose — and that reason does
+not extend to a sprite that was drawn small and intends to stay small.
+
 **3. It will be confidently wrong about soft lighting.** `palette` measures the *composite*,
 by default. A translucent highlight layer composites two declared swatches into a colour that
 is in no palette, so a sprite with a perfectly disciplined palette scores `off-palette` and
@@ -2211,6 +2484,31 @@ upstream: `paletteLocked: true` with opaque layers, or `quantize_to_palette` bef
 evaluating. We chose not to loosen the threshold, because loosening it would let real drift
 through — the cost of a false positive here is an artist or a `fix` pass, and the cost of a
 miss is a muddy shipped asset.
+
+**It is not a rare shape, and this repository has two of them.** Two measured instances, both on
+committed assets, and both for the same underlying reason — *the document's palette was never
+this picture's palette*:
+
+| case | why | measured | reported |
+| --- | --- | --- | --- |
+| `artwork/dusk-lake-valley-agent.pixel` | a `reflection` layer at **opacity 0.58** composites declared swatches together, and the blend lands at alpha ≈ 148 — above `ALPHA_SOLID` 128, so §3.3 counts it solid | 2,339 of 65,297 pixels, `rhu = 36` per-mille | `off-palette` advisory 0.35, plus a real `colour-budget-exceeded` (112 colours against the `scene` budget of 96) |
+| `app/icon.png` | a PNG wrapped in a one-layer document against the default 16-entry palette, so **every** colour in it is undeclared | 878,544 of 878,544 pixels, `rhu = 1000`; 4,871 distinct colours; worst colour 16,631 from every swatch | `off-palette` **blocking** at 0.55, `invented-colours`, `colour-budget-exceeded`; `palette` scores **0** and the report is `fail` |
+
+**No threshold separates "never quantised" from "drifted", because membership in a declared
+palette is exact.** The clean controls read `offPalette` 0 and the icon reads 1,000 per-mille;
+any cut that admits the icon admits every snapping miss with it, and the icon is not "more
+undisciplined" than `artwork/sunset-lighthouse-512-baseline-model-a.pixel` at 9 per-mille — it is
+a different thing, and §4.3's ratio has no way to say which. **The disproof is recorded rather
+than the gate moved.** The one honest mitigation is upstream, exactly as above, and for the icon
+that is `quantize_to_palette` at import rather than at the end: an asset that arrives unquantised
+should be quantised on the way in.
+
+**And a second order of the same fault, which no threshold can reach either:** a *partial* alpha
+is the only place this shows up without any layer being translucent in the document's own
+terms. `palette` counts pixels at `1 <= alpha < ALPHA_SOLID` and names them in its verdict (§3.1)
+rather than scoring them, so a 0.29-alpha glow is never itself the off-palette pixel — but a
+translucent layer composited at 0.58 produces **opaque** pixels in the composite, and those are
+counted, which is the whole of the mechanism above.
 
 **4. It cannot see intent, in either direction.** A deliberately asymmetric profile sprite is
 penalised for nothing and credited for nothing. A deliberately held animation frame is

@@ -12,6 +12,7 @@ export * from './structure.js';
 export * from './transform.js';
 export * from './rig.js';
 export * from './map.js';
+export * from './quality.js';
 export * from './tilemap.js';
 
 import { generativeCommands } from './generative.js';
@@ -75,6 +76,7 @@ import {
   translateCommand,
 } from './transform.js';
 import { mapCommands } from './map.js';
+import { qualityCommands } from './quality.js';
 import { rigCommands } from './rig.js';
 import { tilemapCommands } from './tilemap.js';
 
@@ -145,6 +147,8 @@ export const allCommands: Command[] = [
   translateCommand,
   squashCommand,
   transformCelCommand,
+  // Quality: measure, plan a repair, refuse delivery. The pipeline exists; these make it reachable.
+  ...qualityCommands,
   // Character rigs, poses, anchors and tween baking
   ...rigCommands,
   // Tilemaps, gameplay metadata and auto-tiling

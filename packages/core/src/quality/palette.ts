@@ -42,7 +42,7 @@ import type {
  * *is* the primary band, so it fires directly from the band and the score moves through the band
  * rather than twice.
  *
- * ## The three known costs, stated here rather than argued away
+ * ## The five known costs, stated here rather than argued away
  *
  * **1. The composite (§7 item 3). This dimension reads `context.composite` and nothing else**,
  * because §3.1 says every pixel measurement in this document reads that. So a translucent
@@ -63,18 +63,40 @@ import type {
  * they are not built. **Every verdict this analyzer emits names the class it measured**, so a
  * reader is told which budget applied rather than left to work it out.
  *
- * **3. `meanSat`'s integer test (§3.7 has it wrong, and this file implements §4.3).** §4.3
- * defines `meanSat` as "mean s255 over solid pixels, **divided by 255****" and gates it at `< 15/100`, which
- * is "mean saturation below 15% of full". §3.7's transcription of that gate is
- * `sumS255 * 100 < 15 * N` — the `/ 255` is missing, so the test asks for mean `s255 < 0.15` and
- * the gate is unreachable by anything that has a hue at all. This file implements §4.3's
- * definition, `sumS255 * 100 < 15 * 255 * N`, because §3.7 is explicitly the transcription layer
- * and §4.3 is the dimension's own specification, and because §3.1 says a change of measurement
- * changes the specification in the same batch. The two readings differ for
- * `0.15 <= mean s255 < 38.25`; on this repository's corpus they agree, because the
- * `hueSectors >= 3` conjunct is the binding clause and the corpus has no sprite in that band with
- * three hue families. The §3.7 row needs the same edit and is outside this task's write scope;
- * §7 records it.
+ * **3. `meanSat`'s integer test — §3.7 transcribed it wrong, and §3.7 is now fixed.** §4.3
+ * defines `meanSat` as "mean s255 over solid pixels, divided by 255" and gates it at `< 15/100`,
+ * which is "mean saturation below 15% of full", i.e. **mean `s255` below 38.25**. §3.7's
+ * transcription of that gate was `sumS255 * 100 < 15 * N` — the `/ 255` missing — so the test
+ * asked for mean `s255 < 0.15`, and since `s255` is an integer that is satisfiable only by pixels
+ * that are exactly grey. §4.3's own worked example settles which document is right: it prints
+ * `meanSat 0.29` for a 32x32 character, which is 74 of 255 and impossible under the other
+ * reading. §3.1 says the specification wins and the specification changes in the same batch, so
+ * §3.7's row now reads `sumS255 * 100 < 15 * 255 * N` and the gate below is that test.
+ *
+ * The two readings differ for `0.15 <= mean s255 < 38.25`, and on this repository's *existing*
+ * corpus they happen to agree — but only because the `hueSectors >= 3` conjunct is the binding
+ * clause and no committed sprite sits in that band with three hue families. "They agree on the
+ * corpus today" is not a reason to keep a gate that cannot fire: `defect/grey-washed-hues-32` is
+ * the case that separates them, and it fires here and is silent under §3.7's old reading.
+ *
+ * **4. `meanSatQ` is per-mille of full saturation, and had been scaled by 1000 twice.** Every
+ * other `Q` field in the pipeline is 0..1000, so `rhu(satSum * 1000, N)` — a mean `s255` scaled
+ * by 1000, which therefore runs 0..255000 — put this one field in a different dimension from
+ * every ratio beside it, and the one place that read it back out as a percentage
+ * ({@link percentText}, in the `grey-colours` message) printed **7450%** where the truth is
+ * 29.2%. The denominator now carries the 255: `rhu(satSum * 1000, N * 255)`, which is 0..1000
+ * like the rest and makes that sentence true. **The gate is untouched** — it is written on
+ * `satSum` against `N * 255` and did not move by a per-mille — so this is a units fix on a
+ * reported reading rather than a threshold move, and §3.1's "change the spec in the same
+ * batch" does not apply because the frame record is not in the specification.
+ *
+ * **5. `noise`'s `nearDuplicatePairs` owns a different question, and this file says so.**
+ * §4.4's measure is two colours **the sprite used**, Chebyshev `<= 8` apart, each over 8 pixels.
+ * §4.3's is a colour's redmean distance to the nearest **declared swatch**. Same family of
+ * arithmetic, different reference set and different question: "you used two colours that are the
+ * same colour" against "you used a colour nobody declared". `defect/near-duplicate-ramp-16` is
+ * the case that shows they separate — two declared swatches a few steps apart, so `noise` fires
+ * and this dimension reads 1000 — and `app/icon.png` is the converse. §4.4 carries the long form.
  *
  * ## No applicability precondition
  *
@@ -185,6 +207,12 @@ export function paletteClassFor(area: number): { readonly cls: PaletteClass; rea
  * row here is individually plausible, which is why the direction is stated rather than left to be
  * checked in review. The two `0` rows are kept separate because §4.3 specifies them separately:
  * a ratio of exactly `0` scores 1000 and a ratio of `1/1000` scores 950.
+ *
+ * **The bounds are §4.3's four percent bounds converted to per-mille once, here.** §4.3 writes
+ * `2/100`, `8/100`, `20/100` and `40/100`, which are hundredths; this pipeline is per-mille
+ * throughout, so they arrive as `20`, `80`, `200` and `400`. Every threshold in this file is
+ * per-mille for that reason, and {@link OFF_PALETTE_REPORT_Q} is where converting one of them a
+ * second time went wrong.
  */
 const BANDS: readonly (readonly [number, number])[] = [
   [0, 1000],
@@ -209,16 +237,28 @@ function baseFor(offPaletteQ: number): number {
  * §4.3's thresholds
  * ------------------------------------------------------------------ */
 
-/** §3.7: `offPalette * 100 <= 20 * N` passes at 20/100, and `> 2/100` reports the issue. */
-const OFF_PALETTE_PASS_Q = 200;
+/**
+ * §3.7: `offPalette * 100 > 20 * N` reports the issue, and in per-mille that is `offQ > 20`.
+ *
+ * **20, not 200, and the difference is a factor of ten that the ratio's own notation hides.** §4.3
+ * writes its thresholds as `2/100`, `8/100`, `20/100`, `40/100` — *percent*, one hundredth — while
+ * every number this pipeline carries is per-mille, one thousandth. So `2/100` is 20 per-mille and
+ * the code below read 200, which made `off-palette` fire a tenth as late as §4.3 specifies: a sprite
+ * at 25% of its pixels off the palette sat inside the `<= 20/100` band at 720 with **no issue at
+ * all**, which is the worst direction a false negative in this dimension can go.
+ *
+ * The band table below is in the same per-mille and is not affected — it reads `20`, `80`, `200` and
+ * `400`, which is §4.3's own four bounds converted once and only once, at the top of the file.
+ */
+const OFF_PALETTE_REPORT_Q = 20;
 
-/** §3.7: `offPalette * 100 > 20 * N` is where `off-palette` becomes blocking (severity 0.55). */
+/** §3.7: `offPalette * 100 > 20 * N` in hundredths is `offQ > 200`, where `off-palette` blocks. */
 const OFF_PALETTE_BLOCKING_Q = 200;
 
 /** §3.7: `muddyCount * 100 >= 5 * N`. */
 const MUDDY_MIN_Q = 50;
 
-/** §3.7: `sumS255 * 100 < 15 * N` as §3.7 writes it — see the header's item 3 for the `* 255`. */
+/** §3.7: `sumS255 * 100 < 15 * 255 * N` — mean `s255` below 38.25, i.e. below 15% of full. */
 const MEAN_SAT_GATE = 15;
 
 /** §4.3's `hueSectors >= 7` for `hue-sprawl`. */
@@ -268,7 +308,15 @@ export interface PaletteFrame {
   readonly muddyQ: number;
   /** `sumS255` over solid pixels, kept so §4.3's `meanSat` gate can be re-derived from it. */
   readonly satSum: number;
-  /** `rhu(satSum * 1000, N)`: the mean of `s255` on the same 0..1000 scale as every other ratio. */
+  /**
+   * `rhu(satSum * 1000, N * 255)`: the mean of `s255` as a **per-mille of full saturation**.
+   *
+   * The `* 255` in the denominator is load-bearing and was not there at first: without it this
+   * field is a mean `s255` scaled by 1000 and runs 0..255000, which is a different dimension from
+   * every other ratio in the pipeline, and the one message that prints it as a percentage then
+   * reports 7450% where the truth is 29.2%. See the header's item 4 — the gate reads `satSum`
+   * directly and did not move.
+   */
   readonly meanSatQ: number;
   /** The band the primary ratio landed in, before any adjustment. */
   readonly baseQ: number;
@@ -391,7 +439,7 @@ function measureFrame(context: QualityContext, index: number): PaletteFrame {
 
   const offPaletteQ = rhu(offPalette * 1000, N);
   const muddyQ = rhu(muddy * 1000, N);
-  const meanSatQ = rhu(satSum * 1000, N);
+  const meanSatQ = rhu(satSum * 1000, N * 255);
   const distinctColours = distinct.size;
   const hueSectors = sectors.size;
 
@@ -405,7 +453,7 @@ function measureFrame(context: QualityContext, index: number): PaletteFrame {
   // base rather than twice. §4.3 says so and the reason is visible above: its ratio IS the primary
   // band, so a separate row would count the same fact twice — and this file's band table is the
   // one place that would have to know about it.
-  if (offPaletteQ > OFF_PALETTE_PASS_Q) {
+  if (offPaletteQ > OFF_PALETTE_REPORT_Q) {
     const blocking = offPaletteQ > OFF_PALETTE_BLOCKING_Q;
     issues.push({
       code: 'off-palette',
@@ -450,9 +498,9 @@ function measureFrame(context: QualityContext, index: number): PaletteFrame {
     });
   }
 
-  // §3.7's transcription is `sumS255 * 100 < 15 * N`; §4.3 defines `meanSat` as a fraction of 255
-  // and so the gate is `mean s255 < 38.25`. See the file header's item 3 — this is the reading §4.3
-  // specifies and the one that can fire.
+  // §3.7's transcription was `sumS255 * 100 < 15 * N` and is now `sumS255 * 100 < 15 * 255 * N`;
+  // §4.3 defines `meanSat` as a fraction of 255 and gates it at 15%, so the test is mean `s255`
+  // below 38.25. See the file header's item 3 for which document was wrong.
   if (satSum * 100 < MEAN_SAT_GATE * 255 * N && hueSectors >= GREY_COLOURS_MIN_SECTORS) {
     adjustment -= 100;
     issues.push({

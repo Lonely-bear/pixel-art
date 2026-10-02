@@ -35,6 +35,7 @@ import {
   type GridView,
 } from '@pixel/core';
 import type { DocumentStore } from './session.js';
+import { qualityPayload } from './quality-report.js';
 import { PIXEL_ART_SKILL, SCRIPT_GUIDE, SCRIPT_GUIDE_URI, SKILL_URI } from './skill.js';
 
 /** Grid views a client can ask `pixel://grid` for. */
@@ -273,6 +274,86 @@ export function registerResources(server: McpServer, store: DocumentStore): void
     new ResourceTemplate('pixel://documents/{id}/grid{+query}', { list: undefined }),
     gridConfig,
     readGrid,
+  );
+
+  const qualityConfig = {
+    title: 'Quality report',
+    description:
+      'The quality report for a document, as JSON, without spending a tool call - the same bytes the `evaluate` tool returns. Query options: `?tag=name` to judge one animation in playback order, `?frame=N` for a single frame, `?maxIssues=N` for a longer issue list. It measures form, not content: it cannot tell what the sprite is or judge intent, it scores conventions a good artist may disagree with, and the scores are diagnostics for finding defects rather than a target to raise. Read `report.dimensions` for what was measured and `report.excluded` for what did not apply - a missing key is "did not apply", never a zero. To scope a report to a region, use the `evaluate` tool, whose `rect` is a real object rather than a comma-separated string.',
+    mimeType: 'application/json',
+  };
+
+  /**
+   * Read the report for the document named in the URI path.
+   *
+   * **Two SDK facts shape this, and both are about the template rather than the report.**
+   *
+   * The id comes from the parsed pathname, not from `variables.doc`, because the SDK
+   * compiles a simple template variable to `([^/,]+)`: with nothing after it, that
+   * variable swallows the query string, so `pixel://quality/doc_x?tag=walk` hands back
+   * `doc` as the whole `doc_x?tag=walk` and `store.require` fails on a document that
+   * plainly exists. `new URL(uri.href)` is what separates the two, and it is already the
+   * call this reader makes for the options.
+   *
+   * **There is no `rect` here, and that is also why this URI needs one template where
+   * `preview` and `grid` need two.** The same `([^/,]+)` excludes commas, so a
+   * `?rect=8,4,24,24` can never match a template whose last part is a simple variable -
+   * `grid` gets away with it only because a literal `/grid` separates the variable from
+   * the `{+query}` sibling, which then accepts `(.+)`. Every option offered here is
+   * single-valued and comma-free, and scoping is the tool's `rect` argument, which is a
+   * typed object rather than a string an agent has to split and a caller can get wrong.
+   *
+   * An option this reader does not implement is therefore **rejected**, not ignored: a
+   * silently unscoped report reads exactly like a scoped one, and "the scope you asked
+   * for was dropped" is the same class of mistake as a sub-score that was quietly not
+   * measured.
+   */
+  const QUALITY_QUERY_OPTIONS = ['tag', 'frame', 'maxIssues'] as const;
+
+  const readQuality = (uri: URL): ReadResourceResult => {
+    const parsed = new URL(uri.href);
+    const id = parsed.pathname.split('/').filter(Boolean)[0] ?? '';
+    const doc = store.require(id);
+    const sprite = doc.editor.sprite;
+    const params = parsed.searchParams;
+
+    const unsupported = [...params.keys()].filter(
+      (key) => !(QUALITY_QUERY_OPTIONS as readonly string[]).includes(key),
+    );
+    if (unsupported.length > 0) {
+      throw new Error(
+        `pixel://quality/ supports ${QUALITY_QUERY_OPTIONS.map((o) => `?${o}=`).join(', ')}; got "${unsupported.join('", "')}". To scope a report to a region, call the evaluate tool, whose \`rect\` is an object.`,
+      );
+    }
+
+    const numberParam = (name: string): number | undefined => {
+      const raw = params.get(name);
+      if (raw === null) return undefined;
+      const value = Number(raw);
+      return Number.isFinite(value) ? value : undefined;
+    };
+
+    // `qualityPayload` is the tool's function, called with the tool's defaults. That is
+    // the whole determinism claim: same document, same bytes, whichever channel you read.
+    return json(
+      uri,
+      qualityPayload(sprite, {
+        tag: params.get('tag') ?? undefined,
+        frame: numberParam('frame'),
+        maxIssues: numberParam('maxIssues'),
+        document: { id: doc.id, name: sprite.name, version: doc.editor.version },
+      }),
+    );
+  };
+
+  server.registerResource(
+    'quality-report',
+    new ResourceTemplate('pixel://quality/{doc}', {
+      // One example, so a client can find the channel without having to be told the URI.
+      list: () => ({ resources: [{ uri: 'pixel://quality/{doc}', name: 'quality-report' }] }),
+    }),
+    qualityConfig,
+    readQuality,
   );
 
   server.registerResource(

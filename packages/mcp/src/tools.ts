@@ -23,6 +23,7 @@ import type { CallToolResult, ContentBlock, ToolAnnotations } from '@modelcontex
 import { SKILL_FINGERPRINT } from './server.js';
 import {
   animationSequence,
+  assertFinalizable,
   blendInto,
   buildSpritesheet,
   compositeFrame,
@@ -48,6 +49,7 @@ import {
   frameRefSchema,
   isAseprite,
   layerRefSchema,
+  qualityGateBypassNotice,
   rectSchema,
   parseColor,
   PixelBuffer,
@@ -70,6 +72,8 @@ import {
   toTiledJson,
   type Command,
   type Frame,
+  type QualityGateDecision,
+  type QualityGateRun,
   type RenderedPose,
   type RigPose,
   type Sprite,
@@ -80,6 +84,7 @@ import { BUILTIN_PALETTES, type DocumentStore, type PixelDocument } from './sess
 import { PIXEL_ART_SKILL } from './skill.js';
 import { advertiseSchema, TOOL_RESULT_ENVELOPE } from './surface.js';
 import { analyzeTilemapQuality } from './quality-tilemap.js';
+import { QUALITY_OUTPUT_SCHEMA, qualityPayload } from './quality-report.js';
 import { renderTilemapPreview } from './tilemap-preview.js';
 
 /* ------------------------------------------------------------------ helpers */
@@ -291,6 +296,7 @@ const READ_ONLY_TOOLS = new Set([
   'read_grid',
   'histogram',
   'get_selection',
+  'evaluate',
   'list_commands',
   'describe_command',
   'find_workflow',
@@ -392,6 +398,7 @@ const SESSION_TOOLS: Array<{ name: string; description: string }> = [
   { name: 'read_grid', description: 'The artwork as a character grid: silhouette, luminance, palette slot or colour name. The default way to check a drawing.' },
   { name: 'histogram', description: 'Per-colour pixel counts and unused palette slots for a region.' },
   { name: 'get_selection', description: "The rectangle the user boxed in the app, with its layer and frame." },
+  { name: 'evaluate', description: 'Measure the artwork with the quality dimensions and return the report. Diagnostics for finding defects, not a score to climb.' },
   { name: 'set_selection', description: 'Box a region on the app canvas, or clear the box.' },
   { name: 'get_document', description: 'Layers, frames, tags, palette.' },
   { name: 'get_palette', description: 'Palette as hex colours with indices.' },
@@ -417,6 +424,23 @@ const SESSION_TOOLS: Array<{ name: string; description: string }> = [
   { name: 'describe_command', description: 'One exact command schema plus its long-form manual; also promotes it to a direct tool.' },
   { name: 'find_workflow', description: 'Task-level workflows, with their recommended commands promoted to direct tools.' },
 ];
+
+/**
+ * Names a promoted core command is not allowed to take.
+ *
+ * Derived from {@link SESSION_TOOLS}, so it cannot drift from what is actually
+ * registered. This exists because the SDK's `registerTool` **throws** on a duplicate
+ * name, and the command catalogue and the session tools do not have disjoint names by
+ * construction: `evaluate` is a session tool *and* a core command (the quality
+ * pipeline's command boundary). Without this guard, one `describe_command {name:
+ * "evaluate"}` would take the whole server down with `Tool evaluate is already
+ * registered`.
+ *
+ * The session tool wins, for two reasons. It is the one that is already advertised, so
+ * a client already has its schema and can call it; and the command is still reachable,
+ * since every command runs through `apply_ops` whether or not it was ever promoted.
+ */
+const SESSION_TOOL_NAMES: ReadonlySet<string> = new Set(SESSION_TOOLS.map((tool) => tool.name));
 
 function text(value: string): ContentBlock {
   return { type: 'text', text: value };
@@ -1562,6 +1586,9 @@ export function registerTools(
   /** Promote one command, announcing the new tool list. Returns true if it was new. */
   function promote(name: string): boolean {
     if (promoted.has(name)) return false;
+    // A session tool already owns this name and is already advertised, so re-registering
+    // it would throw rather than shadow it. See SESSION_TOOL_NAMES.
+    if (SESSION_TOOL_NAMES.has(name)) return false;
     const command = store.registry.get(name);
     if (!command) return false;
     promoted.add(name);
@@ -1818,7 +1845,7 @@ export function registerTools(
     {
       title: 'Save and export an asset bundle',
       description:
-        'Save the editable `.pixel` source and render a validated multi-format export plan in one call. `outputs` supports PNG, all-frame PNGs, spritesheet+JSON, GIF, rig poses, and animation contact sheets. Every output is rendered before writing; an optional hashed manifest can drive incremental updates. The legacy `exports` PNG array remains supported.',
+        'Save the editable `.pixel` source and render a validated multi-format export plan in one call. `outputs` supports PNG, all-frame PNGs, spritesheet+JSON, GIF, rig poses and animation contact sheets; every output is rendered before writing and an optional hashed manifest can drive incremental updates. The quality gate runs first and refuses the whole call on a named blocking defect, writing nothing - fix the artwork, or re-run with `bypass: true` and a `bypassReason`.',
       inputSchema: z.object({
         document: documentRef,
         path: z.string().optional().describe('Destination `.pixel` path. Defaults to the document\'s current path.'),
@@ -1833,6 +1860,18 @@ export function registerTools(
           .optional()
           .describe('Legacy PNG-only output list. Converted to `{type: "png"}` outputs.'),
         manifest: exportManifestSchema.optional().describe('Write a bundle manifest describing the source and outputs.'),
+        bypass: z
+          .boolean()
+          .optional()
+          .describe(
+            'Export a failing asset anyway. Does not make it pass: the result carries `bypassed: true`, your reason and a `notice` to quote in the delivery. Requires `bypassReason`.',
+          ),
+        bypassReason: z
+          .string()
+          .optional()
+          .describe(
+            'Why the quality gate is being bypassed, in words a person can read. Required with `bypass: true`, and echoed in the result so the refusal is attributable.',
+          ),
       }),
       annotations: { destructiveHint: false },
     },
@@ -1840,6 +1879,48 @@ export function registerTools(
       const doc = store.require(args.document as string | undefined);
       const path = (args.path as string | undefined) ?? doc.path;
       if (!path) return fail('No path given and this document has never been saved. Pass `path`.');
+
+      // §5.5's delivery gate, and it runs before anything is rendered or written — a refused
+      // asset must leave no half-written bundle behind for the next run to skip as "unchanged".
+      // `threshold: 'fail'` is fixed here rather than exposed: §5.5 says `warn` is the
+      // total-score channel and that nobody should switch it on without having run §6 on their
+      // own assets, and a delivery path is the last place to put that switch.
+      //
+      // `assertFinalizable` is the core function rather than the `verify` command because this
+      // handler holds a `Sprite`, not a `Draft`, and because a refusal needs the decision
+      // structured on the wire so a caller can act on it rather than re-measure.
+      const bypass = args.bypass === true;
+      let gate: QualityGateRun | undefined;
+      try {
+        gate = assertFinalizable(doc.editor.sprite, {
+          threshold: 'fail',
+          bypass,
+          bypassReason: args.bypassReason as string | undefined,
+        });
+      } catch (error) {
+        // Two codes land here and they mean different things to an agent: `invalid_params` is
+        // "your arguments were incomplete" (bypass without a reason) and `command_failed` is
+        // "the document refused" — a named defect at a named measured number, not a bad call.
+        const code = (error as { code?: string }).code ?? 'command_failed';
+        const decision = (error as { details?: QualityGateDecision }).details;
+        return fail((error as Error).message, {
+          code,
+          ...(decision
+            ? {
+                gate: 'quality',
+                measured: decision.measured,
+                refusals: decision.refusals,
+                notApplicable: decision.notApplicable,
+              }
+            : {}),
+          ...(code === 'invalid_params'
+            ? { remediation: 'Pass `bypassReason` — words a person can read — alongside `bypass: true`.' }
+            : {
+                remediation:
+                  'Call `evaluate` for the full report, then `fix` for the repairs it can plan. Re-run this call once the named defects are gone, or pass `bypass: true` with a `bypassReason`.',
+              }),
+        });
+      }
 
       const legacy = (args.exports as z.infer<typeof pngExportSchema>[] | undefined) ?? [];
       const legacyOutputs: ExportOutputSpec[] = legacy.map((output) => ({ type: 'png', ...output }));
@@ -1943,11 +2024,45 @@ export function registerTools(
 
         const files = [path, ...rendered.map((output) => output.path)];
         if (manifestPath) files.push(manifestPath);
+
+        // The gate's decision travels with the export, and **nothing else about it does.**
+        // `passed`, `measured`, `threshold`, the refusals and the abstentions are facts about a
+        // delivery; the weighted total is not published anywhere on this surface, because a number
+        // an agent can read on a delivery path becomes the thing it optimises — §3 deleted a
+        // `quality_report` tool over exactly that, and the gate is the last place it could come
+        // back through.
+        //
+        // `refusals` is present even when it is empty, because the shape has to be the same on a
+        // refusal and on a pass: a reader sees `refusals: []` beside
+        // `notApplicable: {silhouette: "no-subject"}` and learns "nothing refused, and this is what
+        // was not measured", rather than reading an empty list as "nothing was looked at".
+        const decision = gate!.decision;
+        const gateView: Record<string, unknown> = {
+          threshold: decision.threshold,
+          passed: decision.passed,
+          // False when no dimension applied, so nothing could be measured and nothing failed.
+          // §5.5: a target where nothing applied still exports, and says so here.
+          measured: decision.measured,
+          refusals: decision.refusals,
+          notApplicable: decision.notApplicable,
+        };
+
         return ok({
           ok: true,
           path,
           absolute: absPath(path),
           bytes: sourceBytes.byteLength,
+          ...(decision.passed
+            ? { qualityGate: gateView }
+            : {
+                // A bypass does not make the asset pass, so `passed` is still false above and
+                // the three loud fields below are what a caller has to carry into its own
+                // delivery: a boolean, the reason a person can read, and the sentence to quote.
+                qualityGate: gateView,
+                bypassed: true,
+                bypassReason: args.bypassReason,
+                notice: qualityGateBypassNotice(decision, String(args.bypassReason ?? '')),
+              }),
           manifest: manifestPath
             ? {
                 path: manifestPath,
@@ -2779,6 +2894,83 @@ export function registerTools(
         });
       } catch (error) {
         return fail((error as Error).message);
+      }
+    },
+  );
+
+  addTool(
+    server,
+    'evaluate',
+    {
+      title: 'Measure the artwork with the quality dimensions',
+      description:
+        'Measure the artwork with the quality dimensions and return one report: a score and a one-line verdict per dimension, plus every defect with the canvas rect to fix. Reach for it on a finished piece for a second opinion, or to get a list of what to fix. The numbers are diagnostics, not a goal - raising the total by sanding the art flat is a failure. It cannot tell what the sprite is, judge intent, or compare asset classes. Name a tag to judge an animation. Also at pixel://quality/{doc}.',
+      // `frame` (a scalar) and `rect` here, against the core command's `frames` (an array) and
+      // `focus`. Deliberate on both sides, and the reasoning — plus the rule that all three
+      // channels return the same report for the same document — is on `targetShape` in
+      // `packages/core/src/commands/quality.ts`. Do not "harmonise" one side without that.
+      inputSchema: z.object({
+        document: documentRef,
+        frame: frameRefSchema
+          .optional()
+          .describe(
+            'Judge one frame instead of the whole timeline. A report over one frame is a statement about that frame only; use `tag` to judge an animation as a whole.',
+          ),
+        tag: z
+          .union([z.string(), z.number().int()])
+          .optional()
+          .describe(
+            'Animation tag by name, id or 0-based index. Expanded into playback order, so `motion` can measure the seam from the last frame back to the first.',
+          ),
+        rect: rectSchema
+          .optional()
+          .describe(
+            'Scope the report to a region `{x, y, w, h}`, so you are only told about defects inside it. Not a crop: every quantity is still measured over the whole canvas, because cutting a mask along a straight line gives it a straight edge that reads as a defect.',
+          ),
+        maxIssues: z
+          .number()
+          .int()
+          .min(1)
+          .max(500)
+          .optional()
+          .describe('Ceiling on the flat `issues` list. Defaults to 40. Blocking issues are never dropped; `issuesTruncated` says when advisories were.'),
+      }),
+      // Not the shared envelope: the whole point of this payload is that
+      // `report.excluded` (did not apply) and `report.dimensions.*.unmeasured`
+      // (measured, and here is the part it could not reach) are different claims, and
+      // the envelope names neither.
+      outputSchema: QUALITY_OUTPUT_SCHEMA,
+      annotations: { readOnlyHint: true },
+    },
+    (args) => {
+      try {
+        const doc = store.require(args.document as string | undefined);
+        return ok(
+          qualityPayload(doc.editor.sprite, {
+            frame: args.frame as number | string | undefined,
+            tag: args.tag as string | number | undefined,
+            rect: args.rect as { x: number; y: number; w: number; h: number } | undefined,
+            maxIssues: args.maxIssues as number | undefined,
+            document: {
+              id: doc.id,
+              name: doc.editor.sprite.name,
+              version: doc.editor.version,
+            },
+          }),
+        );
+      } catch (error) {
+        // A bad tag, frame or focus rect is a targeting mistake, not bad artwork, so it
+        // is reported as such rather than as a finding about the picture. The messages
+        // come from `animationSequence` ("Unknown animation tag") and `resolveFrame`
+        // ("Unknown frame" / "Frame index out of range").
+        const message = (error as Error).message;
+        const badTarget = /unknown animation tag|unknown frame|frame index out of range/i.test(message);
+        return fail(message, {
+          code: 'invalid_params',
+          ...(badTarget
+            ? { remediation: 'Call get_document for the real tag names and frame count, then pass a tag name or a 0-based frame index.' }
+            : {}),
+        });
       }
     },
   );
@@ -3656,6 +3848,22 @@ export function registerTools(
     (args) => {
       const name = args.name as string;
       const command = store.registry.get(name);
+      const declared = DECLARED_TOOLS.get(name);
+
+      // A session tool owns its name outright, so `evaluate` describes the tool an
+      // agent can actually call rather than the core command that happens to share the
+      // word. When both exist, say so and hand over the command's schema too - the
+      // command still runs through `apply_ops`, it just never becomes a tool.
+      if (declared && SESSION_TOOL_NAMES.has(name)) {
+        return ok({
+          ok: true,
+          kind: 'tool',
+          tool: { name, ...declared },
+          ...(command ? { sameNamedCommand: describeCommand(command), commandRoutableVia: 'apply_ops' } : {}),
+          note: `"${name}" is an entry-point tool, always callable by name.${command ? ` A core command shares the name and is reachable through apply_ops {ops: [{command: "${name}", ...}]}; the tool is the one advertised.` : ''}`,
+        });
+      }
+
       if (command) {
         const promotedTools = promoteAll([name]);
         return ok({
@@ -3674,7 +3882,6 @@ export function registerTools(
       // A tool, not a command. The old answer here was `unknown_command` with a
       // remediation that told the caller to search the command catalogue for a tool
       // that was never in it.
-      const declared = DECLARED_TOOLS.get(name);
       if (declared) {
         return ok({
           ok: true,
@@ -3746,8 +3953,16 @@ export function registerTools(
   // through `list_commands`/`describe_command`/`apply_ops`, and a command joins the
   // tool list the first time this session actually touches it. See `CommandExposure`.
   if (exposure === 'eager') {
-    for (const command of store.registry.list()) promoted.add(command.name);
+    // The same guard {@link promote} applies, and for the same reason. `evaluate` is a session
+    // tool *and* a core command, and `registerTool` **throws** on a duplicate name — so
+    // registering the command here takes the whole server down at startup with
+    // `Tool evaluate is already registered`, which is exactly what happened the first time eager
+    // mode met T-020. The session tool keeps the name (it is the advertised one) and the command
+    // stays reachable through `apply_ops`. It is deliberately **not** added to `promoted`, so
+    // `list_commands` reports `tool: false` for it rather than claiming a tool that was skipped.
     for (const command of store.registry.list()) {
+      if (SESSION_TOOL_NAMES.has(command.name)) continue;
+      promoted.add(command.name);
       registerCommandTool(server, store, command, 'core');
     }
   }

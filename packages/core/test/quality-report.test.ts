@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { PixelBuffer } from '../src/buffer.js';
 import { createSprite, type Sprite } from '../src/document.js';
 import { decodePNG } from '../src/png.js';
+import { createDefaultPalette, createPalette } from '../src/palette.js';
 import { deserializeSprite } from '../src/serialize.js';
 import { createQualityContext, type QualityContextOptions } from '../src/quality/context.js';
 import {
@@ -22,6 +23,7 @@ import {
 } from '../src/quality/index.js';
 import { silhouetteAnalyzer } from '../src/quality/silhouette.js';
 import { valueAnalyzer } from '../src/quality/value.js';
+import { paletteAnalyzer } from '../src/quality/palette.js';
 import { noiseAnalyzer } from '../src/quality/noise.js';
 import {
   assertReportInvariants,
@@ -76,13 +78,30 @@ import {
  * Pictures and rectangles, never `data[i*4+3] = 255` in four places, for the reason
  * `quality-silhouette.test.ts` gives: a fixture nobody can read is one nobody can review.
  */
+/** The ink every fixture in this file paints. Declared in the palette below — see {@link spriteWhere}. */
+const FIXTURE_INK = { r: 40, g: 60, b: 90, a: 255 };
+
 function spriteWhere(
   width: number,
   height: number,
   alphaAt: (x: number, y: number, frame: number) => number,
   frames = 1,
 ): Sprite {
-  const sprite = createSprite({ width, height, frames, name: 'fixture' });
+  // **The fixture declares the colour it paints, and that line is a finding rather than tidiness.**
+  // `palette` arrived and every document in this file became **100% off-palette** against the default
+  // 16-entry palette, with `off-palette` blocking at severity 0.55 — a fixture that never made a
+  // claim about palette discipline turned out to be the loudest palette defect in the repository, and
+  // it did so on a *test fixture*, which is §7 item 3's false positive in its purest form: the
+  // document's palette was never this picture's palette. The measurement was right. Declaring the
+  // ink is the upstream fix §7 item 3 names, and it leaves the dimension free to be judged on the
+  // cases that are about it.
+  const sprite = createSprite({
+    width,
+    height,
+    frames,
+    name: 'fixture',
+    palette: createPalette('fixture', [FIXTURE_INK, ...createDefaultPalette().colors]),
+  });
   const layer = sprite.layers[0].id;
   for (let f = 0; f < frames; f++) {
     const cel = new PixelBuffer(width, height);
@@ -91,9 +110,9 @@ function spriteWhere(
         const alpha = alphaAt(x, y, f);
         if (alpha === 0) continue;
         const i = cel.index(x, y);
-        cel.data[i] = 40;
-        cel.data[i + 1] = 60;
-        cel.data[i + 2] = 90;
+        cel.data[i] = FIXTURE_INK.r;
+        cel.data[i + 1] = FIXTURE_INK.g;
+        cel.data[i + 2] = FIXTURE_INK.b;
         cel.data[i + 3] = alpha;
       }
     }
@@ -393,16 +412,15 @@ describe('motion applicability is the aggregator\'s, and stays the contract\'s t
 });
 
 describe('a dimension with no analyzer is reported as unmeasured, not as perfect', () => {
-  it('accounts for every id exactly once while three of six do not exist', () => {
-    // **Was "five of six", then "four of six"**, and each rename is the point rather than a chore:
-    // `value` landed with an analyzer and a registration, and then `noise` did, so two of the six
-    // ids that §4 specifies now have a measurement and four are still a promise. The invariant
+  it('accounts for every id exactly once while two of six do not exist', () => {
+    // **Was "five of six", then "four of six", then "three of six"**, and each rename is the point rather than a chore:
+    // `value` landed with an analyzer and a registration, then `noise` did, and now `palette` has.
+    // The invariant
     // underneath is unchanged and is the reason this test exists — no id is in neither map, which
     // is the silent hole a `Record` would have had no way to express.
     const report = evaluate(firstContext(insetBy(2)));
-    expect(Object.keys(report.dimensions)).toEqual(['silhouette', 'value', 'noise']);
+    expect(Object.keys(report.dimensions)).toEqual(['silhouette', 'value', 'palette', 'noise']);
     expect(report.excluded).toEqual({
-      palette: 'not-implemented',
       outline: 'not-implemented',
       motion: 'not-implemented',
     });
@@ -590,25 +608,33 @@ describe('the blocking list is assembled from present dimensions and the aggrega
  * ------------------------------------------------------------------ */
 
 describe('the registry is partial on purpose and works that way', () => {
-  it('registers silhouette, value and noise today, and DEFAULT_ANALYZERS is a projection of it', () => {
+  it('registers silhouette, value, palette and noise today, and DEFAULT_ANALYZERS is a projection of it', () => {
     // **Was "registers silhouette today"**, and the renames are the finding rather than a chore:
     // `value` registered with **no `applies` at all**, which is the decision the whole aggregator
     // exists to make expressible — a full-bleed scene has no silhouette and does have value
     // structure — and `noise` then registered the same way, for the same reason and one step
     // further: a full-bleed landscape is precisely the document where a stray highlight or a leaked
-    // pixel is most likely, because it is the one with thousands of individual marks in it. **Two of
-    // the three measured dimensions therefore abstain on nothing**, and that is the mechanism behind
-    // T-015's finding five in the other direction: a dimension that abstains is offset by a
-    // dimension that abstains nowhere. The assertion below is that the projection is a projection
-    // and not a second list.
-    expect(DEFAULT_DIMENSIONS.map((dimension) => dimension.id)).toEqual(['silhouette', 'value', 'noise']);
-    expect(DEFAULT_ANALYZERS).toEqual([silhouetteAnalyzer, valueAnalyzer, noiseAnalyzer]);
+    // pixel is most likely, because it is the one with thousands of individual marks in it. **`palette`
+    // is the third to abstain on nothing**, for the same reason again and one step further still: a
+    // full-bleed landscape is exactly where an off-palette colour is most likely, because every one
+    // of those thousands of marks could have picked an arbitrary hex. **Three of the four measured
+    // dimensions therefore abstain on nothing**, and that is the mechanism behind T-015's finding five
+    // in the other direction: a dimension that abstains is offset by a dimension that abstains
+    // nowhere. The assertion below is that the projection is a projection and not a second list.
+    expect(DEFAULT_DIMENSIONS.map((dimension) => dimension.id)).toEqual([
+      'silhouette',
+      'value',
+      'palette',
+      'noise',
+    ]);
+    expect(DEFAULT_ANALYZERS).toEqual([silhouetteAnalyzer, valueAnalyzer, paletteAnalyzer, noiseAnalyzer]);
     expect(analyzerFor('silhouette')).toBe(silhouetteAnalyzer);
     expect(analyzerFor('value')).toBe(valueAnalyzer);
+    expect(analyzerFor('palette')).toBe(paletteAnalyzer);
     expect(analyzerFor('noise')).toBe(noiseAnalyzer);
-    // Three dimensions have no analyzer, which is a fact about the build rather than about
+    // Two dimensions have no analyzer, which is a fact about the build rather than about
     // any document, and is reported as such.
-    for (const id of ['palette', 'outline', 'motion'] as const) {
+    for (const id of ['outline', 'motion'] as const) {
       expect(analyzerFor(id)).toBeUndefined();
     }
   });
@@ -771,6 +797,21 @@ describe('the repository\'s own artwork, measured through evaluate', () => {
       if (codes(report.blocking).includes('shape-clipped')) {
         offenders.push(`${asset.name}: blocking shape-clipped on a full-bleed scene`);
       }
+      // **And `off-palette` on `artwork/dusk-lake-valley-agent.pixel`, which is §7 item 3's false
+      // positive measured on a committed asset rather than argued about.** That document has a
+      // `reflection` layer at **opacity 0.58**, so the composite carries blends of two declared
+      // swatches at alpha ~148 — above `ALPHA_SOLID` 128, so §3.3 counts them solid and §4.3 counts
+      // them undeclared. It is an advisory at 0.35, so it does not block and the verdict is still
+      // `pass`; it is asserted here so that the day it starts blocking, this line is the one that
+      // says why, and the case's own `noBlocking` in `cases.json` is the load-bearing half.
+      const advisory = [...report.dimensions.palette?.issues ?? []].filter((i) => i.code === 'off-palette');
+      if (asset.name.endsWith('dusk-lake-valley-agent.pixel')) {
+        if (advisory.length !== 1 || advisory[0].severity !== 0.35) {
+          offenders.push(`${asset.name}: expected one advisory off-palette at 0.35, got ${JSON.stringify(advisory)}`);
+        }
+      } else if (advisory.length > 0) {
+        offenders.push(`${asset.name}: unexpected off-palette on a clean scene`);
+      }
     }
     expect(offenders).toEqual([]);
   });
@@ -805,13 +846,14 @@ describe('the repository\'s own artwork, measured through evaluate', () => {
     // An advisory, not a gate: the sprite is a subject, it reads, and the report says so
     // without pretending the measurement is settled.
     expect(report.blocking).toEqual([]);
-    // **The total is 849 over the active set, and it was 823 before `noise` registered — which is the
-    // finding, not a repair.** The arithmetic is written out because "the score moved and nothing
-    // about the art did" is exactly the kind of diff a reviewer should not have to reconstruct, and
-    // because the direction of the move is the whole point:
+    // **The total is 824 over the active set, and it was 849 before `palette` registered and 823 before
+    // `noise` did — the direction of that move is the finding, not a repair.** The arithmetic is
+    // written out because "the score moved and nothing
+    // about the art did" is exactly the kind of diff a reviewer should not have to reconstruct:
     //
     //   before: (300*800 + 260*850) / 560                      = 461000 / 560 = 823.2  -> 823
-    //   after:  (300*800 + 260*850 + 120*970) / 680             = 577400 / 680 = 849.1  -> 849
+    //   noise:  (300*800 + 260*850 + 120*970) / 680            = 577400 / 680 = 849.1  -> 849
+    //   palette:(300*800 + 260*850 + 120*970 + 140*700) / 820 = 675400 / 820 = 823.7  -> 824
     //
     // `noise` registers at weight 120, it registers with **no applicability precondition** (§4.4 lists
     // none, and a still sprite is not a reason to skip a speck detector), and it reads **970** on
@@ -820,6 +862,8 @@ describe('the repository\'s own artwork, measured through evaluate', () => {
     // `rhu(2000, 432) = 5` per-mille, and §4.4's `<= 8/1000` row is the 900 band, so the dimension is
     // rhu(300*1000 + 200*1000 + 300*900 + 200*1000, 1000) = 970. Two stray colours, nothing above
     // the trigger, no code — and `ditherShare` 574, the highest of the ten committed scenes.
+    // `palette` registers at weight 140, also with no precondition (§4.3 lists none), and reads
+    // **700** on this sprite.
     //
     // **The dilution runs upward, and this is not the art improving.** `thin-profile` is severity
     // 0.30, the blocking cut is 0.50, and `report.blocking` is empty three lines above — so the
@@ -848,7 +892,43 @@ describe('the repository\'s own artwork, measured through evaluate', () => {
     expect(report.dimensions.value?.unmeasured).toEqual({});
     expect(report.dimensions.noise?.scoreQ).toBe(970);
     expect(report.dimensions.noise?.unmeasured).toEqual({});
-    expect(report.score).toBe(0.849);
+    expect(report.score).toBe(0.824);
     expect(report.verdict).toBe('pass');
+  });
+
+  it('moves the same sprite toward its advisory when `palette` registers, which is the opposite sign', () => {
+    // **This is the counterpart to the test above and the two are one argument.** Registering `noise`
+    // moved this report 823 -> 849, *away* from the sprite's one real defect, because `noise` read
+    // 970 with nothing to say about a character's profile. Registering `palette` moves it 849 ->
+    // 824, *toward* it, and for the same underlying reason — a low-weight dimension outvoting the
+    // weight-300 one that owns the defect — with the opposite reading:
+    //
+    //   823 -> 849:  (300*800 + 260*850 + 120*970) / 680                    = 849.1
+    //   849 -> 824:  (300*800 + 260*850 + 120*970 + 140*700) / 820         = 823.7 -> 824
+    //
+    // `palette` reads **700** on this sprite, and 700 is not a shrug: 19 declared swatches against a
+    // `compact` budget of 16 is `colour-budget-exceeded`, and 8 hue families on a 32x32 is
+    // `hue-sprawl`. Both are §4.3's own numbers and both are advisories at 0.35 and 0.30.
+    //
+    // **Neither move is the art improving, and neither is repaired here.** `thin-profile` is severity
+    // 0.30 against a blocking cut of 0.50, so `report.blocking` is empty and the verdict is `pass`
+    // either way; §5.3's floors do not catch it either (`FLOOR_FAIL.silhouette` is 400 against a
+    // score of 800). What the mean does is move, and it moves in whichever direction the last
+    // registered dimension happened to read. **The honest summary is that a weighted mean cannot
+    // express "this sprite has one thing wrong with it"**, and both registrations are the evidence.
+    const keeper = CORPUS.find((asset) => asset.name.endsWith('lantern-keeper.pixel'));
+    const report = evaluate(keeper!.context);
+    const palette = report.dimensions.palette;
+    expect(palette?.scoreQ).toBe(700);
+    expect(codes(palette!.issues)).toEqual(['colour-budget-exceeded', 'hue-sprawl']);
+    expect(palette?.unmeasured).toEqual({});
+    // **And the two advisories are not hypothetical.** 19 swatches against 16, and 8 hue families
+    // against a gate of 7 on a canvas that is not `scene`-class. The sprite uses exactly the 19
+    // colours its DawnBringer palette declares, which is why `off-palette` is 0 and the dimension's
+    // verdict says so — this is a **budget** disagreement, not a discipline one, and §7 item 2
+    // records colour budgets by canvas area as one of the conventions a good artist will dispute.
+    expect(palette?.verdict).toMatch(/19 colours against a budget of 16 \(compact class/);
+    expect(palette?.verdict).toMatch(/every colour declared/);
+    expect(report.blocking).toEqual([]);
   });
 });

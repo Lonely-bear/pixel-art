@@ -1,5 +1,6 @@
 import { buildSolidMask, silhouetteAnalyzer } from './silhouette.js';
 import { valueAnalyzer } from './value.js';
+import { paletteAnalyzer } from './palette.js';
 import { noiseAnalyzer } from './noise.js';
 import { edgeGapOf, SUBJECT_REQUIRED_MARGIN } from './measure.js';
 import {
@@ -287,17 +288,27 @@ export interface QualityDimensionRegistration {
 /**
  * Every dimension that has an analyzer today.
  *
- * **One entry, on purpose.** The registry is partial until T-013…T-017 land, and the
- * aggregator is written for the partial case rather than for the finished one: the
- * denominator is the sum of the weights of whatever is *present*, so with only
- * `silhouette` registered the total is that dimension's score over a denominator of 300,
- * and the other five appear in `excluded` as `'not-implemented'`. Writing the aggregation
- * against the finished six and testing it against one would have meant the only code path
- * that ever runs in this repository was never executed.
+ * **Four entries, and the aggregator is written for the partial case rather than the finished
+ * one.** The registry is partial until T-016 and T-017 land: the denominator is the sum of the
+ * weights of whatever is *present*, so with only `silhouette` registered the total is that
+ * dimension's score over a denominator of 300, and the other five appear in `excluded` as
+ * `'not-implemented'`. Writing the aggregation against the finished six and testing it against
+ * four would have meant the only paths that ever run in this repository were never executed.
+ * **The order of the array is `QUALITY_DIMENSIONS` order, which is `DEFAULT_QUALITY_WEIGHTS`
+ * order** (silhouette 300, value 260, palette 140, noise 120, outline 100, motion 80), and it
+ * has to be: `evaluate` iterates `QUALITY_DIMENSIONS` and looks each id up here, so the array
+ * is a lookup rather than a sequence — but a reader scanning it for "how much is this worth"
+ * should get §5.1's answer without opening `types.ts`.
+ *
+ * **Of the four, exactly one abstains.** `value`, `palette` and `noise` register with no
+ * `applies` at all, and that is a finding rather than an omission — each of them asks a question a
+ * full-bleed landscape answers perfectly well, and §3.6's `excluded` map exists so the question
+ * ("is there a shape to read?") does not get answered for them by a predicate written for a
+ * different dimension. See the per-registration comments below for the argument in each case.
  *
  * Each new dimension is one line, plus a `guide` in the spec:
- * `palette` (T-014), `noise` (T-015), `outline` (T-016, with
- * {@link requiresReadableSubject}), `motion` (T-017, with {@link motionApplicability}).
+ * `outline` (T-016, with {@link requiresReadableSubject}), `motion` (T-017, with
+ * {@link motionApplicability}).
  *
  * **`value` registers with no `applies` at all**, and that is a decision rather than an omission.
  * {@link requiresReadableSubject} is the one precondition in this file and it exists because a
@@ -312,6 +323,24 @@ export interface QualityDimensionRegistration {
 export const DEFAULT_DIMENSIONS: readonly QualityDimensionRegistration[] = [
   { id: 'silhouette', analyze: silhouetteAnalyzer, applies: requiresReadableSubject },
   { id: 'value', analyze: valueAnalyzer },
+  // `palette` registers with no `applies`, and the reason is §3.6's rather than §4.1's: a full-bleed
+  // landscape is exactly the document where an off-palette colour is most likely, because it was
+  // made of thousands of individual marks and each of them could have picked an arbitrary hex.
+  // Abstaining there would exempt the ten committed scenes — the ones with the most colours in them
+  // — from the only dimension that counts colours.
+  //
+  // **This registration moves `artwork/verify/lantern-keeper.pixel` from 849 to 824, and the direction
+  // is the finding.** Registering `noise` moved the same row *away* from its one real advisory
+  // (823 -> 849) because `noise` read 970 and had nothing to say about a character's profile;
+  // `palette` reads 700 and does have something to say (19 colours against a `compact` budget of 16,
+  // and 8 hue families), so the mean moves *toward* the advisory by 25 per-mille:
+  //
+  //     (300*800 + 260*850 + 120*970 + 140*700) / 820 = 675400 / 820 = 823.7 -> 824
+  //
+  // Both signs are the same mechanism — a weight-140 or weight-120 dimension outvoting the
+  // weight-300 one that owns the defect — and neither is repaired here, because §5.3's floors
+  // (`FLOOR_FAIL.silhouette` is 400 against a score of 800) do not catch either. §7 records it.
+  { id: 'palette', analyze: paletteAnalyzer },
   // `noise` registers with no `applies`, for §4.2's reason and not §4.1's: a full-bleed landscape has
   // no subject to read a shape out of, but it is exactly the document where a snapping fill or a
   // leaked pixel is most likely, because it is made of thousands of individual marks.
@@ -564,4 +593,5 @@ export * from './context.js';
 export * from './silhouette.js';
 export * from './types.js';
 export * from './value.js';
+export * from './palette.js';
 export * from './noise.js';

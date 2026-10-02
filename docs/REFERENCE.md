@@ -246,17 +246,17 @@ and fail loudly when it is not there.
 
 ### What it exposes
 
-- **A small declared surface plus an on-demand command catalog.** The advertised list is 36
+- **A small declared surface plus an on-demand command catalog.** The advertised list is 37
   tools over stdio, measured with `node scripts/mcp-call.mjs list`; that number drifts, so
-  re-measure it rather than copying it out of a document. 35 of them are shared with the app's
+  re-measure it rather than copying it out of a document. 36 of them are shared with the app's
   HTTP host — the session, perception, export and discovery tools: `create_document`, `create_sprite_spec`,
   `open_document`, `save_document`, `finalize_document`, `import_image` (PNG or Aseprite),
   `select_document`, `close_document`, `list_documents`, `get_document`, `get_preview`, `preview_pose`,
   `preview_animation`, `preview_tilemap`, `read_grid`, `get_pixels`, `histogram`, `get_selection`,
-  `set_selection`, `get_palette`, `get_history`, `undo`, `redo`, `apply_ops`, `export_png`,
+  `set_selection`, `evaluate`, `get_palette`, `get_history`, `undo`, `redo`, `apply_ops`, `export_png`,
   `export_sheet`, `export_tiled`, `export_gif`, `list_commands`, `describe_command`,
   `find_workflow`, `read_skill`, and the scripting tools `run_script`, `load_plugin`, `list_plugins`.
-  The stdio server adds `get_connection_status` on top of that 35, so the agent can tell
+  The stdio server adds `get_connection_status` on top of that 36, so the agent can tell
   whether it is editing the app or an in-memory store.
 
   The ~90 core commands (`draw_rect`, `autotile`, `create_tileset`, `add_palette_ramp`, …) are **not**
@@ -355,10 +355,27 @@ and fail loudly when it is not there.
   re-labels itself when one is added. The same content is served at
   `pixel://documents/{id}/grid?view=…&frame=N&layer=…&rect=x,y,w,h`.
   The split is deliberate: **`read_grid` verifies, `get_preview` approves.**
+- **`evaluate` measures the artwork, and it is deliberately framed so the number is not the
+  target.** It runs the quality dimensions from [`EVALUATION.md`](EVALUATION.md) over the
+  document's frames, one frame, or one animation tag, and returns the aggregator's report
+  verbatim plus a flat `issues` list — every defect, deduplicated by `(code, rect)` and sorted
+  by severity descending, each with the canvas rectangle to fix. The payload carries no
+  letter, grade, percentage or summary sentence, and `howToRead` says in every response that
+  the scores are diagnostics for finding defects: a `quality_report` tool existed once and was
+  deleted in 0.3.1 because a model told the number was "clean" sanded a lake into a dark flat
+  rectangle. Two fields carry the distinction the whole applicability mechanism exists for, and
+  neither may be collapsed into the other: `report.dimensions` holds what *was* measured (a
+  **missing key** means the dimension did not apply — never a zero), `report.excluded` says
+  why each absent one is absent, and `dimensions.*.unmeasured` says which *sub-scores* of a
+  dimension that was measured it could not reach. `notes` spells every one of those absences
+  out in prose, and `issuesTruncated`/`issueCount` mean a shortened list is never silent.
+  `pixel://quality/{id}` returns the same bytes without a tool call; scoping to a region is
+  the tool's `rect`, because the URI template cannot carry a comma-separated one.
 - **Static resources and document templates.** `pixel://documents`, `pixel://commands`,
   `pixel://skill` (a pixel-art craft guide), `pixel://script-guide` (the sandbox/plugin API),
   `pixel://guide/{command}` (a command's long-form manual — the detail behind a short tool
-  description, pulled at the moment it is needed),
+  description, pulled at the moment it is needed), `pixel://quality/{id}` (the quality report,
+  byte-identical to the `evaluate` tool's answer, with `?tag=`, `?frame=N` and `?maxIssues=N`),
   plus document, grid and preview templates. The preview is a real `image/png` blob, so
   multimodal models can *see* the art; it takes the same view options as `get_preview` as
   query parameters: `?frame=N`, `?frames=all`, `?scale=N`, `?layers=a,b`, `?onion=N`

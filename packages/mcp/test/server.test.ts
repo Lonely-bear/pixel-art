@@ -5,7 +5,7 @@
  * read resources, run prompts - so a regression in the wire format or in a
  * schema shows up here rather than in someone's agent session.
  */
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -1486,6 +1486,19 @@ describe('export', () => {
     expect((detail.palette as { size: number }).size).toBeGreaterThan(0);
   });
 
+  // **The three finalisation tests below bypass the quality gate, and that is the point, not a
+  // workaround.** Each fixture is a 4x4 or 8x8 flat square of undeclared colour — the drawing that
+  // exists to prove the *export plan* works, not artwork anyone would ship — and §5.5's gate
+  // refuses exactly that (`flat-value` and `off-palette`, both blocking). Bypassing keeps the test
+  // honest in both directions: it still asserts that the PNGs were rendered and the source was
+  // written, and it asserts that a bypass is loud rather than silent. Rewriting the fixtures into
+  // something shippable would have tested the gate instead of the export, in tests whose names
+  // are about exports.
+  const FIXTURE_BYPASS = {
+    bypass: true,
+    bypassReason: 'Export-mechanics fixture, not a shipped asset: see the quality gate tests below.',
+  };
+
   it('saves the source and writes multiple PNG exports in one finalisation call', async () => {
     await client.callTool({
       name: 'create_document',
@@ -1507,6 +1520,7 @@ describe('export', () => {
       name: 'finalize_document',
       arguments: {
         path: source,
+        ...FIXTURE_BYPASS,
         exports: [
           { path: original, scale: 1 },
           { path: preview, scale: 4 },
@@ -1535,6 +1549,7 @@ describe('export', () => {
     const manifest = join(tempDir, 'incremental.json');
     const plan = {
       path: source,
+      ...FIXTURE_BYPASS,
       outputs: [{ type: 'png', path: image }],
       manifest: { path: manifest, hashes: true, incremental: true },
     };
@@ -1561,6 +1576,7 @@ describe('export', () => {
       name: 'finalize_document',
       arguments: {
         path: source,
+        ...FIXTURE_BYPASS,
         outputs: [
           { type: 'png', path: join(tempDir, 'bundle.png'), frame: 0 },
           { type: 'frames', path: join(tempDir, 'bundle-frame.png') },
@@ -1595,6 +1611,162 @@ describe('export', () => {
     expect(manifest.frames).toHaveLength(2);
     expect(manifest.tags[0]).toMatchObject({ name: 'blink', direction: 'pingpong' });
     expect(manifest.outputs.every((output: { sha256?: string }) => /^[a-f0-9]{64}$/.test(output.sha256))).toBe(true);
+  });
+});
+
+/**
+ * §5.5's gate, on the delivery path.
+ *
+ * The refusal assertions below are the whole point of this block: `finalize_document` is the one
+ * tool that writes, so it is the one place a gate that returns `passed: false` would be reported
+ * as a success. It throws, and a client that treats a failed tool call as a failed write is
+ * correct by construction.
+ */
+describe('the quality gate on finalize_document', () => {
+  /** A sprite the gate refuses, and the codes it refuses on, as the probe measured them. */
+  async function refused(): Promise<{ id: string }> {
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 8, height: 8, name: 'Gate probe', layers: ['base'] },
+    });
+    await client.callTool({
+      name: 'draw_rect',
+      arguments: { rect: { x: 0, y: 0, w: 8, h: 8 }, color: '#2255aa', fill: true },
+    });
+    const listed = payload((await client.callTool({ name: 'list_documents', arguments: {} })) as ToolResult);
+    const active = (listed.documents as Array<{ id: string; active?: boolean }>).find((d) => d.active);
+    return active!;
+  }
+
+  it('refuses a failing asset, names the code and its per-mille number, and writes nothing', async () => {
+    const doc = await refused();
+    const source = join(tempDir, 'gated.pixel');
+    const image = join(tempDir, 'gated.png');
+    const result = (await client.callTool({
+      name: 'finalize_document',
+      arguments: {
+        document: doc.id,
+        path: source,
+        outputs: [{ type: 'png', path: image }],
+      },
+    })) as ToolResult;
+
+    const body = payload(result);
+    expect(result.isError).toBe(true);
+    expect(body.ok).toBe(false);
+    // `command_failed`, not `invalid_params`: the arguments were fine, the document said no.
+    expect(body.code).toBe('command_failed');
+    expect(String(body.error)).toContain('quality gate refused');
+    // The named code and the measured number, and **no 0..1 score anywhere**: §3 deleted a
+    // `quality_report` tool over that number and a refusal is the last place it could return.
+    expect(String(body.error)).toMatch(/off-palette at 550\/1000 against 500\/1000/);
+    expect(JSON.stringify(body)).not.toMatch(/"(score|quality|grade)"\s*:/);
+    // Structured, so a caller can act on it rather than parse the prose.
+    expect((body.refusals as Array<{ code: string; measuredQ: number; thresholdQ: number }>).some(
+      (refusal) => refusal.code === 'off-palette' && refusal.measuredQ === 550 && refusal.thresholdQ === 500,
+    )).toBe(true);
+    // Nothing on disk: a refused asset must leave no half-written bundle for the next run to
+    // skip as "unchanged".
+    expect(existsSync(source)).toBe(false);
+    expect(existsSync(image)).toBe(false);
+  });
+
+  it('returns invalid_params, not command_failed, when a bypass has no reason', async () => {
+    const doc = await refused();
+    const result = (await client.callTool({
+      name: 'finalize_document',
+      arguments: { document: doc.id, path: join(tempDir, 'no-reason.pixel'), bypass: true },
+    })) as ToolResult;
+    const body = payload(result);
+    // Three codes mean three recoveries, and this one means "your arguments were incomplete" —
+    // telling an agent the *document* refused would send it looking for defects that are not there.
+    expect(result.isError).toBe(true);
+    expect(body.code).toBe('invalid_params');
+    expect(String(body.error)).toContain('bypassReason');
+    expect(String(body.remediation)).toContain('bypassReason');
+    expect(existsSync(join(tempDir, 'no-reason.pixel'))).toBe(false);
+  });
+
+  it('does not let a bypass make the asset pass, and hands back a notice to embed', async () => {
+    const doc = await refused();
+    const source = join(tempDir, 'bypassed.pixel');
+    const result = (await client.callTool({
+      name: 'finalize_document',
+      arguments: {
+        document: doc.id,
+        path: source,
+        outputs: [{ type: 'png', path: join(tempDir, 'bypassed.png') }],
+        bypass: true,
+        bypassReason: 'Shipped as a placeholder; the real sprite lands next week.',
+      },
+    })) as ToolResult;
+
+    const body = payload(result);
+    expect(result.isError).toBeFalsy();
+    expect(body.ok).toBe(true);
+    expect(existsSync(source)).toBe(true);
+    // Loud in three places, and `passed` is still false: a bypass is a release, not a pass.
+    expect(body.bypassed).toBe(true);
+    expect(body.bypassReason).toContain('placeholder');
+    expect(String(body.notice)).toContain('QUALITY GATE BYPASSED');
+    expect(String(body.notice)).toContain('placeholder');
+    const gate = body.qualityGate as { passed: boolean; measured: boolean; refusals: unknown[] };
+    expect(gate.passed).toBe(false);
+    expect(gate.measured).toBe(true);
+    expect(gate.refusals.length).toBeGreaterThan(0);
+  });
+
+  it('publishes no score on a clean asset, and says what it did not measure', async () => {
+    // The passing result carries the decision and the abstentions and nothing else. `refusals` is
+    // present even when empty so the shape is the same either way — a reader seeing
+    // `refusals: []` beside `notApplicable` learns "nothing refused, and this is what was not
+    // measured", rather than reading an empty list as "nothing was looked at".
+    await client.callTool({
+      name: 'create_document',
+      arguments: { width: 12, height: 12, name: 'Clean probe', layers: ['base'] },
+    });
+    // **Three declared swatches, read from the document rather than hard-coded.** A hex that is
+    // not in the palette is `off-palette` at 1000 per-mille and blocks, so a fixture written with
+    // literal colours would be testing the gate twice and would silently depend on the default
+    // palette never changing. Sorting by luminance picks the darkest, a middle and the lightest,
+    // which is what `value` needs to see three buckets with real air between them.
+    const palette = payload((await client.callTool({ name: 'get_palette', arguments: {} })) as ToolResult);
+    const entries = (palette.colors as Array<{ hex: string }>)
+      .map(({ hex }) => ({ hex, lum: parseInt(hex.slice(1, 3), 16) * 299 + parseInt(hex.slice(3, 5), 16) * 587 + parseInt(hex.slice(5, 7), 16) * 114 }))
+      .sort((a, b) => a.lum - b.lum);
+    const [dark, mid, light] = [entries[0], entries[Math.floor(entries.length / 2)], entries[entries.length - 1]];
+    // Three vertical bands across the whole canvas, so the ink reaches all four edges and
+    // `silhouette` abstains with `no-subject` — the ordinary version of "this is a scene".
+    for (const [index, { hex }] of [dark!, mid!, light!].entries()) {
+      await client.callTool({
+        name: 'draw_rect',
+        arguments: { rect: { x: index * 4, y: 0, w: 4, h: 12 }, color: hex, fill: true },
+      });
+    }
+    const source = join(tempDir, 'clean.pixel');
+    const result = (await client.callTool({
+      name: 'finalize_document',
+      arguments: { path: source },
+    })) as ToolResult;
+    const body = payload(result);
+    // If this ever starts failing, the fixture drifted rather than the gate: an 8x8 or 4x4 square
+    // is refused on `flat-value` and `off-palette`, which is the gate working.
+    expect(body.ok, String(body.error)).toBe(true);
+
+    const gate = body.qualityGate as {
+      passed: boolean;
+      measured: boolean;
+      refusals: unknown[];
+      notApplicable: Record<string, string>;
+    };
+    expect(gate.passed).toBe(true);
+    expect(body.bypassed, 'a clean asset must not be reported as bypassed').toBeUndefined();
+    expect(gate.refusals).toEqual([]);
+    expect(gate.measured).toBe(true);
+    // The abstention travels with the decision, so neither can be mistaken for the other.
+    expect(gate.notApplicable).toMatchObject({ silhouette: 'no-subject' });
+    // And the point of the whole result: no number an agent could optimise.
+    expect(JSON.stringify(body)).not.toMatch(/"(score|quality|grade|totalQ)"\s*:/);
   });
 });
 

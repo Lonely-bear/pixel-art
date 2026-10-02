@@ -7,6 +7,33 @@ All notable changes to dotloom-mcp are documented in this file.
 </p>
 
 ## [Unreleased]
+### Added
+
+- **The judgement layer is reachable.** Four of six quality dimensions are registered (silhouette,
+  value, palette, noise) and all four are now usable: an evaluate command, an evaluate MCP tool, a
+  pixel://quality/{doc} resource, and a quality gate on inalize_document that refuses a failing
+  asset and leaves a notice when it is bypassed. A ix command turns issues into executable ops where
+  a safe repair exists, and into prose where one does not.
+- **palette is the fourth dimension.** Colour discipline over the composite. Two known false
+  positives are recorded rather than loosened, because their remedies are upstream: quantize before
+  evaluating, or declare the palette.
+
+### Fixed
+
+- **A name collision that took the whole MCP server down.** A core command and a session tool both
+  called evaluate; the SDK throws on a duplicate registration, and in eager mode every server failed
+  to start. 132 tests were failing for this. Both paths are guarded now.
+- **off-palette fired a tenth as late as specified.** The specification writes its thresholds in
+  hundredths and the pipeline is per-mille, so a sprite 25% off its palette produced no issue at all.
+  A silent miss is the worst direction available.
+- **meanSatQ was scaled by 1000 twice**, so it ran in a different dimension from every other ratio.
+
+### Known limitations
+
+- **Neither the grader nor the gate is calibrated against human judgement.** Every threshold is a
+  hypothesis under review, measured on one sprite. The 200 expert ratings that would fix this are a
+  human task, and no amount of engineering substitutes for it.
+
 
 ### Added
 

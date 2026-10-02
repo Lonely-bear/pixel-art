@@ -7,7 +7,7 @@
 
 Corpus version 2. Controlled subjects with declared defects, plus this repository's own artwork. Covers every failure mode T-012, T-018 and T-013 found, aimed rather than exhaustive: negative controls, the 1px-margin trap, the 4-vs-8 connectivity decision, the compactnessQ gate, the multi-frame rules, and §4.2 in two parts — the form-conformance term as a straight band against a form-following contour, a level set against both and a straight terminator on a straight-edged form, then one case per single-code defect in §4.2's issue table, so that a hue-carried form, a crushed shadow and a blown highlight are each something a case says they mean. Every expectation here is derived by hand from docs/EVALUATION.md and the declared geometry of the case, never copied out of the pipeline's own output.
 
-**55 synthetic** (ground truth by construction) · **12 real** (unlabelled) · **3 human** (awaiting a rater). Algorithmic labels cannot calibrate an algorithm — `docs/EVALUATION.md` §6.1 — so the synthetic tier detects and regression-guards, and only the human tier speaks to the aesthetic axis.
+**64 synthetic** (ground truth by construction) · **12 real** (unlabelled) · **3 human** (awaiting a rater). Algorithmic labels cannot calibrate an algorithm — `docs/EVALUATION.md` §6.1 — so the synthetic tier detects and regression-guards, and only the human tier speaks to the aesthetic axis.
 
 ## 1 · Cases
 
@@ -55,17 +55,17 @@ Corpus version 2. Controlled subjects with declared defects, plus this repositor
 | sweep/band-28x3-on-1024                              | synthetic | flat-value, narrow-value-range, subject-undersized, thin-profile                                 | flat-value, narrow-value-range, subject-undersized, thin-profile                                 | -           | fail        | 700      | pass            |
 | sweep/band-896x96-on-1024                            | synthetic | flat-value, narrow-value-range, subject-undersized, thin-profile                                 | flat-value, narrow-value-range, subject-undersized, thin-profile                                 | -           | fail        | 700      | pass            |
 | artwork/autumn-dusk-lake-256.pixel                   | real      | not asserted                                                                                     | near-duplicate-colours                                                                           | -           | pass        | excluded | pass            |
-| artwork/dusk-lake-valley-agent.pixel                 | real      | not asserted                                                                                     | near-duplicate-colours                                                                           | -           | pass        | excluded | pass            |
+| artwork/dusk-lake-valley-agent.pixel                 | real      | not asserted                                                                                     | colour-budget-exceeded, near-duplicate-colours, off-palette                                      | -           | pass        | excluded | pass            |
 | artwork/dusk-lake-valley-agent2.pixel                | real      | not asserted                                                                                     | -                                                                                                | -           | pass        | excluded | pass            |
-| artwork/dusk-lake-valley-v2.pixel                    | real      | not asserted                                                                                     | hue-carries-form, key-light-inconsistent, near-duplicate-colours                                 | -           | warn        | excluded | pass            |
+| artwork/dusk-lake-valley-v2.pixel                    | real      | not asserted                                                                                     | hue-carries-form, key-light-inconsistent, near-duplicate-colours                                 | -           | pass        | excluded | pass            |
 | artwork/dusk-lake-valley-v3.pixel                    | real      | not asserted                                                                                     | near-duplicate-colours                                                                           | -           | pass        | excluded | pass            |
 | artwork/dusk-lake-valley.pixel                       | real      | not asserted                                                                                     | near-duplicate-colours                                                                           | -           | pass        | excluded | pass            |
-| artwork/moonlit-alpine-lake-fast.pixel               | real      | not asserted                                                                                     | key-light-inconsistent, near-duplicate-colours                                                   | -           | pass        | excluded | pass            |
-| artwork/moonlit-alpine-lake.pixel                    | real      | not asserted                                                                                     | near-duplicate-colours, stray-colour                                                             | -           | pass        | excluded | pass            |
+| artwork/moonlit-alpine-lake-fast.pixel               | real      | not asserted                                                                                     | hue-sprawl, key-light-inconsistent, near-duplicate-colours                                       | -           | pass        | excluded | pass            |
+| artwork/moonlit-alpine-lake.pixel                    | real      | not asserted                                                                                     | colour-budget-exceeded, near-duplicate-colours, stray-colour                                     | -           | pass        | excluded | pass            |
 | artwork/sunset-lighthouse-512-baseline-model-a.pixel | real      | not asserted                                                                                     | key-light-inconsistent, near-duplicate-colours                                                   | -           | pass        | excluded | pass            |
 | artwork/sunset-lighthouse-512.pixel                  | real      | not asserted                                                                                     | near-duplicate-colours                                                                           | -           | pass        | excluded | pass            |
-| artwork/verify/lantern-keeper.pixel                  | real      | not asserted                                                                                     | interior-hole, key-light-inconsistent, thin-profile                                              | -           | pass        | 800      | pass            |
-| app/icon.png                                         | real      | not asserted                                                                                     | near-duplicate-colours                                                                           | -           | pass        | 1000     | pass            |
+| artwork/verify/lantern-keeper.pixel                  | real      | not asserted                                                                                     | colour-budget-exceeded, hue-sprawl, interior-hole, key-light-inconsistent, thin-profile          | -           | pass        | 800      | pass            |
+| app/icon.png                                         | real      | not asserted                                                                                     | colour-budget-exceeded, invented-colours, near-duplicate-colours, off-palette                    | -           | fail        | 1000     | pass            |
 | human/item-16                                        | human     | not asserted                                                                                     | withheld from raters                                                                             | -           | -           | -        | awaiting-rating |
 | human/tile-32                                        | human     | not asserted                                                                                     | withheld from raters                                                                             | -           | -           | -        | awaiting-rating |
 | human/scene-64                                       | human     | not asserted                                                                                     | withheld from raters                                                                             | -           | -           | -        | awaiting-rating |
@@ -77,12 +77,21 @@ Corpus version 2. Controlled subjects with declared defects, plus this repositor
 | value/shadow-crushed-32                              | synthetic | shadow-crushed                                                                                   | shadow-crushed                                                                                   | fail        | fail        | 1000     | pass            |
 | value/highlight-blown-32                             | synthetic | highlight-blown                                                                                  | highlight-blown                                                                                  | pass        | pass        | 1000     | pass            |
 | value/terrain-following-terminator-64                | synthetic | -                                                                                                | -                                                                                                | pass        | pass        | excluded | pass            |
-| value/straight-band-over-terrain-64                  | synthetic | plane-crosses-form                                                                               | plane-crosses-form                                                                               | -           | warn        | excluded | pass            |
+| value/straight-band-over-terrain-64                  | synthetic | plane-crosses-form                                                                               | plane-crosses-form                                                                               | -           | pass        | excluded | pass            |
 | defect/stray-colour-16                               | synthetic | flat-value, key-light-inconsistent, stray-colour                                                 | flat-value, key-light-inconsistent, stray-colour                                                 | -           | fail        | 1000     | pass            |
 | defect/near-duplicate-ramp-16                        | synthetic | flat-value, key-light-inconsistent, narrow-value-range, near-duplicate-colours                   | flat-value, key-light-inconsistent, narrow-value-range, near-duplicate-colours                   | -           | fail        | 1000     | pass            |
 | defect/isolated-pixels-18                            | synthetic | flat-value, isolated-pixels, narrow-value-range                                                  | flat-value, isolated-pixels, narrow-value-range                                                  | fail        | fail        | 1000     | pass            |
 | defect/single-pixel-spur-16                          | synthetic | flat-value, narrow-value-range, single-pixel-spur                                                | flat-value, narrow-value-range, single-pixel-spur                                                | fail        | fail        | 1000     | pass            |
 | defect/diagonal-seam-24x20                           | synthetic | detached-pieces, diagonal-seam, flat-value, narrow-value-range, single-pixel-spur                | detached-pieces, diagonal-seam, flat-value, narrow-value-range, single-pixel-spur                | fail        | fail        | 750      | pass            |
+| control/six-hue-families-32                          | synthetic | -                                                                                                | -                                                                                                | pass        | pass        | 1000     | pass            |
+| defect/hue-sprawl-32                                 | synthetic | hue-sprawl                                                                                       | hue-sprawl                                                                                       | pass        | pass        | 1000     | pass            |
+| control/washed-one-hue-32                            | synthetic | -                                                                                                | -                                                                                                | pass        | pass        | 1000     | pass            |
+| defect/grey-washed-hues-32                           | synthetic | grey-colours, near-duplicate-colours                                                             | grey-colours, near-duplicate-colours                                                             | pass        | pass        | 1000     | pass            |
+| control/colour-budget-at-limit-32                    | synthetic | -                                                                                                | -                                                                                                | pass        | pass        | 1000     | pass            |
+| defect/colour-budget-32                              | synthetic | colour-budget-exceeded                                                                           | colour-budget-exceeded                                                                           | pass        | pass        | 1000     | pass            |
+| defect/off-palette-over-skin-32                      | synthetic | off-palette                                                                                      | off-palette                                                                                      | fail        | fail        | 1000     | pass            |
+| defect/invented-colour-32                            | synthetic | invented-colours                                                                                 | invented-colours                                                                                 | pass        | pass        | 1000     | pass            |
+| defect/muddy-over-skin-32                            | synthetic | muddy-mix, off-palette                                                                           | muddy-mix, off-palette                                                                           | pass        | pass        | 1000     | pass            |
 
 ## 2 · Measurements, per frame
 
@@ -161,6 +170,15 @@ Every §3.3 quantity, recorded whether or not the case asserts it. An expectatio
 | defect/isolated-pixels-18                            | 0 | 18x18     | 146    | 3     | 986    | 56    | 48        | 46     | 785      | 12    | 667  | 667   | 0     | 0     | 667   | 1      | 0        | 6         | 1000   |
 | defect/single-pixel-spur-16                          | 0 | 16x16     | 102    | 1     | 1000   | 44    | 44        | 37     | 662      | 10    | 625  | 625   | 0     | 0     | 625   | 1      | 0        | 5         | 1000   |
 | defect/diagonal-seam-24x20                           | 0 | 24x20     | 150    | 7     | 960    | 72    | 48        | 50     | 785      | 12    | 600  | 600   | 0     | 0     | 600   | 2      | 0        | 10        | 750    |
+| control/six-hue-families-32                          | 0 | 32x32     | 432    | 1     | 1000   | 84    | 84        | 80     | 769      | 18    | 563  | 563   | 0     | 0     | 563   | 4      | 0        | 4         | 1000   |
+| defect/hue-sprawl-32                                 | 0 | 32x32     | 504    | 1     | 1000   | 90    | 90        | 86     | 782      | 21    | 656  | 656   | 0     | 0     | 656   | 4      | 0        | 4         | 1000   |
+| control/washed-one-hue-32                            | 0 | 32x32     | 576    | 1     | 1000   | 96    | 96        | 92     | 785      | 24    | 750  | 750   | 0     | 0     | 750   | 4      | 0        | 4         | 1000   |
+| defect/grey-washed-hues-32                           | 0 | 32x32     | 576    | 1     | 1000   | 96    | 96        | 92     | 785      | 24    | 750  | 750   | 0     | 0     | 750   | 4      | 0        | 4         | 1000   |
+| control/colour-budget-at-limit-32                    | 0 | 32x32     | 576    | 1     | 1000   | 96    | 96        | 92     | 785      | 24    | 750  | 750   | 0     | 0     | 750   | 4      | 0        | 4         | 1000   |
+| defect/colour-budget-32                              | 0 | 32x32     | 576    | 1     | 1000   | 96    | 96        | 92     | 785      | 24    | 750  | 750   | 0     | 0     | 750   | 4      | 0        | 4         | 1000   |
+| defect/off-palette-over-skin-32                      | 0 | 32x32     | 576    | 1     | 1000   | 96    | 96        | 92     | 785      | 24    | 750  | 750   | 0     | 0     | 750   | 4      | 0        | 4         | 1000   |
+| defect/invented-colour-32                            | 0 | 32x32     | 576    | 1     | 1000   | 96    | 96        | 92     | 785      | 24    | 750  | 750   | 0     | 0     | 750   | 4      | 0        | 4         | 1000   |
+| defect/muddy-over-skin-32                            | 0 | 32x32     | 576    | 1     | 1000   | 96    | 96        | 92     | 785      | 24    | 750  | 750   | 0     | 0     | 750   | 4      | 0        | 4         | 1000   |
 
 `cCorners` is §3.3's `convexCorner` implemented as its table clause reads, which counts
 **concave** corners and reads 0 on every convex shape in the corpus — including all twelve
@@ -280,6 +298,15 @@ a subject is from either threshold rather than only whether it crossed it.
 | defect/isolated-pixels-18                            | 0 | 175   | 150   | 1000       | 1       | 0     | 1      | 0      | -        | -     | -           | -          | 0 curvature, 0 reach     | -              | 5    | not measurable | 0              | 0       | 0          |
 | defect/single-pixel-spur-16                          | 0 | 175   | 150   | 1000       | 1       | 0     | 1      | 0      | -        | -     | -           | -          | 0 curvature, 0 reach     | -              | 4    | not measurable | 0              | 0       | 0          |
 | defect/diagonal-seam-24x20                           | 0 | 175   | 150   | 1000       | 1       | 0     | 1      | 0      | -        | -     | -           | -          | 0 curvature, 0 reach     | -              | 5    | not measurable | 0              | 0       | 0          |
+| control/six-hue-families-32                          | 0 | 950   | 900   | 1000       | 6       | 164   | 6      | 5      | -        | -     | 78          | 1000       | 5 curvature, 0 reach     | -              | 8    | 75             | 0              | 0       | 0          |
+| defect/hue-sprawl-32                                 | 0 | 950   | 900   | 1000       | 6       | 164   | 7      | 6      | -        | -     | 78          | 1000       | 6 curvature, 0 reach     | -              | 10   | 31             | 0              | 0       | 0          |
+| control/washed-one-hue-32                            | 0 | 810   | 620   | 1000       | 3       | 96    | 3      | 2      | -        | -     | 66          | 1000       | 2 curvature, 0 reach     | -              | 11   | 78             | 0              | 0       | 0          |
+| defect/grey-washed-hues-32                           | 0 | 700   | 400   | 1000       | 2       | 95    | 2      | 1      | -        | -     | 70          | 1000       | 1 curvature, 0 reach     | -              | 11   | 71             | 43             | 0       | 0          |
+| control/colour-budget-at-limit-32                    | 0 | 950   | 900   | 1000       | 15      | 225   | 33     | 35     | -        | -     | 308         | 167        | 0 curvature, 35 reach    | -              | 11   | 56             | 7              | 0       | 0          |
+| defect/colour-budget-32                              | 0 | 950   | 900   | 1000       | 16      | 240   | 34     | 35     | -        | -     | 308         | 167        | 0 curvature, 35 reach    | -              | 11   | 60             | 7              | 0       | 28         |
+| defect/off-palette-over-skin-32                      | 0 | 890   | 780   | 1000       | 4       | 167   | 4      | 3      | -        | -     | 70          | 1000       | 3 curvature, 0 reach     | -              | 11   | 109            | 0              | 0       | 0          |
+| defect/invented-colour-32                            | 0 | 890   | 780   | 1000       | 4       | 167   | 4      | 3      | -        | -     | 70          | 1000       | 3 curvature, 0 reach     | -              | 11   | 105            | 0              | 0       | 0          |
+| defect/muddy-over-skin-32                            | 0 | 890   | 780   | 1000       | 4       | 167   | 4      | 3      | -        | -     | 205         | 1000       | 3 curvature, 0 reach     | -              | 11   | 108            | 14             | 0       | 0          |
 
 ## 3 · Applicability
 
@@ -339,7 +366,7 @@ a subject is from either threshold rather than only whether it crossed it.
 | artwork/sunset-lighthouse-512-baseline-model-a.pixel | no-subject              | single-frame        | silhouette=no-subject    | value.form=no-subject                                                           | -                                             |
 | artwork/sunset-lighthouse-512.pixel                  | no-subject              | single-frame        | silhouette=no-subject    | value.form=no-subject                                                           | -                                             |
 | artwork/verify/lantern-keeper.pixel                  | applicable              | single-frame        | -                        | -                                                                               | -                                             |
-| app/icon.png                                         | applicable              | single-frame        | -                        | -                                                                               | -                                             |
+| app/icon.png                                         | applicable              | single-frame        | -                        | -                                                                               | off-palette                                   |
 | value/straight-diagonal-32                           | applicable              | single-frame        | -                        | -                                                                               | plane-crosses-form                            |
 | value/nested-contour-32                              | applicable              | single-frame        | -                        | -                                                                               | -                                             |
 | value/level-set-32                                   | applicable              | single-frame        | -                        | -                                                                               | -                                             |
@@ -354,6 +381,15 @@ a subject is from either threshold rather than only whether it crossed it.
 | defect/isolated-pixels-18                            | applicable              | single-frame        | -                        | -                                                                               | flat-value                                    |
 | defect/single-pixel-spur-16                          | applicable              | single-frame        | -                        | -                                                                               | flat-value                                    |
 | defect/diagonal-seam-24x20                           | applicable              | single-frame        | -                        | -                                                                               | flat-value                                    |
+| control/six-hue-families-32                          | applicable              | single-frame        | -                        | -                                                                               | -                                             |
+| defect/hue-sprawl-32                                 | applicable              | single-frame        | -                        | -                                                                               | -                                             |
+| control/washed-one-hue-32                            | applicable              | single-frame        | -                        | -                                                                               | -                                             |
+| defect/grey-washed-hues-32                           | applicable              | single-frame        | -                        | -                                                                               | -                                             |
+| control/colour-budget-at-limit-32                    | applicable              | single-frame        | -                        | -                                                                               | -                                             |
+| defect/colour-budget-32                              | applicable              | single-frame        | -                        | -                                                                               | -                                             |
+| defect/off-palette-over-skin-32                      | applicable              | single-frame        | -                        | -                                                                               | off-palette                                   |
+| defect/invented-colour-32                            | applicable              | single-frame        | -                        | -                                                                               | -                                             |
+| defect/muddy-over-skin-32                            | applicable              | single-frame        | -                        | -                                                                               | -                                             |
 
 The `unmeasured sub-scores` column is the one T-099 added. `value` applies to a full-bleed scene and its tone half is measured there, so it is not in `excluded` — but §4.2's form half has no outline to read and used to report `formQ` 1000 on every one of them. A row reading `value` is present, `excluded` empty, `formQ` 1000 was a perfect score for a measurement nobody took.
 
@@ -361,7 +397,7 @@ The `unmeasured sub-scores` column is the one T-099 added. `value` applies to a 
 
 ## 4 · `compactnessQ` across every subject
 
-The gate is **300** (§4.1's `compactnessQ < 300`). **9** measured subject frames fall below it and **60** reach it. No gate is moved by this file.
+The gate is **300** (§4.1's `compactnessQ < 300`). **9** measured subject frames fall below it and **69** reach it. No gate is moved by this file.
 
 | compactnessQ | samples |
 | ------------ | ------- |
@@ -372,7 +408,7 @@ The gate is **300** (§4.1's `compactnessQ < 300`). **9** measured subject frame
 | 400..499     | 3       |
 | 500..599     | 11      |
 | 600..699     | 3       |
-| 700..799     | 39      |
+| 700..799     | 48      |
 | 800..899     | 0       |
 | 900..1000    | 0       |
 
@@ -380,7 +416,7 @@ The gate is **300** (§4.1's `compactnessQ < 300`). **9** measured subject frame
 
 The only real character sprite in this repository, and the measurement the whole calibration argument turns on. It measures **compactnessQ 269** against a gate of 300.
 
-- **4** of **69** measured subject frames score below it.
+- **4** of **78** measured subject frames score below it.
 - The nearest samples either side are `sweep/rect-30x3` at **260** and `sweep/band-28x3-on-1024` at **275**, so the gate would have to fall between 260 and 275 to admit it without admitting its neighbour as well.
 
 ### What each candidate gate would do
@@ -434,8 +470,10 @@ Lowering the gate can only *release* subjects, never penalise new ones, so the p
 | 749          | app/icon.png                                         | real      | 0     | measured              |
 | 754          | defect/fragmented-hat-20                             | synthetic | 0     | measured              |
 | 754          | sweep/rect-30x20                                     | synthetic | 0     | measured              |
+| 769          | control/six-hue-families-32                          | synthetic | 0     | measured              |
 | 776          | control/clean-blob-16                                | synthetic | 0     | measured              |
 | 779          | value/hard-surface-terminator-32                     | synthetic | 0     | measured              |
+| 782          | defect/hue-sprawl-32                                 | synthetic | 0     | measured              |
 | 783          | defect/shape-clipped-32                              | synthetic | 0     | measured              |
 | 784          | sweep/rect-30x28                                     | synthetic | 0     | measured              |
 | 785          | artwork/autumn-dusk-lake-256.pixel                   | real      | 0     | excluded: no-subject  |
@@ -452,11 +490,18 @@ Lowering the gate can only *release* subjects, never penalise new ones, so the p
 | 785          | connectivity/contour-staircase-24                    | synthetic | 0     | measured              |
 | 785          | connectivity/corner-touching-16                      | synthetic | 0     | measured              |
 | 785          | connectivity/diagonal-bridge-16                      | synthetic | 0     | measured              |
+| 785          | control/colour-budget-at-limit-32                    | synthetic | 0     | measured              |
 | 785          | control/partial-alpha-glow-28x24                     | synthetic | 0     | measured              |
+| 785          | control/washed-one-hue-32                            | synthetic | 0     | measured              |
+| 785          | defect/colour-budget-32                              | synthetic | 0     | measured              |
 | 785          | defect/detached-pieces-22                            | synthetic | 0     | measured              |
 | 785          | defect/diagonal-seam-24x20                           | synthetic | 0     | measured              |
+| 785          | defect/grey-washed-hues-32                           | synthetic | 0     | measured              |
+| 785          | defect/invented-colour-32                            | synthetic | 0     | measured              |
 | 785          | defect/isolated-pixels-18                            | synthetic | 0     | measured              |
+| 785          | defect/muddy-over-skin-32                            | synthetic | 0     | measured              |
 | 785          | defect/near-duplicate-ramp-16                        | synthetic | 0     | measured              |
+| 785          | defect/off-palette-over-skin-32                      | synthetic | 0     | measured              |
 | 785          | defect/stray-colour-16                               | synthetic | 0     | measured              |
 | 785          | defect/subject-undersized-64                         | synthetic | 0     | measured              |
 | 785          | defect/three-masses-20                               | synthetic | 0     | measured              |
@@ -474,7 +519,7 @@ Lowering the gate can only *release* subjects, never penalise new ones, so the p
 
 `compactnessQ` is a **shape** descriptor and is scale-invariant on purpose: a 32×32 square and a 1024×1024 square are the same drawing and score the same, and a measurement that separated them would be measuring the canvas. What it cannot see is the sprite's own size, which is what §3.3's `Dmax` paragraph is about — "a 3px-wide blade and a 30px-wide cloak do not have the same room to put a curved terminator in" — and which §4.1 never applied. So the two are reported as **two numbers** rather than merged: merging a shape descriptor with a scale reading produces a number whose meaning depends on which of the two the reader had in mind.
 
-`thicknessQ = min(1000, rhu(1000 * thicknessPx, min(W, H)))`, where `thicknessPx` is the subject's largest inscribed axis-aligned square. **The gate is **250**, and it is T-022's own number** — §4.1 has no thickness row at all. It is transcribed from §3.7's `span < 0.25` ("a subject must occupy a quarter of the room") rather than picked, and **7** measured subject frames fall below it while **62** reach it. No gate is moved by this file.
+`thicknessQ = min(1000, rhu(1000 * thicknessPx, min(W, H)))`, where `thicknessPx` is the subject's largest inscribed axis-aligned square. **The gate is **250**, and it is T-022's own number** — §4.1 has no thickness row at all. It is transcribed from §3.7's `span < 0.25` ("a subject must occupy a quarter of the room") rather than picked, and **7** measured subject frames fall below it while **71** reach it. No gate is moved by this file.
 
 | thicknessQ | samples |
 | ---------- | ------- |
@@ -483,9 +528,9 @@ Lowering the gate can only *release* subjects, never penalise new ones, so the p
 | 200..299   | 0       |
 | 300..399   | 10      |
 | 400..499   | 10      |
-| 500..599   | 11      |
-| 600..699   | 9       |
-| 700..799   | 4       |
+| 500..599   | 12      |
+| 600..699   | 10      |
+| 700..799   | 11      |
 | 800..899   | 5       |
 | 900..1000  | 13      |
 
@@ -551,6 +596,7 @@ Derived from the distribution rather than invented, the same way §4's candidate
 | 500        | 8           | 500      | motion/worst-frame-wins-16                           | synthetic | 0     |
 | 500        | 4           | 326      | sweep/rect-30x4                                      | synthetic | 0     |
 | 556        | 5           | 385      | sweep/rect-30x5                                      | synthetic | 0     |
+| 563        | 18          | 563      | control/six-hue-families-32                          | synthetic | 0     |
 | 574        | 147         | 350      | artwork/dusk-lake-valley-agent.pixel                 | real      | 0     |
 | 583        | 14          | 583      | defect/interior-hole-speck-24                        | synthetic | 0     |
 | 600        | 12          | 600      | defect/diagonal-seam-24x20                           | synthetic | 0     |
@@ -558,12 +604,20 @@ Derived from the distribution rather than invented, the same way §4's candidate
 | 625        | 10          | 625      | defect/single-pixel-spur-16                          | synthetic | 0     |
 | 625        | 20          | 625      | value/hard-surface-terminator-32                     | synthetic | 0     |
 | 656        | 168         | 500      | artwork/dusk-lake-valley-v2.pixel                    | real      | 0     |
+| 656        | 21          | 656      | defect/hue-sprawl-32                                 | synthetic | 0     |
 | 667        | 16          | 589      | control/clean-banner-64x24                           | synthetic | 0     |
 | 667        | 12          | 667      | defect/detached-pieces-22                            | synthetic | 0     |
 | 667        | 12          | 667      | defect/isolated-pixels-18                            | synthetic | 0     |
 | 667        | 8           | 522      | sweep/rect-30x8                                      | synthetic | 0     |
 | 714        | 10          | 589      | sweep/rect-30x10                                     | synthetic | 0     |
+| 750        | 24          | 750      | control/colour-budget-at-limit-32                    | synthetic | 0     |
+| 750        | 24          | 750      | control/washed-one-hue-32                            | synthetic | 0     |
+| 750        | 24          | 750      | defect/colour-budget-32                              | synthetic | 0     |
+| 750        | 24          | 750      | defect/grey-washed-hues-32                           | synthetic | 0     |
+| 750        | 24          | 750      | defect/invented-colour-32                            | synthetic | 0     |
+| 750        | 24          | 750      | defect/muddy-over-skin-32                            | synthetic | 0     |
 | 750        | 12          | 750      | defect/near-duplicate-ramp-16                        | synthetic | 0     |
+| 750        | 24          | 750      | defect/off-palette-over-skin-32                      | synthetic | 0     |
 | 750        | 12          | 750      | defect/stray-colour-16                               | synthetic | 0     |
 | 789        | 15          | 698      | sweep/rect-30x15                                     | synthetic | 0     |
 | 809        | 828         | 749      | app/icon.png                                         | real      | 0     |
@@ -587,11 +641,12 @@ Derived from the distribution rather than invented, the same way §4's candidate
 
 ## 5 · Per-dimension score distribution
 
-| dimension  | n  | min | median | max  | values                                                                                                                                                                                                                                                                                                                        |
-| ---------- | -- | --- | ------ | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| silhouette | 53 | 0   | 1000   | 1000 | 0 0 0 0 475 675 700 700 700 700 750 800 800 800 825 900 900 900 900 900 950 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000                                                                                   |
-| value      | 67 | 125 | 700    | 1000 | 125 125 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 400 400 400 500 610 625 700 700 700 700 700 700 700 700 700 700 700 700 700 700 700 700 750 800 800 800 810 850 900 900 900 900 900 950 950 950 950 950 950 950 1000                                                  |
-| noise      | 67 | 825 | 1000   | 1000 | 825 850 870 870 870 870 870 870 900 900 900 900 900 925 925 950 970 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 |
+| dimension  | n  | min | median | max  | values                                                                                                                                                                                                                                                                                                                                                                        |
+| ---------- | -- | --- | ------ | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| silhouette | 62 | 0   | 1000   | 1000 | 0 0 0 0 475 675 700 700 700 700 750 800 800 800 825 900 900 900 900 900 950 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000                                                                                      |
+| value      | 76 | 125 | 700    | 1000 | 125 125 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 175 400 400 400 500 610 625 700 700 700 700 700 700 700 700 700 700 700 700 700 700 700 700 700 750 800 800 800 810 810 850 890 890 890 900 900 900 900 900 950 950 950 950 950 950 950 950 950 950 950 1000                                                              |
+| palette    | 76 | 0   | 1000   | 1000 | 0 550 650 700 750 800 800 850 900 900 900 950 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 |
+| noise      | 76 | 825 | 1000   | 1000 | 825 850 870 870 870 870 870 870 900 900 900 900 900 900 925 925 950 970 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000 1000     |
 
 Dimensions with no analyzer are absent from every report and so are absent from this table; that is the `not-implemented` bookkeeping working, not a gap in the corpus.
 
@@ -611,6 +666,9 @@ A matched pair differing in exactly one property is the only mechanism in this p
 | value/headroom                        | value/nested-contour-32 [measured, scoreQ 1000, raw 1000, cq 566, tq 469, vq 950] · value/highlight-blown-32 [measured, scoreQ 1000, raw 1000, cq 566, tq 469, vq 800]                                                                                                                                                                        | 0          | 0             | 0                | 0              | 0             | 150           |
 | value/full-bleed-form                 | value/terrain-following-terminator-64 [no-subject, scoreQ -, raw 800, cq 785, tq 1000, vq 950] · value/straight-band-over-terrain-64 [no-subject, scoreQ -, raw 800, cq 785, tq 1000, vq 625]                                                                                                                                                 | excluded   | 0             | 0                | 0              | 0             | 325           |
 | noise/stray-colour                    | defect/stray-colour-16 [measured, scoreQ 1000, raw 1000, cq 785, tq 750, vq 400]                                                                                                                                                                                                                                                              | excluded   | not separable | not separable    | not separable  | not separable | not separable |
+| palette/hue-sectors                   | control/six-hue-families-32 [measured, scoreQ 1000, raw 1000, cq 769, tq 563, vq 950] · defect/hue-sprawl-32 [measured, scoreQ 1000, raw 1000, cq 782, tq 656, vq 950]                                                                                                                                                                        | 0          | 0             | 13               | 93             | 93            | 0             |
+| palette/washed-hues                   | control/washed-one-hue-32 [measured, scoreQ 1000, raw 1000, cq 785, tq 750, vq 810] · defect/grey-washed-hues-32 [measured, scoreQ 1000, raw 1000, cq 785, tq 750, vq 700]                                                                                                                                                                    | 0          | 0             | 0                | 0              | 0             | 110           |
+| palette/colour-budget                 | control/colour-budget-at-limit-32 [measured, scoreQ 1000, raw 1000, cq 785, tq 750, vq 950] · defect/colour-budget-32 [measured, scoreQ 1000, raw 1000, cq 785, tq 750, vq 950]                                                                                                                                                               | 0          | 0             | 0                | 0              | 0             | 0             |
 
 ## 7 · Human-rated tier
 

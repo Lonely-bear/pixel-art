@@ -132,7 +132,17 @@ export type DefectKind =
   | 'isolated-pixels'
   | 'single-pixel-spur'
   | 'diagonal-seam'
-  | 'near-duplicate-colours';
+  | 'near-duplicate-colours'
+  // T-014: `palette`'s six codes, all of §4.3's issue table. Each one exists here because the
+  // dimension ships with **every** one of them declared in the specification and §3.5's fourth rule
+  // refuses a case that declares a defect the report does not carry — so a code with no case is not
+  // an omission, it is an unimplemented feature the corpus will not let through.
+  | 'off-palette'
+  | 'colour-budget-exceeded'
+  | 'hue-sprawl'
+  | 'muddy-mix'
+  | 'grey-colours'
+  | 'invented-colours';
 
 /** One injected defect and why it is there. The note is the reviewer's context, not the assertion. */
 export interface CorpusDefect {
@@ -855,6 +865,18 @@ export const DEFECT_KINDS: readonly DefectKind[] = [
   'single-pixel-spur',
   'diagonal-seam',
   'near-duplicate-colours',
+  // T-014: all six of `palette`'s codes, one case each. The interesting one is `muddy-mix`, because
+  // **`muddy` is a subset of `off-palette` by §4.3's own definition and the two thresholds are 50 and
+  // 20 per-mille**, so a case that fires `muddy-mix` necessarily fires `off-palette` too. That is a
+  // fact about the threshold table and not about the fixture, and it is why
+  // `defect/muddy-over-skin-32` declares both: a case that declared only `muddy-mix` would be a case
+  // whose `expect.codes` disagrees with §4.3.
+  'off-palette',
+  'colour-budget-exceeded',
+  'hue-sprawl',
+  'muddy-mix',
+  'grey-colours',
+  'invented-colours',
 ];
 
 const MEASURED_QUANTITIES: readonly MeasuredQuantity[] = [

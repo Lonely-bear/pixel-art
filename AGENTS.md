@@ -60,6 +60,91 @@ The renderer is no exception: it may import `@pixel/core` for *local, uncommitte
 IPC through `window.pixel.execute` / `applyOps`. Keep it that way — bypassing the bus means a
 second undo history.
 
+## Proving a measurement works
+
+**The single most expensive mistake this repository has made is shipping a measurement that cannot
+fail.** It has happened five times, and twice in code written by the same session that then reported
+the work as done:
+
+| what | why it could not fire |
+| --- | --- |
+| `ditherMask`'s alternation counter | early-exited on the first pixel found, so it could never exceed 1 and its own gate was unreachable on every input — a perfect 50% checkerboard included |
+| §4.4's band table | written in descending-bound order and read in that order, so a ratio of 0 matched the loosest row and returned the *worst* sub-score |
+| `noise`'s neighbour counts | counted the pixel itself, making `isolated` and `diagOnly` unsatisfiable and giving `spurs` the wrong shape |
+| `off-palette`'s trigger | §4.3 writes thresholds in hundredths and the pipeline is per-mille, so it fired a tenth as late as specified and a sprite 25% off-palette produced **no issue at all** |
+| `meanSatQ` | scaled by 1000 twice, so it ran in a different dimension from every other ratio |
+
+So, before registering any measure:
+
+1. **Construct a sprite where it MUST fire, and show it fires.** Write it as a test, on the side that
+   fails without the implementation. An assertion that passes with and without the change proves
+   nothing.
+2. **Pair it with a near-miss on the other side of the same gate.** One direction is not a threshold.
+3. **Read every band table in the direction it is read.** A descending list of `(bound, score)` pairs
+   walked with a `for` loop returns the first match, and on a ratio of zero that is always the loosest
+   bound. Every row of such a table is individually plausible, which is why review misses it.
+4. **Check the units against §3.7 before trusting a reading.** A hundredths/per-mille mismatch is a
+   silent miss, and a silent miss is the worst direction available.
+5. **A dimension that fires on clean work is worse than one that misses a defect.** The corpus carries
+   negative controls precisely so that this is checkable rather than aspirational.
+
+## Traps that have cost real work
+
+- **A proportion where a ratio was meant.** §4.3 writes `2/100`; the pipeline is per-mille, so that
+  threshold is 20‰. Two different numbers that look the same on the page.
+- **Bold markdown inside a block comment.** `**/ 255**` contains `*/`, which closes the comment; four
+  lines that read perfectly well are then parsed as code and tsc reports an unterminated string far
+  away from the cause.
+- **`String.replace` with a string needle replaces the first match in the whole document.** Editing
+  `benchmarks/corpus/cases.json` this way has silently changed two unrelated cases. Confine the edit to
+  the target case's region — its `"id"` line to the next `"id":` line — and assert it landed there.
+  Never round-trip that file through `JSON.stringify`: it has hand-edited inconsistent indentation, and
+  normalising it puts ~212 lines of unrelated noise into a diff.
+- **PowerShell `Get-Content` / `Set-Content` destroys UTF-8 in this repo.** It re-decodes as the system
+  codepage and silently mangles every em dash and every `§`. Use the `write` tool or a Node script with
+  `readFileSync`/`writeFileSync`. Two agents have lost work this way.
+- **Line endings are not interchangeable.** `docs/EVALUATION.md`, `README*.md`, `CHANGELOG*.md` and
+  `TASKS.md` are CRLF and the `edit` tool cannot match multi-line blocks in them — use single-line
+  anchors or a Node script splicing `\r\n`. `benchmarks/corpus/baseline.md` must stay **LF**, because
+  the corpus test generates it with LF-joined strings and compares byte for byte.
+- **`packages/*/dist` is build output.** A stale `dist` has made an inverted band table look correct
+  and hid a 132-test MCP failure behind an earlier failure in the recursive run. `pnpm test` runs
+  `build:libs` first, but only if nothing earlier in the run fails first.
+- **Name collisions across the tool surface are fatal, not cosmetic.** A core command and a session tool
+  must not share a name: `McpServer.registerTool` throws, and in `commands: 'eager'` mode that takes
+  the whole server down. `SESSION_TOOL_NAMES` guards `promote()`; eager mode needs the same guard.
+
+## Serialising the shared build
+
+`pnpm build:libs`, `pnpm typecheck` and `pnpm test` all share `dist/`, so **they must never run
+concurrently** — in a shared worktree or across sub-agents. Running them concurrently once produced a
+`typecheck` failure that was a red herring: a probe file another test had left behind. A false alarm
+costs nothing; *believing* one costs everything.
+
+The division that works: **a sub-agent runs only its own package's vitest**, and the integrator runs
+the three root commands serially. Core's tests import `../src/index.js` directly and need no build;
+`mcp`, `script` and `cli` tests read `dist`, which is safe as long as nothing writes it.
+
+## Accepting work
+
+Do not accept a report; verify it. Concretely:
+
+- **Re-read the diff**, not a summary of it. A "only a few lines moved" summary once hid the fact that
+  32 of 59 lines had moved.
+- **Diff the calibration baseline by row**, keyed on the case id, so the answer is *this subject, these
+  columns, this direction*. `scripts/baseline-rowdiff.mjs <old> <new>` exists for that; `Compare-Object`
+  only counts lines and cannot tell you which subject moved or upwards.
+- **A number moving is not a gate moving.** When a measure changes, the specification changes in the
+  same batch, and thresholds are product decisions — measure the distribution and record the *disproof*
+  ("the clean control sits at X and so does the defective case, so no cut separates them") rather than
+  tuning until a fixture goes green.
+- **Do not move a fixture to make a row pass.** A documented structural reason — "this code cannot be
+  reached without also declaring another one" — is the correct answer. Inventing a fixture whose note
+  contradicts its drawing is the same mistake wearing a hat.
+- **A sub-agent that reports nothing is not a delivery**, however good the diff looks. And a sub-agent
+  that declines a change because it would falsify a sentence in a file outside its whitelist has done
+  the job properly; read the boundary, not just the diff.
+
 ## Adding a command
 
 1. Write it in `packages/core/src/commands/*.ts` with `defineCommand` (zod `params` + `apply`).

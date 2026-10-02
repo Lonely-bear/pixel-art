@@ -34,6 +34,7 @@ import {
 import { measureSilhouette } from '../src/quality/silhouette.js';
 import { measureValue } from '../src/quality/value.js';
 import { measureNoise } from '../src/quality/noise.js';
+import { measurePalette } from '../src/quality/palette.js';
 import { makeId } from '../src/ids.js';
 import type { Sprite } from '../src/document.js';
 import { serializeSprite } from '../src/serialize.js';
@@ -123,6 +124,17 @@ function noiseFrameOf(id: string) {
 }
 
 /**
+ * `palette`'s frame record for one case, measured through {@link measurePalette} rather than read
+ * off the generated report, for `noiseFrameOf`'s reason: the report is the artifact this file
+ * regenerates, and an assertion about `palette`'s readings belongs on the analyzer.
+ */
+function paletteFrameOf(id: string) {
+  const sprite = buildCase(SPEC.cases.find((entry) => entry.id === id)!);
+  if (sprite === null) throw new Error(`the corpus has no buildable case "${id}"`);
+  return measurePalette(createQualityContext(sprite))[0];
+}
+
+/**
  * Every code `silhouette` can emit, from `docs/EVALUATION.md` Appendix A.
  *
  * Named here because two of the tests below are about one dimension on purpose: the aggregator
@@ -138,6 +150,16 @@ const SILHOUETTE_CODES = [
   'shape-clipped',
   'subject-undersized',
   'thin-profile',
+] as const;
+
+/** Every code `palette` can emit, from `docs/EVALUATION.md` §4.3's issue table. */
+const PALETTE_CODES = [
+  'colour-budget-exceeded',
+  'grey-colours',
+  'hue-sprawl',
+  'invented-colours',
+  'muddy-mix',
+  'off-palette',
 ] as const;
 
 /* ------------------------------------------------------------------ *
@@ -231,30 +253,32 @@ describe('the corpus is a regression guard, not a report', () => {
     // hand. A new dimension should add a case *and* a row here in the same commit, and the
     // companion test below is what notices when only one of the two happened.
     //
-    // **Was 14, `noise` made it 16, and it is 19 now.** `defect/stray-colour-16` and
-    // `defect/near-duplicate-ramp-16` were that dimension's first two cases ever, and `noise`
-    // arriving with six codes is precisely the situation the paragraph above warns about. Two of its
-    // six were on this list and four were not, and the reason was not an oversight in the list but a
-    // measurement in the source: `noise`'s `neighbourCounts` counted each pixel as its own
-    // neighbour, so `isolated` (`n8 == 0`) and `diagOnly` (`n4 == 0`) were unsatisfiable and `spurs`
-    // (`n8 == 1`) had silently become `isolated`. `defect/isolated-pixels-18`,
-    // `defect/single-pixel-spur-16` and `defect/diagonal-seam-24x20` are the other three, so **five
-    // of `noise`'s five declared codes are now on this list**, and the sixth (`dither-dominant`) is
-    // retired in §4.4 rather than uncovered — see the coverage test below, which no longer needs an
-    // exception to say the same thing.
+    // **Was 14, `noise` made it 16, `palette` made it 25, and every rename is the finding rather than
+    // a chore.** `defect/stray-colour-16` and `defect/near-duplicate-ramp-16` were `noise`'s first
+    // two cases ever; `palette` arrived with **six** codes and **none** of them on this list, which is
+    // precisely the situation the paragraph above warns about, and nine cases later it has one case
+    // per code. Six of those nine are the isolating shapes in `quality-palette.test.ts` brought to
+    // the corpus, and three are negative controls for `hue-sprawl`, `grey-colours` and
+    // `colour-budget-exceeded` that pin the *other* side of each gate.
     expect([...emitted].sort()).toEqual([
+      'colour-budget-exceeded',
       'detached-pieces',
       'diagonal-seam',
       'empty-frame',
       'flat-value',
       'fragmented-silhouette',
       'frames-identical',
+      'grey-colours',
       'highlight-blown',
       'hue-carries-form',
+      'hue-sprawl',
       'interior-hole',
+      'invented-colours',
       'isolated-pixels',
+      'muddy-mix',
       'narrow-value-range',
       'near-duplicate-colours',
+      'off-palette',
       'plane-crosses-form',
       'shadow-crushed',
       'shape-clipped',
@@ -1197,7 +1221,22 @@ describe("this repository's own artwork, which is real and unlabelled", () => {
     // so what moved is `noise`'s contribution and nothing else.
     const scenes = real().filter((entry) => row(entry.id).preconditions.silhouette === 'no-subject');
     const said = [...new Set(scenes.flatMap((entry) => row(entry.id).actualCodes))].sort();
-    expect(said).toEqual(['hue-carries-form', 'key-light-inconsistent', 'near-duplicate-colours', 'stray-colour']);
+    // **`palette` added two of these and one of them is the §7 item 3 false positive, live on a
+    // committed asset.** `off-palette` appears because
+    // `artwork/dusk-lake-valley-agent.pixel` has a `reflection` layer at **opacity 0.58**, so its
+    // composite carries blends of two declared swatches at alpha ~148 — above `ALPHA_SOLID` 128, so
+    // §3.3 counts them as solid pixels and §4.3 counts them as undeclared colours. 2,339 of 65,297
+    // is 36 per-mille, an advisory at 0.35, so nothing blocks; the count and the layer that causes
+    // it are asserted in the `palette` block further down rather than left as prose here.
+    expect(said).toEqual([
+      'colour-budget-exceeded',
+      'hue-carries-form',
+      'hue-sprawl',
+      'key-light-inconsistent',
+      'near-duplicate-colours',
+      'off-palette',
+      'stray-colour',
+    ]);
     // **Nine of the ten, and every one of them for `noise`'s reason.** Before `noise` registered this
     // was three; the six that joined are the six whose ramp has two entries within Chebyshev 8 of
     // each other. The one scene still silent is `artwork/dusk-lake-valley-agent2.pixel`, measured
@@ -1491,10 +1530,24 @@ describe("this repository's own artwork, which is real and unlabelled", () => {
     // bottom-right of its bounds read the same and §4.2's second row fires at 0.25. It is an
     // advisory, which is why the blocking list is still empty and the verdict still `pass`. The
     // expectation was written when the dimension did not exist; the sprite did not change.
-    expect(keeper.actualCodes).toEqual(['interior-hole', 'key-light-inconsistent', 'thin-profile']);
+    //
+    // **`palette` adds two more, and they are the only two this repository has.** 19 declared swatches
+    // used against a `compact` budget of 16 is `colour-budget-exceeded`, and 8 hue families on a
+    // 32x32 is `hue-sprawl`. Both are advisories, the blocking list is still empty, and the sprite's
+    // `palette` is 700 — **which is the finding T-015 predicted and T-014 measured**: registering it
+    // moves this report from 849 to 824, *toward* the advisory, because `noise` read 970 with nothing
+    // to say about a character's profile and `palette` reads 700 with something to say.
+    expect(keeper.actualCodes).toEqual([
+      'colour-budget-exceeded',
+      'hue-sprawl',
+      'interior-hole',
+      'key-light-inconsistent',
+      'thin-profile',
+    ]);
     expect(keeper.blocking).toEqual([]);
     expect(keeper.actualVerdict).toBe('pass');
     expect(keeper.scores.value).toBe(850);
+    expect(keeper.scores.palette).toBe(700);
     // The tightest side of the only real character sprite has ONE pixel of frame, and the dimension
     // still applies. That is worth knowing: `SUBJECT_REQUIRED_MARGIN` costs a false exclusion for a
     // subject within 1px of all four edges, and this sprite is one pixel away from being that.
@@ -1549,16 +1602,44 @@ describe("this repository's own artwork, which is real and unlabelled", () => {
     // separate them is about membership rather than proximity — a decision error is two entries
     // inside one material's run, while a gradient has every entry inside a monotone ramp, and an
     // entry that is not in the artist's declared palette at all is `palette`'s `off-palette` rather
-    // than `noise`'s. 4,871 distinct solid colours over 878,544 pixels on a file loaded from a PNG
-    // with no document palette is the tell: the honest finding on this asset is "this raster has not
-    // been quantised", which is a `palette` statement (T-014) on a different question, and not a
-    // `noise` one. Until that exists, this stays a recorded false positive on a committed clean
-    // asset — and it is worth its cost here, because §3.5's rule is that an analyzer which fires on
-    // clean work is worse than one which misses a defect, and a false positive nobody wrote down is
-    // how that rule gets lost.
-    expect(icon.actualCodes).toEqual(['near-duplicate-colours']);
-    expect(icon.blocking).toEqual([]);
-    expect(icon.actualVerdict).toBe('pass');
+    // than `noise`'s. **That is exactly the division of labour `palette` ships with, and the two
+    // false positives on this one asset are what makes it visible:** `noise` says "some of these
+    // colours are nearly the same" (7,842 pairs, a false positive) and `palette` says "none of these
+    // colours were ever declared" (1,000 per-mille, also a false positive, and the fix is a
+    // different command).
+    //
+    // **And `palette` says three things about it, which is T-014's own finding on this asset.** The
+    // numbers are measured on `packages/app/build/icon.png` as committed: 4,871 distinct solid
+    // colours, of which **836 clear §4.4's `>= 8` pixel floor**, against a document palette of 16
+    // entries. So:
+    //
+    //   offPaletteRatio     878,544 / 878,544 = 1000 per-mille   -> base 300
+    //   colour-budget       4,871 against the `scene` budget of 96 -> -200
+    //   maxNearestDistance  16,631 against §4.3's 12000           -> invented-colours, -100
+    //   palette             0, and `off-palette` is **blocking** at severity 0.55
+    //
+    // (The severity is §4.3's own two-tier row: 0.35 at `offPaletteRatio > 2/100` and 0.55 above
+    // 0.20. 1000 per-mille is three times past the second cut, and `SEVERITY_BLOCKING` is 0.5.)
+    //
+    // **This is §7 item 3's false positive, and it is not the translucent-layer case — it is the
+    // other half of the same sentence.** The document is a PNG wrapped in a one-layer document with
+    // the default 16-entry palette (`build.ts`'s `readAsset`), so the palette was never the image's.
+    // Every pixel is undeclared because nobody ever declared them, which is exactly what §4.3
+    // measures and exactly what the mitigation (`quantize_to_palette` at import, or a palette that is
+    // the image's) is upstream of. **The disproof is the same shape as the `nearDuplicatePairs` one
+    // above and it is stated here rather than tuned away: a clean control reads 0 and this reads
+    // 1000, and membership in a declared palette is exact, so there is no cut between "not
+    // quantised" and "drifted" — a threshold loose enough to admit this one admits every snapping
+    // miss too.** The fix is a different measurement or an upstream step, never a looser gate.
+    expect(icon.actualCodes).toEqual([
+      'colour-budget-exceeded',
+      'invented-colours',
+      'near-duplicate-colours',
+      'off-palette',
+    ]);
+    expect(icon.blocking).toEqual(['off-palette']);
+    expect(icon.actualVerdict).toBe('fail');
+    expect(icon.scores.palette).toBe(0);
     expect(icon.frames[0].margin).toBe(32);
     // And the measurement, pinned so the disproof above can be re-checked rather than believed. These
     // two are the whole argument: a count that a shipped logo reaches 7,842 of and a deliberate
@@ -1579,6 +1660,203 @@ describe("this repository's own artwork, which is real and unlabelled", () => {
       expect(noiseFrameOf(id).nearDuplicatePairs, id).toBe(0);
     }
     expect(noiseFrameOf('defect/near-duplicate-ramp-16').nearDuplicatePairs).toBe(1);
+  });
+
+  it('is silent on every declared negative control, and on the sixteen cases §3.5 names', () => {
+    // **§3.5's rule is that clean work must produce no issue, and it is checked here from the
+    // analyzer rather than from the generated table.** The list is the PO's: all six `control/*`, the
+    // three `bleed/*`, every `sweep/*`, and the four `value/*` cases that are declared clean and
+    // are the corpus's hardest quiet-on-good-work cases — a nested contour, a level set, a straight
+    // terminator on a straight-edged form and a terminator that follows a terrain.
+    const named = [
+      'control/clean-blob-16',
+      'control/clean-figure-20',
+      'control/clean-union-16',
+      'control/clean-banner-64x24',
+      'control/partial-alpha-glow-28x24',
+      'control/outline-ring-32',
+      'bleed/full-bleed-scene-32',
+      'bleed/one-pixel-guard-32',
+      'bleed/two-pixel-margin-32',
+      'value/nested-contour-32',
+      'value/level-set-32',
+      'value/hard-surface-terminator-32',
+      'value/terrain-following-terminator-64',
+    ];
+    for (const entry of synthetic()) {
+      if (!entry.id.startsWith('sweep/')) continue;
+      named.push(entry.id);
+    }
+    for (const id of named) {
+      const frame = paletteFrameOf(id);
+      expect(frame.issues.map((issue) => issue.code), id).toEqual([]);
+      expect(frame.scoreQ, id).toBe(1000);
+      // **The `sweep/*` cases are not clean overall** — several carry `flat-value` and
+      // `narrow-value-range` from `value` — so the claim being checked is the per-dimension one, which
+      // is exactly what §3.5 asks for: *this* dimension says nothing about them.
+      const paletteCodes = PALETTE_CODES.filter((code) => row(id).actualCodes.includes(code));
+      expect(paletteCodes, id).toEqual([]);
+    }
+    // **And the three controls T-014 added, which are the negative half of a contrast pair each.**
+    for (const id of [
+      'control/six-hue-families-32',
+      'control/washed-one-hue-32',
+      'control/colour-budget-at-limit-32',
+    ]) {
+      expect(row(id).actualCodes, id).toEqual([]);
+      expect(row(id).status, id).toBe('pass');
+    }
+  });
+
+  it('reads `sectors = 0` on `connectivity/contour-staircase-24` because its ink is a desaturated near-black', () => {
+    // **The one row in the corpus where `hueSectors` is 0 rather than >= 1, and it is correct.**
+    // That case draws 18 pixels in exactly one colour, `#1c1c1d`, which *is* palette entry 0. Its
+    // channels are 28, 28 and 29, so §3.4's `maxc` is 29, `minc` is 28 and
+    // `s255 = floor((maxc - minc) * 255 / maxc) = floor(1 * 255 / 29) = 8`. **Eight is below §3.4's
+    // `s255 >= 12`**, so §4.3's "ignoring colours with s255 < 12" excludes it, `hueSectors` is 0, and
+    // the count is honestly zero rather than one.
+    //
+    // **Two things follow, and both are asserted rather than argued.** First, the reading is not a
+    // broken instrument: the same case reads `offPalette` 0 and `maxNearestDistance` 0, so the colour
+    // *is* declared and *is* the swatch — the only thing §3.4 withholds is the hue family. Second,
+    // the consequence is a code that is correctly silent, because §4.3's `grey-colours` row needs
+    // `hueSectors >= 3`: a sprite drawn in one near-black is not a sprite whose colours are "present
+    // and washed out", and reporting it would be §3.3's two dimensions measuring one fact.
+    const frame = paletteFrameOf('connectivity/contour-staircase-24');
+    expect(frame.distinctColours).toBe(1);
+    expect(frame.hueSectors).toBe(0);
+    expect(frame.offPalette).toBe(0);
+    expect(frame.maxNearestDistance).toBe(0);
+    expect(frame.satSum).toBe(18 * 8);
+    expect(frame.issues).toEqual([]);
+    expect(frame.scoreQ).toBe(1000);
+    // **The other zero-sector row is `human/tile-32`, and for the ordinary reason.** It is a greyscale
+    // tile: every colour has `s255` 0, so §3.4 counts no hue families at all. Two rows at 0, two
+    // different causes, both explained — which is the difference between a measured zero and one
+    // nobody looked at.
+    expect(paletteFrameOf('human/tile-32').hueSectors).toBe(0);
+    expect(paletteFrameOf('human/tile-32').satSum).toBe(0);
+  });
+
+  it('records the whole distribution, which is the only thing a gate move could be argued from', () => {
+    // **Every reading on every case, and nothing here is a threshold.** The shape is the finding:
+    // `offPalette`, `maxNearestDistance` and `muddy` are 0 on almost every case and are large on a
+    // handful, and the handful are the three committed assets that genuinely carry undeclared colour
+    // plus the app icon. That is not "the measures are quiet" and it is not "the measures fire" — it
+    // is a distribution with a gap in it, and §3.3 forbids moving a gate to fit a gap.
+    //
+    // **Split real from synthetic on purpose.** The synthetic cases are ours: three of them carry a
+    // declared `palette` defect by construction, and the other sixty-odd were built to exercise other
+    // dimensions and were never drawn off-palette. The real tier is the one that says something about
+    // work nobody designed for this analyzer.
+    const syntheticFrames = SPEC.cases
+      .filter((entry) => entry.tier === 'synthetic')
+      .map((entry) => ({ id: entry.id, frame: paletteFrameOf(entry.id) }));
+    const offInSynthetic = syntheticFrames.filter((f) => f.frame.offPalette > 0).map((f) => f.id);
+    expect(offInSynthetic).toEqual([
+      'defect/off-palette-over-skin-32',
+      'defect/invented-colour-32',
+      'defect/muddy-over-skin-32',
+    ]);
+    const frames = real().map((entry) => ({ id: entry.id, frame: paletteFrameOf(entry.id) }));
+    const offPalette = frames.filter((f) => f.frame.offPalette > 0);
+    expect(offPalette.map((f) => f.id)).toEqual([
+      'artwork/dusk-lake-valley-agent.pixel',
+      'artwork/sunset-lighthouse-512-baseline-model-a.pixel',
+      'app/icon.png',
+    ]);
+    // **The ratios, so the three are distinguishable rather than lumped together.** 36 per-mille on a
+    // committed painting with one translucent layer, 9 on a committed painting that is fully opaque
+    // and therefore carrying real drift, and 1000 on a raster that was never quantised into its
+    // document palette. **The middle one is the interesting row**: its layers are all at opacity 1
+    // and its composite is `alpha 255` everywhere, so §7 item 3's composite excuse does not apply and
+    // the 2,423 undeclared pixels are the artwork's own — reported correctly at 9 per-mille, which is
+    // inside §4.3's `<= 2/100` row and so produces no issue at all.
+    expect(offPalette.map((f) => f.frame.offPaletteQ)).toEqual([36, 9, 1000]);
+    const muddy = frames.filter((f) => f.frame.muddy > 0);
+    expect(muddy.map((f) => f.id)).toEqual([
+      'artwork/dusk-lake-valley-agent.pixel',
+      'artwork/sunset-lighthouse-512-baseline-model-a.pixel',
+      'app/icon.png',
+    ]);
+    expect(muddy.map((f) => f.frame.muddyQ)).toEqual([4, 1, 0]);
+    // **`invented-colours` has one trigger and it is not reachable on this corpus at all except on
+    // the icon** — every committed painting's worst colour is within §4.3's 12,000 of a swatch
+    // (743, 3,987 and 16,631 across the three), so the row separates only the icon.
+    expect(frames.filter((f) => f.frame.maxNearestDistance > 12000).map((f) => f.id)).toEqual(['app/icon.png']);
+    // **And the dimension's own score distribution: a spike at 1000 with five rows below it.**
+    // Six, not five: `artwork/sunset-lighthouse-512-baseline-model-a.pixel` reads 950 without an
+    // issue, because its 2,423 undeclared pixels are 9 per-mille — inside §4.3's `<= 2/100` row — and
+    // its 20 muddy of 262,144 are 1 per-mille against a trigger of 50. **A measurement that does not
+    // reach its own gate is the most valuable row in a distribution**, and this is the one that says
+    // the thresholds are not so loose that everything real trips them.
+    const below = frames.filter((f) => f.frame.scoreQ < 1000).map((f) => [f.id, f.frame.scoreQ] as const);
+    expect(below).toEqual([
+      ['artwork/dusk-lake-valley-agent.pixel', 650],
+      ['artwork/moonlit-alpine-lake-fast.pixel', 900],
+      ['artwork/moonlit-alpine-lake.pixel', 800],
+      ['artwork/sunset-lighthouse-512-baseline-model-a.pixel', 950],
+      ['artwork/verify/lantern-keeper.pixel', 700],
+      ['app/icon.png', 0],
+    ]);
+    // **The disproof, in §3.3's form, and this is the recording the task asked for.** The clean
+    // control reads `offPalette` 0 and `app/icon.png` reads 1,000 per-mille: there is no cut between
+    // them that is also a cut between them and a snapping miss, because §4.3's membership test is
+    // *exact*. The icon is not "more undisciplined" than `artwork/dusk-lake-valley-agent.pixel` at 36
+    // per-mille — it is a different thing, and the threshold has no way to say which. So the gate
+    // stays where §4.3 puts it and the cost is recorded in `docs/EVALUATION.md` §7 item 3.
+    expect(paletteFrameOf('control/clean-figure-20').offPaletteQ).toBe(0);
+    expect(paletteFrameOf('app/icon.png').offPaletteQ).toBe(1000);
+  });
+
+  it('does not duplicate `noise`\'s `nearDuplicatePairs`, and the corpus is the evidence', () => {
+    // **§3.3's warning is that two dimensions measuring one thing two ways is the likeliest way for
+    // this pipeline to produce a confident wrong answer, so the question is asked with a case per
+    // direction rather than argued.** §4.4's `nearDuplicatePairs` is two colours **the sprite used**,
+    // Chebyshev `<= 8` apart, each over 8 pixels. §4.3's is a colour's redmean distance to the
+    // nearest **declared swatch**. Same family of arithmetic; different reference set, different
+    // metric, different question — "you used two colours that are the same colour" against "you
+    // used a colour nobody declared". Neither measurement can be derived from the other.
+    //
+    // **Direction one: two near-identical colours, both declared.** `defect/near-duplicate-ramp-16` is
+    // exactly that and `palette` reads it perfect — one declared colour, `offPalette` 0,
+    // `maxNearestDistance` 0, two colours against a budget of 10, `scoreQ` 1000. If `palette` were
+    // measuring `noise`'s quantity this is where it would show.
+    const declared = paletteFrameOf('defect/near-duplicate-ramp-16');
+    expect(noiseFrameOf('defect/near-duplicate-ramp-16').nearDuplicatePairs).toBe(1);
+    expect(declared.distinctColours).toBe(2);
+    expect(declared.offPalette).toBe(0);
+    expect(declared.maxNearestDistance).toBe(0);
+    expect(declared.issues).toEqual([]);
+    expect(declared.scoreQ).toBe(1000);
+    // **Direction two: undeclared colour, nothing near-duplicated about it.**
+    // `defect/off-palette-over-skin-32` is 432 declared pixels and 144 undeclared ones, and
+    // `nearDuplicatePairs` is 0 because the drift colour is 190 redmean units from the swatch it
+    // came from and far from every other colour in the picture — so `noise` says nothing at all and
+    // `palette` blocks.
+    const undeclared = paletteFrameOf('defect/off-palette-over-skin-32');
+    expect(noiseFrameOf('defect/off-palette-over-skin-32').nearDuplicatePairs).toBe(0);
+    expect(undeclared.N).toBe(576);
+    expect(undeclared.offPalette).toBe(144);
+    expect(undeclared.offPaletteQ).toBe(250);
+    expect(undeclared.issues.map((issue) => issue.code)).toEqual(['off-palette']);
+    // **Direction three, and it is where the two overlap: the app icon.** Both fire, and they say
+    // different things. `noise`'s 7,842 pairs is a recorded false positive — a twelve-step ramp is
+    // structurally a field of near-duplicates. `palette`'s 1,000 per-mille is also a false positive,
+    // and about a different fault: nobody ever declared this raster's palette. Two codes, one asset,
+    // two different upstream fixes (`despeckle`-free colour merging against `quantize_to_palette`),
+    // which is the practical answer to "who owns the question": **both do, each on its own question,
+    // and §4.4's is proximity while §4.3's is membership.**
+    const icon = paletteFrameOf('app/icon.png');
+    expect(noiseFrameOf('app/icon.png').nearDuplicatePairs).toBe(7842);
+    expect(icon.distinctColours).toBe(4871);
+    expect(icon.offPaletteQ).toBe(1000);
+    // **And the one thing the two could be confused about is measured: a colour three steps from a
+    // swatch is 0 to §4.3 and a pair to §4.4.** `defect/near-duplicate-ramp-16`'s two swatches are
+    // within Chebyshev 8, and the palette dimension's distance to the nearest swatch for that same
+    // sprite is 0 — because it *is* the swatch. Two different zero/tiny readings of one fact.
+    expect(declared.maxNearestDistance).toBe(0);
+    expect(declared.distinctColours).toBeLessThan(icon.distinctColours);
   });
 
   it('reads 0 convex corners on every real asset, so §3.3\'s quantity is inert in the wild too', () => {
@@ -1796,29 +2074,40 @@ describe('the report', () => {
 
 
   it('per-dimension score distribution covers every dimension that exists', () => {
-    // Was `only the dimension that exists`, and each rename is the finding: `value` landed and the
+    // **Was `only the dimension that exists`, and each rename is the finding:** `value` landed and the
     // assertion went stale, exactly as the hard-coded defect list above did, and then `noise` landed
-    // and it went stale again. All three are measured on the same rows and on opposite halves of the
+    // and it went stale again. All four are measured on the same rows and on opposite halves of the
     // range — `silhouette` reaches 1000 on a clean blob and 0 on a 1px staircase, `value` 1000 and
-    // 125, `noise` 1000 and 825 — which is the distribution a gate argument is made from.
+    // 125, `noise` 1000 and 825, `palette` 1000 and 0 — which is the distribution a gate argument is
+    // made from.
     //
-    // **`noise`'s floor is 825 and its median is 1000, and both numbers are derived rather than read
-    // off.** The floor is `artwork/moonlit-alpine-lake.pixel` alone: `colourOrphans` 43 of
-    // `N` 4096 is `rhu(43000, 4096) = 10` per-mille, which is past §4.4's `> 8/1000` trigger and so
-    // lands in the `<= 20/1000` band at 750, giving rhu(300*1000 + 200*1000 + 300*750 + 200*1000,
-    // 1000) = 925, and that sprite's two `nearDuplicatePairs` take the flat −100 to 825. It is the
-    // one real asset where `noise` fires two codes, and both are recorded as findings rather than
-    // suppressed — see the scene-union test above.
+    // **`noise`'s floor is 825 and its median is 1000, and both are derived rather than read off.**
+    // The floor is `artwork/moonlit-alpine-lake.pixel` alone: `colourOrphans` 43 of `N` 4096 is
+    // `rhu(43000, 4096) = 10` per-mille, past §4.4's `> 8/1000` trigger and so in the `<= 20/1000`
+    // band at 750, giving `rhu(300*1000 + 200*1000 + 300*750 + 200*1000, 1000) = 925`, and that
+    // sprite's two `nearDuplicatePairs` take the flat -100 to 825.
+    //
+    // **`palette`'s floor is 0 and its median is 1000, and the floor is `app/icon.png` alone.** It is
+    // the one committed asset where the dimension scores zero, and §7 records why: 4,871 distinct
+    // colours against a 16-entry document palette, so every solid pixel is off-palette. The median is
+    // 1000 because **nine of the eleven real assets are entirely silent** — the ten scenes at
+    // 256² and 512² are `scene`-class with a budget of 96 and a hue-sprawl exemption, and seven of
+    // them use every colour they draw from the palette. That is the shape to argue a gate from: a
+    // dimension whose distribution on good work is a spike at 1000 with one outlier at 0 is
+    // measuring membership, not quality of composition, which is precisely what §4.3 says it is for.
     const measured = DISTRIBUTION.scores.filter((entry) => entry.values.length > 0);
-    expect(measured.map((entry) => entry.dimension)).toEqual(['silhouette', 'value', 'noise']);
+    expect(measured.map((entry) => entry.dimension)).toEqual(['silhouette', 'value', 'palette', 'noise']);
     expect(measured[0].min).toBeLessThan(measured[0].max);
     expect(measured[1].min).toBeLessThan(measured[1].max);
     expect(measured[1].min).toBe(125);
-    expect(measured[2].min).toBe(825);
+    expect(measured[2].min).toBe(0);
     expect(measured[2].max).toBe(1000);
-    // The three that do not exist are absent rather than zero, which is the `not-implemented`
+    expect(measured[2].median).toBe(1000);
+    expect(measured[3].min).toBe(825);
+    expect(measured[3].max).toBe(1000);
+    // The two that do not exist are absent rather than zero, which is the `not-implemented`
     // bookkeeping working and not a gap in the corpus.
-    expect(DISTRIBUTION.scores.filter((entry) => entry.values.length === 0)).toHaveLength(3);
+    expect(DISTRIBUTION.scores.filter((entry) => entry.values.length === 0)).toHaveLength(2);
   });
 });
 
@@ -2169,8 +2458,9 @@ describe('coverage is aimed at the failures that were found, not exhaustive', ()
     // "does every code the loader accepts have a case that says what it means?", and the closed enum
     // is a specification rather than an implementation — so reading it is not the circularity the
     // re-export test above warns about, and a hard-coded list is exactly the second copy that went
-    // stale when `value` landed. The floor below is what stops the derivation from being vacuous: a
-    // truncated `DEFECT_KINDS` satisfies the comparison, and only the count stops that.
+    // stale when `value` landed and again when `noise` landed. The floor below is what stops the
+    // derivation from being vacuous: a truncated `DEFECT_KINDS` satisfies the comparison, and only
+    // the count stops that.
     //
     // **The comparison is against `DEFECT_KINDS` itself, with no exceptions, and that used to be a
     // subtraction.** Three of the twenty kinds had no case, all three of them `noise`'s, and they
@@ -2183,8 +2473,14 @@ describe('coverage is aimed at the failures that were found, not exhaustive', ()
     // the corpus, both are gone, and **a kind that later loses its case goes red here again** — which
     // is the property the subtraction had quietly given away.
     const declared = new Set(synthetic().flatMap((entry) => entry.defects.map((d) => d.kind)));
+    // `palette` makes it 26, and all six of its codes arrived with the dimension rather than after
+    // it. §3.5's fourth rule is a hard order — a defect cannot be declared until the report can
+    // carry it — so a dimension landing with six codes and no cases could not be accepted, and this
+    // assertion is what says so. Three of the nine cases it added are **negative controls** rather
+    // than defects, which is the other half of §3.5: `hue-sprawl`, `grey-colours` and
+    // `colour-budget-exceeded` each needed a shape on the *other* side of its own gate.
     expect([...declared].sort()).toEqual(DEFECT_KINDS.slice().sort());
-    expect(DEFECT_KINDS.length).toBe(20);
+    expect(DEFECT_KINDS.length).toBe(26);
     expect(DEFECT_KINDS.filter((kind) => !declared.has(kind)).sort()).toEqual([]);
     // And the gap, named rather than left to be inferred. `key-light-inconsistent` is the one
     // `value` code with no case that *declares* it, because §4.2's `keyLight` is a subject-level

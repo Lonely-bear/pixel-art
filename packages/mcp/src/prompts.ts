@@ -106,7 +106,8 @@ Read ${SKILL_URI} (or call \`read_skill\`) for the craft guide - section 7 cover
       return user(`Critique the currently open sprite and improve it.
 
 1. \`get_document\` to see the layers and frames, then \`get_preview\` to look at it.
-2. Critique it honestly against these fundamentals:
+2. \`evaluate\` once, for a second opinion. Read its \`issues\` list - each entry names a defect and the canvas rect of it - and its \`notes\`, which say what was *not* measured. Read \`report.excluded\` before quoting any number: a key that is absent there means the dimension did not apply, not that it scored zero. The scores are diagnostics for finding defects, not a target to raise; a cleanup pass that sands the piece flat has not improved it. If a dimension says nothing useful, ignore it - the scorer judges form, not content, and several of its conventions (4-connected silhouettes, top-left key light, holes are defects, 1px outlines) are debatable.
+3. Critique it honestly against these fundamentals:
    - Is the silhouette readable as a solid shape, or is it mush?
    - Are there 3-4 shades per material, stepping in hue as well as value, or just a brightness ramp?
    - Is the light direction consistent (top-left convention)?
@@ -114,9 +115,9 @@ Read ${SKILL_URI} (or call \`read_skill\`) for the craft guide - section 7 cover
    - Is there pillow shading, banding, or a checkerboard dither over a large area?
    - Is pure black or pure white used anywhere?
    - If it is animated: does the loop close, and does more than one thing change per frame?
-3. State the single worst problem.
-4. Fix ONLY that problem on the correct layer with one batched \`run_script\` or \`apply_ops\` call, and inspect the same response's \`preview: true\` + \`previewOptions: {scale: 4}\` image.
-5. Repeat once if the fix helped. If it made things worse, \`undo\` it rather than piling on more edits.${focusLine}
+4. State the single worst problem.
+5. Fix ONLY that problem on the correct layer with one batched \`run_script\` or \`apply_ops\` call, and inspect the same response's \`preview: true\` + \`previewOptions: {scale: 4}\` image.
+6. Repeat once if the fix helped. If it made things worse, \`undo\` it rather than piling on more edits.${focusLine}
 
 Read ${SKILL_URI} (or call \`read_skill\`) for the full craft guide, and section 11 in particular for the list of things that look bad.`);
     },

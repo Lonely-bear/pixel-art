@@ -13,6 +13,7 @@ import { measureValue, valueAnalyzer, type ValueFrame } from '../src/quality/val
 import { evaluate } from '../src/quality/index.js';
 import type { QualityContext, QualityIssue } from '../src/quality/types.js';
 import { createSprite, type Sprite } from '../src/document.js';
+import { createPalette } from '../src/palette.js';
 import { PixelBuffer } from '../src/buffer.js';
 import type { Rect } from '../src/types.js';
 
@@ -79,7 +80,20 @@ const RAMP_LQ = [72, 112, 151, 193, 220] as const;
 
 /** A sprite painted by a row-and-colour list, one layer, fully opaque. */
 function spriteOf(palette: readonly string[], rows: readonly (readonly [Row, string])[]): Sprite {
-  const sprite = createSprite({ width: 32, height: 32, name: 'value-fixture', layers: ['Base'] });
+  // **The fixture's document palette is the fixture's own ramp, and that line is a consequence of
+  // `palette` registering rather than tidiness.** These subjects paint five greens that are in no
+  // palette the sprite declares, so every one of them was **100% off-palette** against the default
+  // 16-entry DawnBringer — including `nested`, the *correct* artwork in the contrast pair this file
+  // exists for, whose report flipped from `pass` to `fail` on a defect it never had. That is
+  // `docs/EVALUATION.md` §7 item 3 in its purest form: the document's palette was never this
+  // picture's palette, and the mitigation is upstream, not a looser gate.
+  const sprite = createSprite({
+    width: 32,
+    height: 32,
+    name: 'value-fixture',
+    layers: ['Base'],
+    palette: createPalette('value-fixture', [...palette]),
+  });
   const layer = sprite.layers[0].id;
   const cel = new PixelBuffer(32, 32);
   const index = new Map(palette.map((hex, i) => [hex, i]));
@@ -111,7 +125,15 @@ function spriteFromRows(rows: readonly string[]): Sprite {
   for (const row of rows) {
     if (row.length !== width) throw new Error(`row "${row}" is not ${width} wide`);
   }
-  const sprite = createSprite({ width, height, name: 'value-fixture', layers: ['Base'] });
+  const sprite = createSprite({
+    width,
+    height,
+    name: 'value-fixture',
+    layers: ['Base'],
+    // Declared, for {@link spriteOf}'s reason: these pictures paint one fixed ink that the default
+    // palette does not name.
+    palette: createPalette('value-fixture', ['#1e3a5a']),
+  });
   const cel = new PixelBuffer(width, height);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
