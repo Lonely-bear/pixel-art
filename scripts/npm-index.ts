@@ -15,11 +15,13 @@ import packageJson from '../package.json' with { type: 'json' };
  * All of that is real knowledge, and none of it is about the task.
  *
  * The fix is the flat, task-shaped surface below: {@link buildSprite},
- * {@link buildAnimation} and {@link exportAssets}. They read as
- * `buildSprite({width, height, palette, ops})` rather than as the architecture behind it,
- * they go through the same command bus the GUI and the MCP server use, and they need no
- * Electron, no document store and no running app — a plain Node ESM build script is the
- * only environment they were ever meant to run in.
+ * {@link buildAnimation} and {@link exportAssets}, plus the three that arrived with the
+ * 8-direction model, the asset contract and the SVG tracer —
+ * {@link buildWalkAnimation}, {@link getDirectionModel}, {@link exportEngineAssets} and
+ * {@link importSvg}. They read as `buildSprite({width, height, palette, ops})` rather than
+ * as the architecture behind it, they go through the same command bus the GUI and the MCP
+ * server use, and they need no Electron, no document store and no running app — a plain
+ * Node ESM build script is the only environment they were ever meant to run in.
  *
  * This is a *seam*, not the recipe system. Recipes (T-030+) are `buildX()` functions of the
  * same shape as the three here, built on these three, and the recipes will not change this
@@ -28,8 +30,8 @@ import packageJson from '../package.json' with { type: 'json' };
  *
  * ## Two tiers, on purpose
  *
- *   - **Stable**, covered by {@link API_VERSION}: the three functions and the two version
- *     constants. Within a major version of this number, only additive changes.
+ *   - **Stable**, covered by {@link API_VERSION}: the task-shaped functions and the two
+ *     version constants. Within a major version of this number, only additive changes.
  *   - **Internal**, shipped but unversioned: {@link core}, {@link mcp} and {@link script}.
  *     They are the escape hatch and the thing the README has always documented, so they
  *     will not disappear — but they mirror this repository's own package layout by design,
@@ -48,6 +50,8 @@ import packageJson from '../package.json' with { type: 'json' };
 
 import {
   CommandError,
+  DIRECTIONS,
+  buildAssetMeta,
   buildSpritesheet,
   compositeFrame,
   createEditor,
@@ -58,19 +62,71 @@ import {
   encodePNG,
   fillCommandDefaults,
   flattenAlpha,
+  importExcalidraw,
+  importGodot,
+  importPhaser,
+  importUnity,
+  orientationAffine,
+  orientationAnchor,
   scaleAtlas,
   scaleNearest,
+  serializeAssetMeta,
   serializeSprite,
   setIdFactory,
   toAsepriteJson,
+  validateAssetNaming,
+  type AssetImportResult,
+  type AssetMeta,
+  type AssetMetaLicense,
+  type AssetMetaOutput,
+  type AssetNamingReport,
   type Atlas,
   type AtlasOptions,
   type ColorInput,
+  type DirectionAnchorName,
+  type DirectionId,
   type Editor,
   type GifOptions,
   type Palette,
   type Sprite,
   type TagDirection,
+} from '../packages/core/src/index.js';
+
+/* ------------------------------------------------------------------ *
+ * Re-exported types
+ * ------------------------------------------------------------------ */
+
+/**
+ * The types a consumer names in its own source, re-exported from the entry.
+ *
+ * **Without this, `.d.ts` alone is not enough.** The functions above reference `Sprite`,
+ * `Palette` and the rest, so a consumer who wants to write `function build(s: SpriteSpec):
+ * Sprite` has to reach for `core.Sprite` — the internal tier — to name the type the stable tier
+ * hands back. That inverts the whole point of the two tiers: a build script would be importing
+ * from the escape hatch to describe its own variables. Re-exporting is additive and pins
+ * nothing, so it does not move `API_VERSION`.
+ *
+ * These are **re-exports, not new declarations**: `Sprite` here is the same type as
+ * `core.Sprite`, and `docs/API.md` says plainly that the internals of a `Sprite` are not
+ * covered by this contract.
+ */
+export type {
+  /** A finished document. Read `width`, `height`, `frames`, `layers`, `tags`, `palette`; the rest is internal. */
+  Sprite,
+  /** A palette object, when `PaletteSpec` is not a plain list of colours. */
+  Palette,
+  /** Anything a command accepts as a colour: hex, RGB, palette shorthand, or a named ramp. */
+  ColorInput,
+  /** The eight compass points, from `getDirectionModel` and `buildWalkAnimation`. */
+  DirectionId,
+  /** The three named orientation anchors. `ground` is the default. */
+  DirectionAnchorName,
+  /** Layout options for the sheet, forwarded to `core.buildSpritesheet` unchanged. */
+  AtlasOptions,
+  /** Options for the GIF output. */
+  GifOptions,
+  /** Playback direction of an animation tag. */
+  TagDirection,
 } from '../packages/core/src/index.js';
 
 /* ------------------------------------------------------------------ *
@@ -85,8 +141,11 @@ export const VERSION = packageJson.version;
  *
  * Deliberately separate from {@link VERSION}: a patch release that fixes a rasteriser bug
  * has not changed the shape of the API, and a build script that asserted on `VERSION`
- * would wrongly conclude that it had. Bumped only for a breaking change to `buildSprite`,
- * `buildAnimation`, `exportAssets` or the types they take. `docs/API.md` is the policy.
+ * would wrongly conclude that it had. Bumped only for a breaking change to any stable
+ * function below — a rename, a removal, a required field, or a narrowed type. **Adding** a
+ * function, a spec field or a plan field is additive and does not move it, which is why
+ * `buildWalkAnimation`, `getDirectionModel`, `exportEngineAssets` and `traceSvg` shipped
+ * without a bump. `docs/API.md` is the policy.
  */
 export const API_VERSION = '1';
 
@@ -405,6 +464,573 @@ export function exportAssets(sprite: Sprite, plan: ExportPlan): AssetFile[] {
     );
   }
   return files;
+}
+
+/* ------------------------------------------------------------------ *
+ * Eight directions
+ * ------------------------------------------------------------------ */
+
+/** What one direction costs and what it needs. Read by {@link getDirectionModel}. */
+export interface DirectionSummary {
+  id: DirectionId;
+  /** Human label, e.g. `'north-east'`. */
+  label: string;
+  /** Compass position clockwise from N: 0 = N, 4 = S. */
+  compassIndex: number;
+  /** Where the character looks, in canvas units. Y grows downward, so `N` is `{x: 0, y: -1}`. */
+  facing: { x: number; y: number };
+  /** True when a quarter turn and/or mirror reproduce this direction exactly. */
+  exact: boolean;
+  /**
+   * The drawing this direction reuses: the base `E`, or a diagonal that has to be drawn.
+   *
+   * Three distinct values across the eight, which is the whole point of the model: an
+   * eight-direction character is three drawings, not eight sheets.
+   */
+  drawing: DirectionId;
+  /** The cardinal this direction's transform actually lands on. 45 degrees away when `!exact`. */
+  resolvedFrom: DirectionId;
+  /** The canvas matrix that produces this direction from the E base drawing. */
+  matrix: { a: number; b: number; c: number; d: number; e: number; f: number };
+}
+
+/** The angle model for one canvas: what to draw, and where each direction lands. */
+export interface DirectionModel {
+  /** The direction the base pose is drawn in. Everything else is derived from it. */
+  baseDirection: DirectionId;
+  /** The point every direction leaves fixed, so a turn is a turn and not a slide. */
+  anchor: DirectionAnchorName;
+  pivot: { x: number; y: number };
+  /** Directions reproduced exactly by a transform, so they need no artwork of their own. */
+  exact: DirectionId[];
+  /**
+   * Directions that have to be drawn: the diagonals, because there is no pixel-exact 45-degree
+   * transform and this engine will not approximate one.
+   */
+  approximate: DirectionId[];
+  /** Every direction, clockwise from N. */
+  directions: DirectionSummary[];
+}
+
+/**
+ * The eight-direction angle model for a canvas, as data.
+ *
+ * Read-only and derived — it writes nothing and allocates no ids — so it is safe to call in a
+ * build script's planning step before deciding what to draw. The shape of the question is
+ * "which three sheets do I actually have to make, and where does each direction land", and
+ * this answers it without asking the caller to know the transform scheme.
+ *
+ * ```js
+ * const model = getDirectionModel({ width: 32, height: 32 });
+ * model.exact;        // ['N', 'E', 'S', 'W']
+ * model.approximate;  // ['NE', 'SE', 'SW', 'NW']  — draw these
+ * ```
+ *
+ * **Determinism.** Integer coefficients throughout: a quarter turn is a signed permutation
+ * of the axes and a mirror negates one row, so the matrices are bit-identical on every
+ * machine. No trigonometry appears, and `packages/core/test/determinism.test.ts` bans it
+ * from `src` for exactly this reason.
+ *
+ * **Throws** `CommandError` (`invalid_params`) for a non-positive or non-integer canvas size,
+ * and for an unknown `anchor`.
+ */
+export function getDirectionModel(canvas: { width: number; height: number }, anchor: DirectionAnchorName = 'ground'): DirectionModel {
+  assertCanvasSize(canvas.width, 'width');
+  assertCanvasSize(canvas.height, 'height');
+  if (anchor !== 'ground' && anchor !== 'facing' && anchor !== 'origin') {
+    throw new CommandError(
+      `anchor must be one of ground, facing, origin — got ${describe(anchor)}`,
+      'invalid_params',
+    );
+  }
+  const pivot = orientationAnchor(anchor, canvas.width, canvas.height);
+  return {
+    baseDirection: 'E',
+    anchor,
+    pivot,
+    exact: DIRECTIONS.filter((spec) => spec.exact).map((spec) => spec.id),
+    approximate: DIRECTIONS.filter((spec) => !spec.exact).map((spec) => spec.id),
+    directions: DIRECTIONS.map((spec) => ({
+      id: spec.id,
+      label: spec.label,
+      compassIndex: spec.compassIndex,
+      facing: spec.facing,
+      exact: spec.exact,
+      drawing: spec.drawing,
+      resolvedFrom: spec.resolvedFrom,
+      matrix: orientationAffineOf(spec, pivot),
+    })),
+  };
+}
+
+/** The affine for one direction about one pivot. A named helper so the model stays readable. */
+function orientationAffineOf(
+  spec: (typeof DIRECTIONS)[number],
+  pivot: { x: number; y: number },
+): { a: number; b: number; c: number; d: number; e: number; f: number } {
+  const matrix = orientationAffine(spec, pivot);
+  return { a: matrix.a, b: matrix.b, c: matrix.c, d: matrix.d, e: matrix.e, f: matrix.f };
+}
+
+/** The gait knobs, one field per command parameter. Every field has the command's own default. */
+export interface WalkOptions {
+  /** Frames in one gait cycle. Even counts read best, because a cycle has two contacts. Defaults to 4. */
+  frames?: number;
+  /** Duration of every generated frame in ms. Defaults to 120. */
+  frameDurationMs?: number;
+  /** Peak horizontal foot travel in pixels. Defaults to 2. */
+  stride?: number;
+  /** Peak body lift between a contact and the next passing frame, in pixels. Defaults to 1. */
+  bob?: number;
+  /** Peak leg tilt at the ends of the swing, in degrees. Defaults to 6. */
+  legSwingDegrees?: number;
+  /** Rig part names or ids to treat as legs. Defaults to name-matched parts. */
+  legs?: string[];
+  /** Rig part names or ids to treat as arms. Defaults to name-matched parts. */
+  arms?: string[];
+  /** Rig part names or ids that carry the body bob. Defaults to name-matched parts. */
+  body?: string[];
+  /** Whole frames to advance before frame 0, for staggering one loop against another. Defaults to 0. */
+  phaseOffset?: number;
+  /** Tag covering the generated frames. Defaults to `walk_<direction lowercased>`. */
+  tagName?: string;
+  /** Tag playback direction. Defaults to `forward`. */
+  loopDirection?: TagDirection;
+  /** Tag repeat count. 0 loops forever. Defaults to 0. */
+  repeat?: number;
+  /** First destination frame. Defaults to the frame after the rig rest frame. */
+  targetFrame?: number;
+  /** Required when a destination frame already holds pixels. */
+  overwrite?: boolean;
+}
+
+/**
+ * A {@link SpriteSpec} plus one direction and the gait to generate in it.
+ *
+ * `ops` should create the rig (`create_rig`) and draw the rest pose into the rig rest frame;
+ * the walk frames are then rendered *from* that frame. Everything else is inherited from
+ * {@link AnimationSpec}.
+ */
+export interface WalkSpec extends AnimationSpec {
+  /**
+   * Which way the character faces. Defaults to `E`, the base drawing.
+   *
+   * A diagonal (`NE`, `SE`, `SW`, `NW`) is resolved from the cardinal it is nearest, and the
+   * result says so: the transform lands 45 degrees from the direction it names, because a
+   * diagonal is a different *drawing* and not a rotated copy of a cardinal.
+   */
+  direction?: DirectionId;
+  /** Named anchor the direction turns about. Defaults to `ground`, the contact point under the feet. */
+  anchor?: DirectionAnchorName;
+  /** Explicit orientation pivot in pixels, overriding `anchor`. */
+  pivot?: { x: number; y: number };
+  /** The gait. Omit it entirely for every default; it is one flat object, not a nested section. */
+  walk?: WalkOptions;
+}
+
+/**
+ * Build a sprite and generate one direction's walk cycle in it, then return it.
+ *
+ * Identical to {@link buildAnimation} plus the `generate_walk_cycle` command, appended after
+ * your ops so the rig and the rest pose exist before the gait is baked. It goes through the
+ * bus like everything else here, so the gait frames are real frames in the document: real
+ * durations, a real looping tag, one undo step.
+ *
+ * ```js
+ * const walk = buildWalkAnimation({
+ *   seed: 7, width: 32, height: 32, name: 'hero',
+ *   layers: ['body', 'legs'],
+ *   direction: 'S',
+ *   walk: { frames: 6, stride: 3 },
+ *   ops: [
+ *     {
+ *       command: 'create_rig',
+ *       params: {
+ *         parts: [
+ *           { name: 'body', pivot: { x: 16, y: 10 } },
+ *           { name: 'legL', pivot: { x: 14, y: 20 }, parent: 'body' },
+ *           { name: 'legR', pivot: { x: 18, y: 20 }, parent: 'body' },
+ *         ],
+ *       },
+ *     },
+ *     { command: 'draw_rect', params: { layer: 'body', rect: { x: 12, y: 8, w: 8, h: 12 }, color: '#8bac0f' } },
+ *     { command: 'draw_rect', params: { layer: 'legL', rect: { x: 13, y: 20, w: 2, h: 8 }, color: '#0f380f' } },
+ *     { command: 'draw_rect', params: { layer: 'legR', rect: { x: 17, y: 20, w: 2, h: 8 }, color: '#0f380f' } },
+ *   ],
+ * });
+ * ```
+ *
+ * **One call is one direction.** To fill a full set, call it eight times with distinct
+ * `tagName`s, or loop over `getDirectionModel(...).directions` — which is also the list of
+ * which three sheets you actually have to draw.
+ *
+ * **The loop closes.** The gait is integer triangle waves sampled modulo `frames`, so frame
+ * `frames` is the *same pose* as frame `0` and the last frame leads straight back into the
+ * first. There is no duplicated end frame and therefore no seam.
+ *
+ * **Throws** `CommandError` (`invalid_params`) for a bad canvas size or seed,
+ * (`command_failed`) for an op the command rejected — naming its index — or for a missing rig,
+ * which is the realistic failure here and is reported as an op context rather than as a
+ * surprise.
+ */
+export function buildWalkAnimation(spec: WalkSpec): Sprite {
+  const direction = spec.direction ?? 'E';
+  const walk = spec.walk ?? {};
+  const walkOp: AssetOp = {
+    command: 'generate_walk_cycle',
+    label: `walk cycle ${direction}`,
+    params: compact({
+      direction,
+      anchor: spec.anchor,
+      pivot: spec.pivot,
+      frames: walk.frames,
+      frameDurationMs: walk.frameDurationMs,
+      stride: walk.stride,
+      bob: walk.bob,
+      legSwingDegrees: walk.legSwingDegrees,
+      legs: walk.legs,
+      arms: walk.arms,
+      body: walk.body,
+      phaseOffset: walk.phaseOffset,
+      tagName: walk.tagName,
+      loopDirection: walk.loopDirection,
+      repeat: walk.repeat,
+      targetFrame: walk.targetFrame,
+      overwrite: walk.overwrite,
+    }),
+  };
+  // Appended rather than prepended: the rig and the rest pose are the spec's own ops, and the
+  // gait renders from the rest frame. Running it first would bake into nothing.
+  return buildAnimation({ ...spec, ops: [...(spec.ops ?? []), walkOp] });
+}
+
+/** Drop `undefined` fields so an absent optional is absent, not `undefined`, for a `.strict()` schema. */
+function compact(source: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value !== undefined) out[key] = value;
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ *
+ * The asset contract and the engine importers
+ * ------------------------------------------------------------------ */
+
+/**
+ * The four engines `exportEngineAssets` can write.
+ *
+ * A string union rather than the importers' four option types, because the point of the
+ * task-shaped surface is that a caller does not have to know there are four separate
+ * mappings. `exportEngineAssets` is one function with one plan.
+ */
+export type AssetEngineId = 'godot' | 'unity' | 'phaser' | 'excalidraw';
+
+/**
+ * Which engine, and which of its knobs.
+ *
+ * The per-engine options are one field rather than a union of four, because they are passed
+ * straight to that engine's importer and typed as `Record<string, unknown>`: the four mappings
+ * are genuinely different problems, and a discriminated union here would only be a second
+ * spelling of what `core.importGodot` and friends already say. `godot` takes none.
+ */
+export interface EngineExportPlan {
+  /** Which engine's files to write. */
+  engine: AssetEngineId;
+  /**
+   * Also write `meta.json` beside them.
+   *
+   * Defaults to `true`, because every importer reads a contract and the contract is what makes
+   * the engine files checkable: an engine file with no `meta.json` next to it cannot be
+   * regenerated, diffed or validated. The MCP surface makes both outputs opt-in because a tool
+   * writes where it was told to; a build script that asked for Godot files asked for a bundle.
+   */
+  meta?: boolean;
+  /** Where `meta.json` is written, relative to the engine files' root. Defaults to `meta.json`. */
+  metaPath?: string;
+  /**
+   * Describe a spritesheet in the contract.
+   *
+   * `true` packs one with default options; an object passes layout options to
+   * `core.buildSpritesheet`. Omit it when the bundle is individual frame PNGs.
+   */
+  sheet?: SheetOptions | boolean;
+  /** Other files in the bundle, listed in the contract. The sheet itself is never repeated here. */
+  outputs?: readonly AssetMetaOutput[];
+  /**
+   * Licensing. Never invented: omit it and the contract says nothing about permission, which
+   * is the only honest answer when the document model has no field for it.
+   */
+  license?: AssetMetaLicense;
+  /**
+   * Which way each frame faces, one entry per frame in timeline order.
+   *
+   * A caller option, never derived. An unrecognised label is refused rather than dropped: a
+   * character that silently faces the wrong way in the game is not traceable from the sheet.
+   */
+  directions?: readonly (string | null)[];
+  /** Integer upscale applied to the packed sheet, matching `exportAssets`'s `scale`. Defaults to 1. */
+  scale?: number;
+  /** Fill the background behind the sheet instead of leaving it transparent. */
+  background?: ColorInput | null;
+  /** File name stem for the sheet and the contract. Defaults to the sprite's name. */
+  name?: string;
+  /**
+   * Override the importer's suggested root folder. A relative path, forward slashes.
+   *
+   * Each segment is passed through the same filename sanitiser the output paths use, so a
+   * hostile name cannot walk out of the directory the caller joins it onto — but the segments
+   * are kept separate, because a nested destination is a legitimate thing to ask for.
+   */
+  directory?: string;
+  /** Passed straight to the chosen importer. `godot` takes no options. */
+  options?: Record<string, unknown>;
+}
+
+/** One engine file, as bytes. */
+export interface EngineAssetFile {
+  /** Relative to the returned `root`, forward slashes. */
+  path: string;
+  bytes: Uint8Array;
+  /** What the file is for, for the caller's own manifest. Free-form. */
+  role: string;
+}
+
+/** A whole engine bundle: the contract, the engine's files, and what the mapping could not carry. */
+export interface EngineExportResult {
+  /** Suggested folder for the bundle. Every returned path is relative to it. */
+  root: string;
+  files: EngineAssetFile[];
+  /**
+   * Everything the mapping could not carry across — a dropped per-frame duration, a lost
+   * pivot convention — stated rather than hidden.
+   *
+   * **Strings, never a number.** There is no score here to optimise and no "quality" verdict
+   * to move artwork towards; it is the lossiness list from the contract's own S9, which is
+   * what a build log needs and nothing more.
+   */
+  warnings: string[];
+  /** The contract as written, so a caller can log the identity without re-parsing. */
+  meta: AssetMeta;
+  /** The naming check on the bundle. A report, not a score: see `AssetNamingReport`. */
+  naming: AssetNamingReport;
+}
+
+/**
+ * Write one engine's files for a sprite, with the `meta.json` they are built from.
+ *
+ * This is the whole point of the asset contract from a build script's side: a caller who wants
+ * Godot output should not have to hand-assemble `{root, files, warnings}`, serialise the
+ * contract, validate the names, and join the paths segment by segment. One call does all of
+ * it, and it is the same contract and the same importers the MCP server's `finalize_document`
+ * uses — so an asset produced by a build script and one produced by an agent are the same
+ * bytes.
+ *
+ * ```js
+ * const bundle = exportEngineAssets(sprite, { engine: 'godot', sheet: true });
+ * for (const file of bundle.files) {
+ *   await writeFile(join('assets', bundle.root, file.path), file.bytes);
+ * }
+ * console.log(bundle.warnings); // what Godot's mapping could not carry
+ * ```
+ *
+ * **Nothing is written and nothing is read.** Where the bytes go is the build script's
+ * business, exactly as for {@link exportAssets}.
+ *
+ * **Determinism.** The contract carries no timestamp and no invented `uid://`, the file order
+ * is the importer's, and the naming report is a pure function of the names. Same sprite, same
+ * plan, same bytes, in any process.
+ *
+ * **Throws** `CommandError` (`invalid_params`) for an unknown `engine` or a `scale` that is not
+ * a positive integer, and whatever the underlying generator raises — a tileset or a tilemap has
+ * no schemaVersion 1 contract, and an unlabelled or wrongly-labelled facing is refused.
+ */
+export function exportEngineAssets(sprite: Sprite, plan: EngineExportPlan): EngineExportResult {
+  const scale = plan.scale ?? 1;
+  if (!Number.isInteger(scale) || scale < 1) {
+    throw new CommandError(
+      `scale must be a positive integer upscale factor, got ${describe(scale)}`,
+      'invalid_params',
+    );
+  }
+  const stem = fileStem(plan.name ?? sprite.name);
+  const background = plan.background ?? null;
+
+  const sheetPath = `${stem}_sheet.png`;
+  const wantsSheet = plan.sheet !== undefined && plan.sheet !== false;
+  const atlas = wantsSheet
+    ? sheetOf(sprite, plan.sheet === true ? {} : (plan.sheet as SheetOptions), background, scale)
+    : null;
+
+  const meta = buildAssetMeta(sprite, {
+    ...(atlas ? { sheet: { atlas, image: sheetPath } } : {}),
+    ...(plan.outputs ? { outputs: plan.outputs } : {}),
+    ...(plan.license ? { license: plan.license } : {}),
+    ...(plan.directions ? { directions: plan.directions } : {}),
+  });
+
+  // Naming runs on the contract *before* anything is produced, and before the importer: an
+  // engine file named after a reserved device or a case-colliding path is a broken build, and
+  // the contract is where the bundle's file list lives. A reserved device name would otherwise
+  // fail here, on the build machine, much later than the mistake.
+  const naming = validateAssetNaming(meta);
+  if (!naming.ok) {
+    const errors = naming.diagnostics.filter((d) => d.severity === 'error');
+    const codes = [...new Set(errors.map((d) => d.code))].join(', ');
+    throw new CommandError(
+      `Asset naming refuses this bundle: ${errors.length} error(s) [${codes}]. First: ${
+        errors[0].path === '' ? 'the contract' : `"${errors[0].path}"`
+      } - ${errors[0].message}`,
+      'invalid_params',
+      { diagnostics: naming.diagnostics },
+    );
+  }
+
+  const importer = ENGINE_IMPORTERS[plan.engine];
+  if (!importer) {
+    throw new CommandError(
+      `Unknown engine ${describe(plan.engine)}. Expected one of ${Object.keys(ENGINE_IMPORTERS).join(', ')}.`,
+      'invalid_params',
+    );
+  }
+  const imported = importer(meta, plan.options);
+
+  const root = plan.directory === undefined
+    ? fileStem(imported.root)
+    // Sanitised per segment rather than as a whole string, because `directory` is a *path*:
+    // folding `assets/godot` into one safe segment would turn a nested destination into a flat
+    // one and silently relocate a build's output.
+    : plan.directory.split('/').map(fileStem).join('/');
+  const files: EngineAssetFile[] = [];
+  const encoder = new TextEncoder();
+  if (atlas) {
+    files.push({ path: sheetPath, bytes: encodePNG(atlas.image), role: 'sheet' });
+  }
+  if (plan.meta !== false) {
+    // Serialised once and used once, but stated as a single call anyway: a second call would be
+    // a second chance for the bytes written and the bytes reported to differ.
+    files.push({
+      path: plan.metaPath ?? 'meta.json',
+      bytes: encoder.encode(serializeAssetMeta(meta)),
+      role: 'contract',
+    });
+  }
+  for (const file of imported.files) {
+    files.push({ path: file.path, bytes: encoder.encode(file.contents), role: file.role });
+  }
+  return { root, files, warnings: [...imported.warnings], meta, naming };
+}
+
+/** The four importers, in one table. A switch would hide that these are four different mappings. */
+const ENGINE_IMPORTERS: Record<
+  AssetEngineId,
+  (input: unknown, options: Record<string, unknown> | undefined) => AssetImportResult
+> = {
+  // Godot takes no options; `options` is accepted and ignored so the table has one shape. An
+  // options object handed to it is a caller mistake worth naming rather than a crash.
+  godot: (input, options) => {
+    if (options && Object.keys(options).length > 0) {
+      throw new CommandError(
+        `The Godot importer takes no options, but ${describe(Object.keys(options).join(', '))} ${
+          Object.keys(options).length === 1 ? 'was' : 'were'
+        } given. The other three engines do take options.`,
+        'invalid_params',
+      );
+    }
+    return importGodot(input);
+  },
+  unity: (input, options) => importUnity(input, options as never),
+  phaser: (input, options) => importPhaser(input, options as never),
+  excalidraw: (input, options) => importExcalidraw(input, options as never),
+};
+
+/* ------------------------------------------------------------------ *
+ * SVG trace import
+ * ------------------------------------------------------------------ */
+
+/**
+ * A {@link SpriteSpec} plus the vector outline to trace into it.
+ *
+ * `svg` is the source as **text**, not a path: core has no filesystem, so a build script
+ * reads the file and hands the string over. Everything else is inherited.
+ */
+export interface SvgTraceSpec extends SpriteSpec {
+  /** The SVG source, as text. `path`/`rect`/`circle`/`ellipse`/`polygon`/`polyline`, filled. */
+  svg: string;
+  /** Layer to trace into. Defaults to the bottom layer, the same default as every other op. */
+  layer?: string;
+  /** Frame to trace into. Defaults to frame 0. */
+  frame?: number;
+  /** Paint the whole trace in one colour instead of each shape's own `fill`. */
+  color?: ColorInput;
+  /** SVG user units per pixel. A 512-unit icon into a 32px canvas is 16. Defaults to 1. */
+  scale?: number;
+  /** Pixel position that SVG (0,0) maps to. Defaults to (0,0). */
+  offset?: { x: number; y: number };
+  /** Curve-flattening error in pixels. Defaults to 0.1; lower it for a shape far larger than the canvas. */
+  tolerance?: number;
+  /** Trace only the part of the geometry inside this rect. */
+  rect?: { x: number; y: number; w: number; h: number };
+  /** Clear the traced pixels before painting them. */
+  replace?: boolean;
+}
+
+/**
+ * Build a sprite from a filled SVG outline, and return it.
+ *
+ * The road from vector to pixel, in one call: it sizes the canvas, creates the layers and
+ * runs the `trace_svg` command, so a build script that has an exported icon does not have to
+ * know that scan-conversion is a command called `trace_svg` with a `scale` in *SVG units per
+ * pixel*. A PNG import cannot recover the geometry; a traced outline lands on the grid exactly.
+ *
+ * ```js
+ * const icon = traceSvg({
+ *   svg: await readFile('assets/logo.svg', 'utf8'),
+ *   width: 32, height: 32, name: 'logo',
+ *   palette: ['#1a1c2c', '#5d275d', '#ef7d57', '#ffcd75'],
+ *   scale: 16,           // a 512-unit-wide icon lands 32px wide
+ * });
+ * ```
+ *
+ * **Coverage is hard-edged by design.** A traced outline is a pixel edge, not a ramp of
+ * intermediate alphas; run an `antialias` op afterwards if the staircase is too coarse.
+ * Transforms and paint servers are refused rather than approximated, so an SVG that needs
+ * flattening fails loudly here instead of landing in the wrong place silently.
+ *
+ * **What it refuses.** An SVG with no traceable filled geometry, an unsupported construct
+ * (`transform`, an inherited `fill`, `fill: url(#…)`), or malformed path data. The refusal
+ * arrives as `CommandError` with code `command_failed` and the reason nested in `details`,
+ * because `editor.execute` re-wraps every command failure: read
+ * `error.details.details.reason` for `'svg_unsupported'`, `'svg_malformed'` or `'svg_empty'`
+ * and `error.details.code` for the original `'invalid_params'`.
+ *
+ * **Determinism.** The tracer's own trigonometry is Cody-Waite plus fdlibm kernels rather
+ * than `Math.sin`, because V8, JSC and SpiderMonkey may disagree in the last ULP and an
+ * outline that moves a pixel between two engines is not a bug anyone can debug. Same SVG, same
+ * canvas, same pixels, on every machine.
+ */
+export function traceSvg(spec: SvgTraceSpec): Sprite {
+  return buildSprite({
+    ...spec,
+    ops: [
+      ...(spec.ops ?? []),
+      {
+        command: 'trace_svg',
+        label: 'trace svg',
+        params: compact({
+          svg: spec.svg,
+          layer: spec.layer,
+          frame: spec.frame,
+          color: spec.color,
+          scale: spec.scale,
+          offset: spec.offset,
+          tolerance: spec.tolerance,
+          rect: spec.rect,
+          replace: spec.replace,
+        }),
+      },
+    ],
+  });
 }
 
 /* ------------------------------------------------------------------ *

@@ -26,15 +26,19 @@ npm install --save-dev dotloom-mcp
 
 ## 接口一览
 
-八个导出。其中三个负责干活。
+十二个导出。其中七个负责干活。
 
 | 导出 | 层级 | 是什么 |
 | --- | --- | --- |
 | `buildSprite(spec)` | **稳定** | 从尺寸、渐变和一组 ops 构建单帧精灵。返回一个 `Sprite`。 |
 | `buildAnimation(spec)` | **稳定** | 同上，外加帧数和动画标签。返回一个 `Sprite`。 |
 | `exportAssets(sprite, plan)` | **稳定** | 把精灵渲染成成品文件，以字节返回。绝不写磁盘。 |
+| `getDirectionModel(canvas, anchor?)` | **稳定** | 某个画布上的八方向角度模型：哪四个是精确的、哪四个必须画、每个方向落在哪里。只读。 |
+| `buildWalkAnimation(spec)` | **稳定** | 一个 `AnimationSpec` 外加一个方向和一套步态。把 `generate_walk_cycle` 接在你的 ops 之后，返回 `Sprite`。 |
+| `exportEngineAssets(sprite, plan)` | **稳定** | `meta.json` 加上某个引擎的文件，以字节返回，并附带有损清单。绝不写磁盘。 |
+| `traceSvg(spec)` | **稳定** | 一个 `SpriteSpec` 外加一段 SVG 轮廓：建好文档，然后把矢量扫描到像素网格上。 |
 | `API_VERSION` | **稳定** | 本契约的版本号，字符串形式。见[版本策略](#版本策略)。 |
-| `VERSION` | **稳定** | 包版本号，例如 `'0.4.2'`。 |
+| `VERSION` | **稳定** | 包版本号，例如 `'0.5.0'`。 |
 | `core` | 内部 | 完整的无界面引擎：`Sprite`、`Editor`、全部命令、绑定、瓦片地图、渐变、导入器、编解码器。 |
 | `mcp` | 内部 | MCP 服务器及其面向 Agent 的工具面，在进程内运行。 |
 | `script` | 内部 | 基于 `node:vm` 的脚本运行时，面向受信任的脚本和插件。 |
@@ -42,6 +46,28 @@ npm install --save-dev dotloom-mcp
 **稳定**导出就是契约。**内部**命名空间是逃生舱：真实存在、已经发布，也是 README
 一直在写的东西，但不受 `API_VERSION` 保护。新代码不要走这条路 ——
 见[版本策略](#版本策略)。
+
+### 类型
+
+这个包自带类型声明，所以这份文件不只是文档：TypeScript 使用者在 `import` 的时候
+就能拿到下面的签名，写错调用是编译错误，而不是运行时的意外。
+
+```ts
+import { buildSprite, type SpriteSpec, type ExportPlan } from 'dotloom-mcp';
+```
+
+解析走包的 `exports` 映射：
+
+| 说明符 | 是什么 |
+| --- | --- |
+| `dotloom-mcp` | 稳定接口面；为了向后兼容，也包含那三个内部命名空间。 |
+| `dotloom-mcp/internal` | 同一个模块，但显式地命名为逃生舱。适合放在 `tsconfig` 的 `imports` 别名里，或者用一条 lint 规则声明「这个构建脚本允许去摸 `core`」。 |
+| `dotloom-mcp/package.json` | 清单文件，给需要读版本号的构建脚本用。 |
+
+其他任何写法 —— `dotloom-mcp/dist/index.js`、`dotloom-mcp/dist/index.js.map` —— 都**没有**
+被导出，也解析不了。这正是这张映射表的意义：层级边界写在一个工具能强制执行的地方，
+而不是只写在本文档里一句没人检查的话。`packages/core/test/npm-consumer-types.test.ts`
+会对打包产物编译一个使用方，并断言两半：文档里的名字都能解析，没声明的说明符不能。
 
 ---
 
@@ -226,7 +252,16 @@ interface AssetFile {
   `rng.ts`。绘制路径里没有 `Math.random()`。
 - 调用返回时 id 工厂会被**移除**，进程回到一个全新进程应有的状态。如果你用
   `core.setIdFactory` 装过自己的工厂，事后要重新装回去。
-- `exportAssets` 不分配 id、不查时钟：它是 `(sprite, plan)` 的纯函数。
+- `exportAssets` 和 `exportEngineAssets` 不分配 id、不查时钟：它们是
+  `(sprite, plan)` 的纯函数。资产契约不带时间戳，也不编造 `uid://`，而命名报告是
+  名字的纯函数。
+- `getDirectionModel` 是纯函数、不查时钟：系数全是整数，没有三角函数，所以矩阵在任何
+  机器上都逐位相同。
+- `buildWalkAnimation` 继承另外两个构建函数同样的带种子 id 作用域 —— 步态命令分配的帧
+  id 和标签 id 是 `seed` 的函数。
+- `traceSvg` 用 Cody-Waite 区间规约加 fdlibm minimax 核，而不是 `Math.sin`，理由同上：
+  V8、JSC 和 SpiderMonkey 在最后一位 ULP 上可能有分歧，而一个在两个引擎之间差一个
+  像素的轮廓，不是任何人能靠截图调试的 bug。
 - `.pixel` 序列化逐字节可复现，zip 条目的时间戳被固定。
 
 两个 `seed` 相同的构建产出完全相同的字节，包括 `.pixel` 归档和精灵图 JSON。
@@ -261,14 +296,24 @@ console.log('slime.pixel is byte-identical to the committed file');
 | | `VERSION` | `API_VERSION` |
 | --- | --- | --- |
 | 跟踪什么 | 包本身的发布版本。 | 稳定导出的形状。 |
-| 什么时候提升 | 每次发布。 | `buildSprite`、`buildAnimation`、`exportAssets` 或它们接受的类型发生破坏性变更时。 |
+| 什么时候提升 | 每次发布。 | 任何一个稳定导出发生破坏性变更时：重命名、删除、新增必填字段，或类型被收窄。 |
 | 用来做什么 | 报 bug。 | 钉住你的构建脚本。 |
 
-**稳定** —— `buildSprite`、`buildAnimation`、`exportAssets`、`VERSION`、
-`API_VERSION`。在 `API_VERSION` 的同一个主版本内，唯一允许的变更都是**新增**：
-一个新导出、一个新的可选 plan 字段、一个新的可选 spec 字段、一个被放宽的
-接受类型。重命名、删除、调整顺序，或者把一个可选字段变成必填，都是破坏性
-变更，会把 `API_VERSION` 提升到下一个主版本。
+**稳定** —— `buildSprite`、`buildAnimation`、`exportAssets`、`getDirectionModel`、
+`buildWalkAnimation`、`exportEngineAssets`、`traceSvg`、`VERSION`、`API_VERSION`。
+在 `API_VERSION` 的同一个主版本内，唯一允许的变更都是**新增**：一个新导出、一个新的
+可选 plan 字段、一个新的可选 spec 字段、一个被放宽的接受类型。重命名、删除、调整
+顺序，或者把一个可选字段变成必填，都是破坏性变更，会把 `API_VERSION` 提升到下一个
+主版本。
+
+这就是 `getDirectionModel`、`buildWalkAnimation`、`exportEngineAssets` 和 `traceSvg`
+发布时没有提升版本号的原因：四个新名字，没有删除，也没有签名变化。
+`packages/core/test/npm-surface.test.ts` 钉住了这份清单，并在旁边钉住 `API_VERSION`，
+所以「只有新增」是一个被检查的断言，而不是一个意图。
+
+**`exports` 映射表是契约的一部分。** `.` 是稳定接口面，`./internal` 显式地命名
+逃生舱，`./package.json` 是清单，其他什么都解析不了。新增一个子路径是新增；删除一个
+是破坏性的，因为导入过它的构建脚本就编不过了。
 
 **内部** —— `core`、`mcp`、`script`。它们已发布、有文档，也是引擎全部威力
 所在。它们不受 `API_VERSION` 保护，并且可能在一次小版本发布里改变，因为
@@ -311,14 +356,200 @@ export function buildPlatformerTileset({ tileSize = 16, seed = 1, columns = 8 } 
 - **把多个精灵融进同一张图集。** `exportAssets` 只接收一个 `Sprite`，因为标签
   和帧元数据该怎样跨文档合并是 T-043 的决策，不是可以猜的东西。用
   `buildAnimation` 构建一段动画，精灵图本身就已经是一个文件了。
-- **npm 接口上的 `meta.json` 与引擎导入器。** 资产契约（[`ASSET-CONTRACT.md`](ASSET-CONTRACT.md)）
-  和四个引擎导入器（[`IMPORTERS.md`](IMPORTERS.md)）在 `@pixel/core` 里，通过 MCP 服务器
-  `finalize_document` 的可选输出 `{type: "meta"}` 与 `{type: "engine"}` 使用；它们不在
-  `exportAssets` 的 plan 里，也还不在这个 npm 接口上：上面的 sheet JSON 已经为「自己切图的
-  构建脚本」提供了帧几何与时序，而契约是为「消费方是游戏引擎」这件事存在的——用哪个引擎，
-  该由调用方决定，而不是由一个库决定。
-- **写文件、目录、glob、watch 模式、缓存键、资产清单。** `exportAssets` 返回
-  字节；字节去哪里是构建脚本的事，而且这些选择每一个都更适合交给项目本来就
-  有的构建系统去做。
-- **为发布产物提供 typedef。** npm 包发布的是 JavaScript。这里的类型是文档和
-  编辑器辅助，不是分发渠道。
+- **写文件、目录、glob、watch 模式、缓存键、资产清单。** `exportAssets` 和
+  `exportEngineAssets` 返回字节；字节去哪里是构建脚本的事，而且这些选择每一个都更适合
+  交给项目本来就有的构建系统去做。
+- **一次调用产出整套八方向角色。** `getDirectionModel` 告诉你一套八方向角色其实
+  需要画哪三张 —— 八个方向里有四个是精确变换，完全不需要新图 —— 而
+  `buildWalkAnimation` 烘焙其中一个方向。把八个拼起来仍然是一个循环，因为一套八方向
+  角色是*三张*由人画的图，而选哪三张正是配方该做的决策，不是库原语该做的。
+
+---
+
+## `getDirectionModel(canvas, anchor?)`
+
+只读、纯派生。它不写任何东西、不分配 id，可以在构建脚本的规划阶段安全调用 —— 在
+任何东西被画出来之前。
+
+```js
+const model = getDirectionModel({ width: 32, height: 32 });
+model.exact;        // ['N', 'E', 'S', 'W']     —— 变换可精确复现
+model.approximate;  // ['NE', 'SE', 'SW', 'NW'] —— 对角线，必须画
+model.pivot;        // { x: 15.5, y: 31 }       —— 底边中心，即 `ground`
+```
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `baseDirection` | `'E'` | 基础姿势的朝向。其余一切都由它派生。 |
+| `anchor` | `'ground' \| 'facing' \| 'origin'` | 每个方向都保持不动的那个点，所以转向是原地转而不是在画布上滑动。默认 `ground`，即脚下的接触点。 |
+| `pivot` | `{x, y}` | 该锚点在这个画布上的位置。 |
+| `exact` | `DirectionId[]` | 四分之一转和/或镜像可精确复现的方向。不需要画。 |
+| `approximate` | `DirectionId[]` | 对角线。不存在像素精确的 45° 变换，本引擎也不会去近似一个。 |
+| `directions` | `DirectionSummary[]` | 全部八个，从 N 顺时针：`facing`、`drawing`、`resolvedFrom`，以及画布上的 `matrix`。 |
+
+`N` 是屏幕向上，`S` 是屏幕向下。在俯视地图上屏幕向上是*远离*摄像机，所以如果你要
+「`N` 面向观众」那种正面视角的读法，去直接用底层工具，把这两行换掉就行。
+
+每个矩阵的系数都是整数：四分之一转是坐标轴的一个带符号置换，镜像则把其中一行取负。
+模型里任何地方都没有三角函数 —— 这正是 `packages/core/test/determinism.test.ts`
+把 `Math.sin` 之类从 `src` 里禁掉的原因：V8、JSC 和 SpiderMonkey 在最后一位
+ULP 上可能有分歧，而一个在两个引擎之间差一个像素的矩阵，不是任何人能靠截图调试的 bug。
+
+---
+
+## `buildWalkAnimation(spec)`
+
+就是 `buildAnimation` 再加一条 `generate_walk_cycle` 命令，并且这条命令**接在你的
+ops 之后**，这样绑定和静止姿势会在步态被烘焙之前就存在。一次调用生成一个方向。
+
+```js
+const walk = buildWalkAnimation({
+  seed: 7, width: 32, height: 32, name: 'hero',
+  layers: ['body', 'legL', 'legR'],
+  direction: 'S',
+  walk: { frames: 6, stride: 3 },
+  ops: [
+    {
+      command: 'create_rig',
+      params: {
+        parts: [
+          { name: 'body', pivot: { x: 16, y: 10 } },
+          { name: 'legL', pivot: { x: 14, y: 20 }, parent: 'body' },
+          { name: 'legR', pivot: { x: 18, y: 20 }, parent: 'body' },
+        ],
+      },
+    },
+    { command: 'draw_rect', params: { layer: 'body', rect: { x: 12, y: 8, w: 8, h: 12 }, color: '#8bac0f' } },
+    { command: 'draw_rect', params: { layer: 'legL', rect: { x: 13, y: 20, w: 2, h: 8 }, color: '#0f380f' } },
+    { command: 'draw_rect', params: { layer: 'legR', rect: { x: 17, y: 20, w: 2, h: 8 }, color: '#0f380f' } },
+  ],
+});
+```
+
+`AnimationSpec` 的每个字段都被继承。此外：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `direction` | `DirectionId` | 默认 `E`，即基础朝向。对角线会落到离它最近的那个基本方向上，命令的结果里会写明。 |
+| `anchor` | `DirectionAnchorName` | 默认 `ground`。 |
+| `pivot` | `{x, y}` | 显式的朝向支点，覆盖 `anchor`。 |
+| `walk.frames` | `number` | 一个步态周期的帧数。偶数读起来更好：一个周期有两次触地。默认 4。 |
+| `walk.frameDurationMs` | `number` | 默认 120。 |
+| `walk.stride` | `number` | 脚部水平位移的峰值，单位像素。默认 2。 |
+| `walk.bob` | `number` | 身体起伏的峰值，单位像素。默认 1。 |
+| `walk.legSwingDegrees` | `number` | 摆动两端腿部的倾角峰值。默认 6。 |
+| `walk.legs` / `arms` / `body` | `string[]` | 绑定部件的名字或 id。省略则按名字自动识别（`leg`/`foot`、`arm`/`hand`、`body`/`torso`）。 |
+| `walk.phaseOffset` | `number` | 在第 0 帧之前整体前进的整帧数，用来把一个循环相对另一个错开。 |
+| `walk.tagName` | `string` | 默认 `walk_<方向小写>`。要凑齐一套就用不同的名字。 |
+| `walk.loopDirection` | `'forward' \| 'reverse' \| 'pingpong'` | 默认 `forward`。 |
+| `walk.repeat` | `number` | `0` 表示永远循环。默认 `0`。 |
+| `walk.targetFrame` | `number` | 第一个目标帧。默认是绑定静止帧之后的那一帧。 |
+| `walk.overwrite` | `boolean` | 目标帧已经有像素时必须传。 |
+
+**循环是闭合的。** 步态由整数三角波驱动，按 `frames` 取模采样，所以第 `frames` 帧
+与第 `0` 帧是*同一个姿势*，最后一帧直接接回第一帧。没有重复的末帧，因此没有接缝。
+正弦在静态图里读起来一样，却会把 `Math.sin` 塞进一条决定像素的路径。
+
+步态姿势是临时的：它们被烘焙进帧里，永远不会被推回绑定，所以一个文档不会累积
+「每帧每方向一个姿势」。想保留某个站姿就用一条 `save_pose` op。
+
+**错误。** 和别处一样，`CommandError` 带一个 code。这里真正会遇到的失败是缺少绑定，
+它会以 `ops[N] (create_rig) failed: …` 或步态 op 自己的上下文到达 —— 是被点名的，
+不是一个意外。
+
+---
+
+## `exportEngineAssets(sprite, plan)`
+
+`meta.json` 加上某个引擎的文件，以字节返回。资产契约
+（[`ASSET-CONTRACT.md`](ASSET-CONTRACT.md)）和四个导入器
+（[`IMPORTERS.md`](IMPORTERS.md)）都是 core 的内部实现；这是一个构建脚本唯一需要的
+调用，于是没有人需要手工拼 `{root, files, warnings}`、序列化契约、校验命名、再逐段
+拼接路径。
+
+```js
+const bundle = exportEngineAssets(sprite, { engine: 'godot', sheet: true });
+for (const file of bundle.files) {
+  await writeFile(join('assets', bundle.root, file.path), file.bytes);
+}
+console.log(bundle.warnings); // Godot 的映射没能承载什么
+```
+
+| plan 字段 | 作用 |
+| --- | --- |
+| `engine` | `'godot' \| 'unity' \| 'phaser' \| 'excalidraw'`。 |
+| `meta` | 同时写出 `meta.json`。默认 `true`；每个导入器都要读一份契约。 |
+| `metaPath` | 它写到哪里，相对于根目录。默认 `meta.json`。 |
+| `sheet` | `true` 用默认选项打包一张精灵图；给对象则把布局选项传给 `core.buildSpritesheet`。整包单帧 PNG 时省略。 |
+| `scale` | 打包精灵图的整数倍放大。默认 1。 |
+| `background` | 在精灵图后面填充底色，而不是留透明。 |
+| `outputs` | 包里的其他文件，会列进契约。 |
+| `license` | 授权信息。绝不凭空编造：省略即契约对权限只字不提。 |
+| `directions` | 逐帧朝向标签，每帧一个。**这是调用方选项，绝不推导** —— 无法识别的标签会被拒绝而不是丢掉，因为一个在游戏里悄悄朝错方向的角色，是无法从精灵图上追溯出来的。 |
+| `name` | 文件名词干。默认取精灵名。 |
+| `directory` | 覆盖导入器建议的根目录。 |
+| `options` | 原样传给选中的导入器。`godot` 不接受参数，并且会明说。 |
+
+结果是 `{root, files, warnings, meta, naming}`。`files` 是 `{path, bytes, role}`，
+相对于 `root`。
+
+**`warnings` 是一份有损清单，不是一个分数。** 这里没有任何数字可供优化，也没有
+任何判定可以让画面朝它移动 —— 这些是契约自己的 S9 里列出的映射，而导入器确实命中了
+其中哪些；这正是构建日志需要的。`naming` 同理，是带机器可读诊断的报告，不是评分。
+命名**错误**（保留设备名、大小写折叠后碰撞）会拒绝整次调用，因为一份文件会在
+Windows 构建机上坏掉的包就是一次坏掉的构建，在这里找到比在 CI 里什么都点名不了地
+失败要好。
+
+**确定性。** 契约不带时间戳，也不编造 `uid://`；文件顺序就是导入器的顺序；命名报告是
+名字的纯函数。同一个精灵、同一个 plan、同样的字节，任何进程都一样。
+
+**它会拒绝**自己没法诚实描述的东西：瓦片集或瓦片地图文档没有 `schemaVersion 1` 的
+契约，无法识别的朝向是错误，长度不对的 `directions` 数组也是错误。给瓦片集发一份
+`kind: "sprite"` 的文件，正是那种要让接入者花掉一天的、自信满满的错误答案。
+
+---
+
+## `traceSvg(spec)`
+
+一个 `SpriteSpec` 外加 `svg`：从矢量到像素的路，一次调用走完。PNG 导入无法还原
+几何信息；描边得到的轮廓则是精确落在网格上的。
+
+```js
+const icon = traceSvg({
+  svg: await readFile('assets/logo.svg', 'utf8'),
+  width: 32, height: 32, name: 'logo',
+  palette: ['#1a1c2c', '#5d275d', '#ef7d57', '#ffcd75'],
+  scale: 16,           // 一个 512 单位宽的图标落成 32px 宽
+});
+```
+
+`svg` 是源码**文本**，不是路径：core 没有文件系统，所以由构建脚本读文件。在
+`SpriteSpec` 之上还有：`layer`、`frame`、`color`（把整条描边压成一种颜色）、`scale`
+（每个像素对应多少 SVG 用户单位）、`offset`、`tolerance`、`rect` 和 `replace`。
+
+**覆盖率是硬边的，这是刻意的。** 描边得到的轮廓是一个像素边缘，不是一串中间 alpha
+值的渐变；如果阶梯太粗，之后跑一条 `antialias` op 就行。
+
+**它会拒绝。** 任何元素上的 `transform`、带继承 `fill` 的 `<g>`，以及
+`fill: url(#gradient)` —— 它们都会把画面放到错误的位置却不作声。描边（stroke）
+永远不会被描：只有描边的 SVG 什么都不产出，并且会说出来。
+
+**怎么读这个拒绝。** `editor.execute` 会把每一次命令失败重新包一层，所以你捕获到
+的错误 code 是 `command_failed`，而机器可读的原因嵌在下一层：
+
+```js
+try {
+  traceSvg({ svg, width: 32, height: 32 });
+} catch (error) {
+  error.code;                          // 'command_failed' —— 这条 op 失败了
+  error.details.code;                  // 'invalid_params' —— 参数有问题
+  error.details.details.reason;        // 'svg_unsupported' | 'svg_malformed' | 'svg_empty'
+}
+```
+
+这是这份 API 里每一个 op 抛出的形状，不是描边器特有的：在这三层里按
+`error.details.details.reason` 分支，才是在按「文档拒绝的原因」分支 —— 只有它
+说明了关于这份 SVG 的任何事情。
+
+**确定性。** 描边器的三角运算是 Cody-Waite 区间规约加 fdlibm minimax 核，而不是
+`Math.sin`，原因同上。同样的 SVG、同样的画布、同样的像素，任何机器都一样。

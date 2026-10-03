@@ -6,6 +6,13 @@ dotloom-mcp is a pixel-art tool built from day one to be operated by **both huma
 
 The public npm distribution is [`dotloom-mcp`](https://www.npmjs.com/package/dotloom-mcp). The `@pixel/*` workspace packages below are internal implementation packages; they are not separate npm products.
 
+The published package ships **TypeScript declarations** alongside its JavaScript. `pnpm build:npm` runs esbuild for the three bundles and then a `tsc --emitDeclarationOnly` pass for `scripts/npm-index.ts` alone, into `dist/types/`, because the bundle is an erased JS file with no type information left in it and the types can only come from the sources. Two consequences worth knowing before editing that step:
+
+- **`rootDir` is the repository root, and the tree ships whole.** The entry imports `@pixel/core` by relative path, so the emitted declarations are full of `../packages/core/src/...` specifiers. Keeping the tree keeps those paths valid inside the tarball; flattening them would need a third-party bundler and would answer a different question from the one `pnpm typecheck` answers.
+- **Bare `@pixel/*` specifiers are rewritten, and the build throws if one survives.** That name resolves through the workspace and nowhere else, so a consumer's `tsc` would report `Cannot find module '@pixel/core'` on a file they never asked for. A `.d.ts` that does not resolve is worse than no `.d.ts`: it fails at the consumer's build instead of at import. The same check covers every other bare specifier — those must be declared `dependencies`, or a consumer cannot resolve them either.
+
+`packages/core/test/npm-consumer-types.test.ts` proves it the way a consumer experiences it: build, `npm pack`, unpack into a temporary project, and compile against it with `skipLibCheck: false`. A declaration full of `any` would pass the happy path, so the test also requires a file of deliberate mistakes to produce named diagnostics. See [`API.md`](API.md) for the surface those types describe.
+
 The product is not the Electron window — it is the **headless, addressable pixel document
 model** in `packages/core`. The Electron app and the MCP server are both just clients of it.
 

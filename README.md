@@ -203,7 +203,10 @@ npx -y dotloom-mcp --version
 
 There is a way in that is neither a client nor a person: a build script. No GUI, no
 MCP client, no human in the loop. `buildSprite`, `buildAnimation` and `exportAssets`
-turn a spec into finished files, as a `devDependency`.
+turn a spec into finished files, as a `devDependency`. Four more arrived with this
+cycle's work — `getDirectionModel` and `buildWalkAnimation` for eight-direction
+characters, `exportEngineAssets` for engine bundles, and `traceSvg` for vector
+outlines.
 
 ```js
 import { buildSprite, exportAssets } from 'dotloom-mcp';
@@ -222,14 +225,31 @@ for (const file of exportAssets(slime, { sheet: true, source: true })) {
 
 Same seed, same bytes, every run — which is what makes committing generated assets
 viable. The API returns bytes and never touches the disk; where they go is the build
-script's business. **[`docs/API.md`](docs/API.md) has the full surface, the determinism
-contract and the versioning policy**: what is stable, what is internal, and what changes
-in a major version. [中文版](docs/API-ZH.md) mirrors it.
+script's business.
+
+**Types ship with the package.** A TypeScript consumer gets real signatures, so a
+mistyped call is a compile error rather than a runtime surprise:
+
+```ts
+import { buildSprite, type SpriteSpec, type ExportPlan } from 'dotloom-mcp';
+
+const spec: SpriteSpec = { seed: 1, width: 16, height: 16, name: 'hero' };
+const plan: ExportPlan = { sheet: true, gif: { scale: 4 } };
+exportAssets(buildSprite(spec), plan);
+```
+
+Resolution goes through the package's `exports` map: `.` is the stable surface,
+`./internal` names the escape hatch explicitly, and nothing else resolves.
+
+**[`docs/API.md`](docs/API.md) has the full surface, the determinism contract and the
+versioning policy**: what is stable, what is internal, and what changes in a major
+version. [中文版](docs/API-ZH.md) mirrors it.
 
 The package also exposes the whole engine without going through a task-shaped function:
 
 ```js
 import { VERSION, core, mcp, script } from 'dotloom-mcp';
+// or: import { core } from 'dotloom-mcp/internal';
 
 const document = core.createSprite({ width: 32, height: 32 });
 console.log(VERSION, document.width, typeof mcp.createPixelServer, typeof script.ScriptRuntime);

@@ -27,15 +27,19 @@ setup step: import the module and call a function.
 
 ## The surface
 
-Eight exports. Three of them do the work.
+Twelve exports. Seven of them do the work.
 
 | Export | Tier | What it is |
 | --- | --- | --- |
 | `buildSprite(spec)` | **stable** | Build a single-frame sprite from a size, a ramp and a list of ops. Returns a `Sprite`. |
 | `buildAnimation(spec)` | **stable** | The same, plus a frame count and animation tags. Returns a `Sprite`. |
 | `exportAssets(sprite, plan)` | **stable** | Render a sprite into finished files and return them as bytes. Never writes to disk. |
+| `getDirectionModel(canvas, anchor?)` | **stable** | The eight-direction angle model for a canvas: which four are exact, which four have to be drawn, and where each lands. Read-only. |
+| `buildWalkAnimation(spec)` | **stable** | An `AnimationSpec` plus one direction and a gait. Appends `generate_walk_cycle` after your ops and returns the `Sprite`. |
+| `exportEngineAssets(sprite, plan)` | **stable** | `meta.json` plus one engine's files, as bytes, with the lossiness list. Never writes to disk. |
+| `traceSvg(spec)` | **stable** | A `SpriteSpec` plus an SVG outline: builds the document and traces the vector onto the pixel grid. |
 | `API_VERSION` | **stable** | The version of this contract, as a string. See [Versioning](#versioning). |
-| `VERSION` | **stable** | The package version, e.g. `'0.4.2'`. |
+| `VERSION` | **stable** | The package version, e.g. `'0.5.0'`. |
 | `core` | internal | The whole headless engine: `Sprite`, `Editor`, every command, the rigs, tilemaps, ramps, importers, codecs. |
 | `mcp` | internal | The MCP server and its agent-facing surface, in-process. |
 | `script` | internal | The `node:vm` scripting runtime for trusted scripts and plugins. |
@@ -43,6 +47,30 @@ Eight exports. Three of them do the work.
 The **stable** exports are the contract. The **internal** namespaces are the escape hatch:
 real, shipped, and the thing the README has always documented, but not covered by
 `API_VERSION`. New code should not go there — see [Versioning](#versioning).
+
+### Types
+
+The package ships its own type declarations, so this file is not documentation-only: a
+TypeScript consumer gets the signatures below at `import` time and a wrong call is a compile
+error rather than a runtime surprise.
+
+```ts
+import { buildSprite, type SpriteSpec, type ExportPlan } from 'dotloom-mcp';
+```
+
+Resolution goes through the package's `exports` map:
+
+| Specifier | What it is |
+| --- | --- |
+| `dotloom-mcp` | The stable surface, and the three internal namespaces for backwards compatibility. |
+| `dotloom-mcp/internal` | The same module, named explicitly as the escape hatch. Useful in a `tsconfig` `imports` alias or a lint rule that says "this build script is allowed to reach for `core`". |
+| `dotloom-mcp/package.json` | The manifest, for a build script that reads the version. |
+
+Anything else — `dotloom-mcp/dist/index.js`, `dotloom-mcp/dist/index.js.map` — is **not
+exported** and does not resolve. That is the point of the map: the tier boundary is declared
+where a tool enforces it, rather than in a sentence in this file that nothing checks.
+`packages/core/test/npm-consumer-types.test.ts` compiles a consumer against the packed tarball
+and asserts both halves: the documented names resolve, and an undeclared specifier does not.
 
 ---
 
@@ -230,8 +258,16 @@ changed*. It is enforced, not promised:
 - The id factory is **removed** when the call returns, leaving the process in the state a
   fresh process would be in. If you installed your own factory with `core.setIdFactory`,
   re-install it afterwards.
-- `exportAssets` allocates no ids and consults no clock: it is a pure function of
-  `(sprite, plan)`.
+- `exportAssets` and `exportEngineAssets` allocate no ids and consult no clock: they are pure
+  functions of `(sprite, plan)`. The asset contract carries no timestamp and no invented
+  `uid://`, and the naming report is a pure function of the names.
+- `getDirectionModel` is pure and reads no clock: integer coefficients throughout, no
+  trigonometry, so the matrices are bit-identical on every machine.
+- `buildWalkAnimation` inherits the same seeded id scope as the other two builders — the frame
+  and tag ids the walk command allocates are a function of `seed`.
+- `traceSvg` uses Cody-Waite range reduction plus the fdlibm minimax kernels instead of
+  `Math.sin`, for the same reason: V8, JSC and SpiderMonkey may disagree in the last ULP, and an
+  outline that moves a pixel between two engines is not a bug anyone can debug from a screenshot.
 - `.pixel` serialisation is byte-reproducible, with zip entry timestamps pinned.
 
 Two builds with the same `seed` produce identical bytes, including the `.pixel` archive and
@@ -266,14 +302,25 @@ Two version numbers, and the difference between them matters.
 | | `VERSION` | `API_VERSION` |
 | --- | --- | --- |
 | Tracks | The package release. | The shape of the stable exports. |
-| Bumped by | Every release. | A breaking change to `buildSprite`, `buildAnimation`, `exportAssets` or the types they take. |
+| Bumped by | Every release. | A breaking change to any stable export: a rename, a removal, a newly required field, or a narrowed type. |
 | Use it to | Report a bug. | Pin your build script. |
 
-**Stable** — `buildSprite`, `buildAnimation`, `exportAssets`, `VERSION`, `API_VERSION`. Within
-one major version of `API_VERSION`, the only permitted changes are **additive**: a new
-export, a new optional plan field, a new optional spec field, a widened accepted type.
-Renaming, removing, reordering, or making an optional field required is a breaking change and
-bumps `API_VERSION` to the next major.
+**Stable** — `buildSprite`, `buildAnimation`, `exportAssets`, `getDirectionModel`,
+`buildWalkAnimation`, `exportEngineAssets`, `traceSvg`, `VERSION`, `API_VERSION`. Within one
+major version of `API_VERSION`, the only permitted changes are **additive**: a new export, a
+new optional plan field, a new optional spec field, a widened accepted type. Renaming,
+removing, reordering, or making an optional field required is a breaking change and bumps
+`API_VERSION` to the next major.
+
+That is why `getDirectionModel`, `buildWalkAnimation`, `exportEngineAssets` and `traceSvg`
+shipped without a bump: four new names, no removal and no signature change.
+`packages/core/test/npm-surface.test.ts` pins the list, and pins `API_VERSION` beside it, so
+"only additive" is a checked claim rather than an intention.
+
+**The `exports` map is part of the contract.** `.` is the stable surface, `./internal` names the
+escape hatch explicitly, `./package.json` is the manifest, and nothing else resolves. Adding a
+subpath is additive; removing one is breaking, because a build script that imported it stops
+compiling.
 
 **Internal** — `core`, `mcp`, `script`. They are shipped, they are documented, and they are
 where the engine's full power is. They are not covered by `API_VERSION` and may change in a
@@ -317,16 +364,208 @@ Nothing about the surface below changes when recipes land. `API_VERSION` stays a
 - **Fusing several sprites into one atlas.** `exportAssets` takes one `Sprite`, because how
   tags and frame metadata should merge across documents is a T-043 decision, not a guess.
   Build one animation with `buildAnimation` and the sheet is already one file.
-- **`meta.json` and the engine importers on the npm surface.** The asset contract
-  ([`ASSET-CONTRACT.md`](ASSET-CONTRACT.md)) and the four engine importers
-  ([`IMPORTERS.md`](IMPORTERS.md)) live in `@pixel/core` and are reached from the MCP server's
-  `finalize_document` as the opt-in `{type: "meta"}` and `{type: "engine"}` outputs. They are
-  not in `exportAssets`'s plan and not in this npm surface yet: the sheet JSON above already
-  carries frame geometry and timing for a build script that slices it itself, and the contract
-  exists for the case where a *game engine* is the consumer and the answer to "which engine"
-  belongs to the caller, not to a library.
-- **Writes, directories, globs, watch mode, cache keys, asset manifests.** `exportAssets`
-  returns bytes; where they go is the build script's business, and every one of those
-  choices is better made by a build system the project already has.
-- **Typedefs for the published bundle.** The npm package ships JavaScript. The types here are
-  documentation and editor help, not a distribution channel.
+- **Writes, directories, globs, watch mode, cache keys, asset manifests.** `exportAssets` and
+  `exportEngineAssets` return bytes; where they go is the build script's business, and every one
+  of those choices is better made by a build system the project already has.
+- **A whole eight-direction character set in one call.** `getDirectionModel` tells you which
+  three drawings an eight-direction set actually needs — four of the eight are exact transforms
+  and need no artwork — and `buildWalkAnimation` bakes one direction. Assembling the eight is
+  still a loop, because an eight-direction set is *three* drawings authored by a person and the
+  choice of which is exactly the kind of decision a recipe, not a primitive, should make.
+
+---
+
+## `getDirectionModel(canvas, anchor?)`
+
+Read-only and derived. It writes nothing, allocates no ids, and is safe to call in a build
+script's planning step — before anything has been drawn.
+
+```js
+const model = getDirectionModel({ width: 32, height: 32 });
+model.exact;        // ['N', 'E', 'S', 'W']     — transforms reproduce these exactly
+model.approximate;  // ['NE', 'SE', 'SW', 'NW'] — diagonals, which have to be drawn
+model.pivot;        // { x: 15.5, y: 31 }       — bottom centre, on `ground`
+```
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `baseDirection` | `'E'` | The direction the base pose is drawn in. Everything else is derived from it. |
+| `anchor` | `'ground' \| 'facing' \| 'origin'` | The point every direction leaves fixed, so a turn is a turn and not a slide. Defaults to `ground`, the contact point under the feet. |
+| `pivot` | `{x, y}` | That anchor's position on this canvas. |
+| `exact` | `DirectionId[]` | Directions a quarter turn and/or mirror reproduces. No artwork needed. |
+| `approximate` | `DirectionId[]` | The diagonals. There is no pixel-exact 45° transform and this engine will not approximate one. |
+| `directions` | `DirectionSummary[]` | All eight, clockwise from N: `facing`, `drawing`, `resolvedFrom`, and the canvas `matrix`. |
+
+`N` is screen-up and `S` is screen-down. On a top-down map screen-up is *away* from the camera,
+so if you want the front-view reading where `N` faces the viewer, use the tools directly and
+swap the two rows.
+
+Every matrix has integer coefficients: a quarter turn is a signed permutation of the axes and a
+mirror negates one row. No trigonometry appears anywhere in the model, which is why
+`packages/core/test/determinism.test.ts` bans `Math.sin` and friends from `src` — V8, JSC and
+SpiderMonkey may disagree in the last ULP, and a matrix that moves a pixel between two engines
+is not a bug anyone can debug.
+
+---
+
+## `buildWalkAnimation(spec)`
+
+`buildAnimation` plus the `generate_walk_cycle` command, **appended after your ops** so the rig
+and the rest pose exist before the gait is baked. One call is one direction.
+
+```js
+const walk = buildWalkAnimation({
+  seed: 7, width: 32, height: 32, name: 'hero',
+  layers: ['body', 'legL', 'legR'],
+  direction: 'S',
+  walk: { frames: 6, stride: 3 },
+  ops: [
+    {
+      command: 'create_rig',
+      params: {
+        parts: [
+          { name: 'body', pivot: { x: 16, y: 10 } },
+          { name: 'legL', pivot: { x: 14, y: 20 }, parent: 'body' },
+          { name: 'legR', pivot: { x: 18, y: 20 }, parent: 'body' },
+        ],
+      },
+    },
+    { command: 'draw_rect', params: { layer: 'body', rect: { x: 12, y: 8, w: 8, h: 12 }, color: '#8bac0f' } },
+    { command: 'draw_rect', params: { layer: 'legL', rect: { x: 13, y: 20, w: 2, h: 8 }, color: '#0f380f' } },
+    { command: 'draw_rect', params: { layer: 'legR', rect: { x: 17, y: 20, w: 2, h: 8 }, color: '#0f380f' } },
+  ],
+});
+```
+
+Every `AnimationSpec` field is inherited. On top:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `direction` | `DirectionId` | Defaults to `E`, the base drawing. A diagonal resolves from the cardinal it is nearest, and the command says so in its result. |
+| `anchor` | `DirectionAnchorName` | Defaults to `ground`. |
+| `pivot` | `{x, y}` | Explicit orientation pivot, overriding `anchor`. |
+| `walk.frames` | `number` | Frames in one gait cycle. Even counts read best: a cycle has two contacts. Defaults to 4. |
+| `walk.frameDurationMs` | `number` | Defaults to 120. |
+| `walk.stride` | `number` | Peak horizontal foot travel in pixels. Defaults to 2. |
+| `walk.bob` | `number` | Peak body lift, in pixels. Defaults to 1. |
+| `walk.legSwingDegrees` | `number` | Peak leg tilt at the ends of the swing. Defaults to 6. |
+| `walk.legs` / `arms` / `body` | `string[]` | Rig part names or ids. Omit to auto-detect from the names (`leg`/`foot`, `arm`/`hand`, `body`/`torso`). |
+| `walk.phaseOffset` | `number` | Whole frames to advance before frame 0, for staggering one loop against another. |
+| `walk.tagName` | `string` | Defaults to `walk_<direction lowercased>`. Use distinct names to fill a set. |
+| `walk.loopDirection` | `'forward' \| 'reverse' \| 'pingpong'` | Defaults to `forward`. |
+| `walk.repeat` | `number` | `0` loops forever. Defaults to `0`. |
+| `walk.targetFrame` | `number` | First destination frame. Defaults to the frame after the rig rest frame. |
+| `walk.overwrite` | `boolean` | Required when a destination frame already holds pixels. |
+
+**The loop closes.** The gait is integer triangle waves sampled modulo `frames`, so frame
+`frames` is the *same pose* as frame `0` and the last frame leads straight back into the first.
+No duplicated end frame, therefore no seam. A sine would read the same in a still and would put
+`Math.sin` into a path that decides pixels.
+
+Walk poses are transient: they are baked into frames and never pushed into the rig, so a
+document does not accumulate one pose per frame per direction. Use a `save_pose` op for a stance
+you want to keep.
+
+**Errors.** `CommandError` with a code, as everywhere. A missing rig is the realistic failure
+here and arrives as `ops[N] (create_rig) failed: …` or as the walk op's own context — named, not
+a surprise.
+
+---
+
+## `exportEngineAssets(sprite, plan)`
+
+`meta.json` plus one engine's files, as bytes. The asset contract
+([`ASSET-CONTRACT.md`](ASSET-CONTRACT.md)) and the four importers
+([`IMPORTERS.md`](IMPORTERS.md)) are `core` internals; this is the one call a build script needs
+so that nobody has to hand-assemble `{root, files, warnings}`, serialise the contract, validate
+the names and join the paths.
+
+```js
+const bundle = exportEngineAssets(sprite, { engine: 'godot', sheet: true });
+for (const file of bundle.files) {
+  await writeFile(join('assets', bundle.root, file.path), file.bytes);
+}
+console.log(bundle.warnings); // what Godot's mapping could not carry
+```
+
+| Plan field | Effect |
+| --- | --- |
+| `engine` | `'godot' \| 'unity' \| 'phaser' \| 'excalidraw'`. |
+| `meta` | Write `meta.json` too. Defaults to `true`; every importer reads a contract. |
+| `metaPath` | Where it goes, relative to the root. Defaults to `meta.json`. |
+| `sheet` | `true` packs one with default options; an object passes layout options to `core.buildSpritesheet`. Omit for a bundle of individual PNGs. |
+| `scale` | Integer upscale for the packed sheet. Defaults to 1. |
+| `background` | Fill behind the sheet instead of transparency. |
+| `outputs` | Other files in the bundle, listed in the contract. |
+| `license` | Licensing. Never invented: omit it and the contract says nothing about permission. |
+| `directions` | Per-frame facing labels, one per frame. **A caller option, never derived** — an unrecognised label is refused rather than dropped, because a character that silently faces the wrong way in the game is not traceable from the sheet. |
+| `name` | File name stem. Defaults to the sprite's name. |
+| `directory` | Override the importer's suggested root. |
+| `options` | Passed straight to the chosen importer. `godot` takes none and says so. |
+
+The result is `{root, files, warnings, meta, naming}`. `files` are `{path, bytes, role}` relative
+to `root`.
+
+**`warnings` is a lossiness list, not a score.** There is no number here to optimise and no
+verdict to move artwork towards — these are the mappings from the contract's own S9 that the
+importer actually hit, which is what a build log needs. `naming` is likewise a report with
+machine-readable diagnostics, not a grade. A naming *error* (a reserved device name, a
+case-folded collision) refuses the whole call, because a bundle whose files break on a Windows
+build machine is a broken build and it is better found here than in CI naming nothing.
+
+**Determinism.** The contract carries no timestamp and no invented `uid://`, the file order is
+the importer's, and the naming report is a pure function of the names. Same sprite, same plan,
+same bytes, in any process.
+
+**It refuses** what it cannot describe honestly: a tileset or a tilemap document has no
+`schemaVersion 1` contract, an unrecognised facing is an error, and a wrong-length `directions`
+array is an error. Emitting a `kind: "sprite"` file for a tileset would be the
+confidently-wrong answer that costs an integrator a day.
+
+---
+
+## `traceSvg(spec)`
+
+A `SpriteSpec` plus `svg`: the road from vector to pixel, in one call. A PNG import cannot
+recover the geometry; a traced outline lands on the grid exactly.
+
+```js
+const icon = traceSvg({
+  svg: await readFile('assets/logo.svg', 'utf8'),
+  width: 32, height: 32, name: 'logo',
+  palette: ['#1a1c2c', '#5d275d', '#ef7d57', '#ffcd75'],
+  scale: 16,           // a 512-unit-wide icon lands 32px wide
+});
+```
+
+`svg` is the source as **text**, not a path: core has no filesystem, so the build script reads
+the file. On top of `SpriteSpec`: `layer`, `frame`, `color` (flatten the whole trace to one
+colour), `scale` (SVG user units per pixel), `offset`, `tolerance`, `rect` and `replace`.
+
+**Coverage is hard-edged by design.** A traced outline is a pixel edge, not a ramp of
+intermediate alphas; run an `antialias` op afterwards if the staircase is too coarse.
+
+**What it refuses.** `transform` on any element, a `<g>` with an inherited `fill`, and
+`fill: url(#gradient)` — all of which would put the artwork in the wrong place without saying
+so. Strokes are never traced: a stroke-only SVG produces nothing and says so.
+
+**Reading the refusal.** `editor.execute` re-wraps every command failure, so the error you
+catch has code `command_failed` and the machine-readable reason nested one level down:
+
+```js
+try {
+  traceSvg({ svg, width: 32, height: 32 });
+} catch (error) {
+  error.code;                          // 'command_failed' — the op failed
+  error.details.code;                  // 'invalid_params' — the arguments were wrong
+  error.details.details.reason;        // 'svg_unsupported' | 'svg_malformed' | 'svg_empty'
+}
+```
+
+That is the shape every op in this API throws, not something specific to the tracer: a
+build script that branches on `error.details.details.reason` is branching on the reason the
+document refused, which is the only part of the three that says anything about the SVG.
+
+**Determinism.** The tracer's trigonometry is Cody-Waite range reduction plus the fdlibm
+minimax kernels rather than `Math.sin`, for the reason above. Same SVG, same canvas, same
+pixels, on every machine.

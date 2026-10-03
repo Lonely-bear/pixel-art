@@ -196,7 +196,9 @@ npx -y dotloom-mcp --version
 
 还有一种用法，既不需要客户端也不需要人：构建脚本。不用 GUI，不用 MCP 客户端，
 没有人类在环里。`buildSprite`、`buildAnimation` 和 `exportAssets` 会把一份规格变成
-成品文件，以 `devDependency` 的形式使用。
+成品文件，以 `devDependency` 的形式使用。这个周期的工作又带来了四个：八方向角色
+用的 `getDirectionModel` 和 `buildWalkAnimation`、引擎包用的 `exportEngineAssets`，
+以及矢量轮廓用的 `traceSvg`。
 
 ```js
 import { buildSprite, exportAssets } from 'dotloom-mcp';
@@ -214,14 +216,30 @@ for (const file of exportAssets(slime, { sheet: true, source: true })) {
 ```
 
 同一个种子，每次都是同样的字节 —— 这正是把生成的资产纳入版本管理的前提。API 只
-返回字节，绝不碰磁盘；文件放在哪里由构建脚本决定。**[`docs/API-ZH.md`](docs/API-ZH.md)
-给出完整接口面、确定性契约和版本策略**（[English](docs/API.md)）：哪些是稳定的、
-哪些是内部的、哪些会在大版本里变。
+返回字节，绝不碰磁盘；文件放在哪里由构建脚本决定。
+
+**类型随包一起发布。** TypeScript 使用者拿到的是真正的签名，所以写错调用是编译
+错误，而不是运行时的意外：
+
+```ts
+import { buildSprite, type SpriteSpec, type ExportPlan } from 'dotloom-mcp';
+
+const spec: SpriteSpec = { seed: 1, width: 16, height: 16, name: 'hero' };
+const plan: ExportPlan = { sheet: true, gif: { scale: 4 } };
+exportAssets(buildSprite(spec), plan);
+```
+
+解析走包的 `exports` 映射：`.` 是稳定接口面，`./internal` 显式地命名逃生舱，
+其他什么都解析不了。
+
+**[`docs/API-ZH.md`](docs/API-ZH.md) 给出完整接口面、确定性契约和版本策略**
+（[English](docs/API.md)）：哪些是稳定的、哪些是内部的、哪些会在大版本里变。
 
 该包还直接暴露整套引擎，不必经过上面这种任务形函数：
 
 ```js
 import { VERSION, core, mcp, script } from 'dotloom-mcp';
+// 或者：import { core } from 'dotloom-mcp/internal';
 
 const document = core.createSprite({ width: 32, height: 32 });
 console.log(VERSION, document.width, typeof mcp.createPixelServer, typeof script.ScriptRuntime);
