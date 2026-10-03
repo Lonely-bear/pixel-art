@@ -259,6 +259,21 @@ const DIMENSIONS_WITH_OUTLINE: typeof DEFAULT_DIMENSIONS = [
   },
 ];
 
+/**
+ * Look `outline` up by id rather than by position.
+ *
+ * This array used to be indexed as `[4]`, which was correct while five dimensions existed and
+ * silently became `motion` the moment a sixth registered. Positional indexing into a registry is
+ * the same mistake as walking a band table in the order it was written rather than the direction it
+ * is read, and it fails in the direction that looks fine: the test kept running and asserted the
+ * wrong object's precondition.
+ */
+function outlineEntry(): (typeof DEFAULT_DIMENSIONS)[number] {
+  const entry = DIMENSIONS_WITH_OUTLINE.find((dimension) => dimension.id === 'outline');
+  if (entry === undefined) throw new Error('outline is not in DIMENSIONS_WITH_OUTLINE');
+  return entry;
+}
+
 /** A closed 1px ink contour on `size`x`size`. The negative control. */
 function rectContour(size: number, rings = 1): Sprite {
   const b = block(size, 16 - Math.floor(size / 2), 16 - Math.floor(size / 2));
@@ -1425,7 +1440,7 @@ describe('outline analyzer', () => {
     const context = contextOf(spriteOf(ops));
     expect(requiresReadableSubject(context)).toBe('no-subject');
     expect(outlineApplicability(context)).toBe('no-outline');
-    expect(DIMENSIONS_WITH_OUTLINE[4].applies(context)).toBe('no-subject');
+    expect(outlineEntry().applies(context)).toBe('no-subject');
 
     // **And the shipped registration agrees with the local one on every input, not just this one.**
     // `DIMENSIONS_WITH_OUTLINE` is built around `DEFAULT_DIMENSIONS` rather than around a private
@@ -1439,7 +1454,7 @@ describe('outline analyzer', () => {
     expect(shipped!.analyze).toBe(outlineAnalyzer);
     for (const sprite of [bareDisc(), discContour(), rectContour(16), spriteOf(ops)]) {
       const c = contextOf(sprite);
-      expect(shipped!.applies!(c)).toBe(DIMENSIONS_WITH_OUTLINE[4].applies(c));
+      expect(shipped!.applies!(c)).toBe(outlineEntry().applies(c));
     }
   });
 

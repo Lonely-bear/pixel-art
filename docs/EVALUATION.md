@@ -705,6 +705,77 @@ note on that image is what settles it (§6.4).
 | `span < 0.25` | −100 | `subject-undersized` |
 | `share < 50/100` | −150 | `fragmented-silhouette` (severity 0.70) |
 
+
+#### What shipped, and the four readings this section left open
+
+`motion` is registered against `motionApplicability` unchanged, so the applicability argument above
+needed no revision: the exclusion is the aggregator's and the analyzer is never reached for either
+reason. `MotionSequence` is the measurement record and `measureMotion(context)` is exported beside
+the other five analyzers' `measure*`. Four things §4.6 does not state were decided rather than
+derived, and each is written down here rather than left in the code:
+
+1. **The median is the LOWER median** of the internal transitions — `values[floor((n - 1) / 2)]` of the
+   sorted set — which is the same reading `benchmarks/corpus/report.ts`'s `distribute` uses. Every
+   input is an integer count, so there is no rounding question; the choice only decides which of two
+   adjacent integers a set of even length reports, and having one median in this repository is worth
+   more than having the better of the two.
+2. **The seam-ratio table is read ASCENDING with a `return`, not with an overwrite.** This is the
+   opposite of §4.5's `outlineShare` table and the right way round for this one: `outlineShare`
+   *rewards* a high ratio so its rows are walked upward and the last match wins, while the seam
+   ratio *punishes* a high ratio so the first match wins. Read either in the other's direction and
+   the §4.4 inverted-band defect returns — a descending walk gives a ratio of 0 the loosest row.
+   **At ratio 0 this table returns 1000, and that is right**: a loop whose seam changes nothing has
+   earned the top band, and the sequence that would earn it dishonestly (every frame identical) is
+   the one the exclusion removes before the analyzer runs.
+3. **`loop-seam-pop` is the one code in the table below with no Δ row.** The band table has already
+   priced the pop; the code exists to name it. Severity is 0.30 past 1.75 and 0.55 past 2.50, so the
+   blocking half is the 2.50 row rather than the 1.75 one.
+4. **A frame with no ink is excluded from the area and centroid rows and from nothing else.**
+   `areaSpread` divides by the mean area and a blank frame has area 0, so unguarded it reads
+   `rhu(64 * 1000, rhu(64, 2)) = 2000` on a two-frame sheet — a per-mille 1000 twice over on a
+   document whose real defect is `empty-frame`, which the aggregator already reports at severity
+   1.00. This is §4.5's per-frame Δ guard arriving one dimension later, and the guard is
+   `MotionSequence.inkedFrames`. Churn keeps blank frames, because a frame going blank really does
+   change that many pixels and the reading about it is true.
+
+**The cost of that last one is stated rather than hidden**: on a sheet where fewer than two frames
+carry ink, the area and centroid rows have nothing to compare and stay silent. No `ExcludedReason`
+names that absence and none was added, because the only way to reach it is a document the aggregator
+has already blocked on `empty-frame` at severity 1.00 — a new member of a closed vocabulary that
+no agent can ever branch on is a cost, not a fix.
+
+#### What the corpus reached, and the five codes it did not
+
+`motion` is the one dimension whose corpus distribution cannot be read as "does it fire on good
+work", because the corpus has **two** sequences it can measure out of 76 buildable cases:
+`motion/worst-frame-wins-16` and `motion/blank-frame-16`. Every other case is `single-frame` and
+`motion/frames-identical-16` is `no-motion-content`. That is the exclusion working — it is also why
+`evaluate` reports `single-frame` on 73 rows instead of `not-implemented` — and it is the reason the
+remaining coverage below is stated as a gap rather than quietly left.
+
+**One code of the seven has a corpus case: `silhouette-instability`,** carried by
+`motion/worst-frame-wins-16`, whose frame 0 is a 64px block and whose frame 1 is three masses
+totalling 54px — `areaSpread` `rhu(10 * 1000, rhu(118, 2)) = 169` against the 150 gate, a real area
+change drawn in on purpose. That case's verdict moved from `warn` to `fail` when this dimension
+landed, and the direction is the finding: it is the only row in the corpus whose *clean* subject
+turns out to flicker. `motion/blank-frame-16` reads 1000 with no issue at all, which is the guard in
+point 4 above holding on the one case designed to break it.
+
+**The other six — `loop-seam-pop`, `loop-seam-jump`, `frame-jitter`, `timing-outlier`,
+`timing-mismatch` and `loop-duration-out-of-range` — have no corpus case and are owed one each.**
+§3.5's fourth rule is that a code cannot be declared until a case says what it means, so they are
+absent from `DEFECT_KINDS` rather than present-and-red: adding the members without the cases would
+make the closed list a list of unimplemented features, which is the failure the list exists to
+prevent. They are covered today by MUST FIRE / NEAR MISS pairs in `quality-motion.test.ts`, which
+is a regression guard but not the corpus's ground truth by construction, and the difference is the
+whole reason `benchmarks/` exists.
+
+**Six named thresholds, measured against nothing, and §10 item 10 covers why.** No loop in this
+repository has been rated by a person who then looked at these numbers, so the seam bands, the
+`areaSpread` steps and the timing gates are a hypothesis in exactly the sense §6.2 uses. The one
+thing that can be said now is that §4.6 is the only dimension here whose defects are objective — a
+loop that pops by arithmetic is wrong whichever way a person draws the next frame — so it is the
+cheapest of the six to calibrate and the one a rater would be least likely to argue with.
 **Issue codes.**
 
 | code | fires when | severity | blocking |

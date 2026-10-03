@@ -69,7 +69,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -221,7 +222,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": null
+          "outline": null,
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -445,7 +447,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": null
+          "outline": null,
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -545,7 +548,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -658,7 +662,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -842,7 +847,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": null
+          "outline": null,
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -957,7 +963,8 @@
         "noBlocking": false,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 12,
@@ -1059,7 +1066,8 @@
         "noBlocking": false,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 2,
@@ -1182,7 +1190,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": null
+          "outline": null,
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -1347,7 +1356,8 @@
         "noBlocking": false,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 18,
@@ -1449,7 +1459,8 @@
         "noBlocking": false,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 2,
@@ -1551,7 +1562,8 @@
         "noBlocking": false,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 2,
@@ -1669,7 +1681,8 @@
         "noBlocking": false,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 3,
@@ -1772,7 +1785,8 @@
         "noBlocking": false,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -1875,7 +1889,8 @@
         "noBlocking": false,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -1979,7 +1994,8 @@
         "noBlocking": false,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -2073,7 +2089,8 @@
         "noBlocking": false,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -2163,7 +2180,8 @@
         "noBlocking": false,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -2240,7 +2258,8 @@
         "noBlocking": false,
         "preconditions": {
           "silhouette": null,
-          "outline": null
+          "outline": null,
+          "motion": "single-frame"
         },
         "measure": {
           "N": [
@@ -2319,7 +2338,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": "no-subject",
-          "outline": "no-subject"
+          "outline": "no-subject",
+          "motion": "single-frame"
         },
         "measure": {
           "N": [
@@ -2418,7 +2438,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": "no-subject",
-          "outline": "no-subject"
+          "outline": "no-subject",
+          "motion": "single-frame"
         },
         "measure": {
           "N": [
@@ -2516,7 +2537,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -2566,6 +2588,10 @@
         {
           "kind": "fragmented-silhouette",
           "note": "Frame 1 only: largest is 25 of 54 px. Blocking."
+        },
+        {
+          "kind": "silhouette-instability",
+          "note": "§4.6, and it is a real fact about this case rather than an accident of it: frame 0 is a 64px block and frame 1 is three masses totalling 54px, so `areaSpread` is `rhu(10 * 1000, rhu(118, 2)) = rhu(10000, 59) = 169` against §4.6's 150 gate. Blocking at 0.60."
         }
       ],
       "recipe": {
@@ -2648,7 +2674,8 @@
           "detached-pieces",
           "flat-value",
           "fragmented-silhouette",
-          "narrow-value-range"
+          "narrow-value-range",
+          "silhouette-instability"
         ],
         "absent": [
           "interior-hole",
@@ -2956,7 +2983,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -3041,7 +3069,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -3126,7 +3155,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -3211,7 +3241,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -3296,7 +3327,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -3381,7 +3413,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -3466,7 +3499,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -3551,7 +3585,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -3636,7 +3671,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -3711,7 +3747,8 @@
         "noBlocking": false,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -3786,7 +3823,8 @@
         "noBlocking": false,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -3861,7 +3899,8 @@
         "noBlocking": false,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -3939,7 +3978,8 @@
         "noBlocking": false,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -4018,7 +4058,8 @@
         "noBlocking": false,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -4087,7 +4128,8 @@
         "noBlocking": false,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -4155,7 +4197,8 @@
         "noBlocking": false,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -4175,7 +4218,8 @@
       "expect": {
         "preconditions": {
           "silhouette": "no-subject",
-          "outline": "no-subject"
+          "outline": "no-subject",
+          "motion": "single-frame"
         },
         "noBlocking": true
       }
@@ -4189,7 +4233,8 @@
       "expect": {
         "preconditions": {
           "silhouette": "no-subject",
-          "outline": "no-subject"
+          "outline": "no-subject",
+          "motion": "single-frame"
         },
         "noBlocking": true
       }
@@ -4203,7 +4248,8 @@
       "expect": {
         "preconditions": {
           "silhouette": "no-subject",
-          "outline": "no-subject"
+          "outline": "no-subject",
+          "motion": "single-frame"
         },
         "noBlocking": true
       }
@@ -4217,7 +4263,8 @@
       "expect": {
         "preconditions": {
           "silhouette": "no-subject",
-          "outline": "no-subject"
+          "outline": "no-subject",
+          "motion": "single-frame"
         },
         "noBlocking": true
       }
@@ -4231,7 +4278,8 @@
       "expect": {
         "preconditions": {
           "silhouette": "no-subject",
-          "outline": "no-subject"
+          "outline": "no-subject",
+          "motion": "single-frame"
         },
         "noBlocking": true
       }
@@ -4245,7 +4293,8 @@
       "expect": {
         "preconditions": {
           "silhouette": "no-subject",
-          "outline": "no-subject"
+          "outline": "no-subject",
+          "motion": "single-frame"
         },
         "noBlocking": true
       }
@@ -4259,7 +4308,8 @@
       "expect": {
         "preconditions": {
           "silhouette": "no-subject",
-          "outline": "no-subject"
+          "outline": "no-subject",
+          "motion": "single-frame"
         },
         "noBlocking": true
       }
@@ -4273,7 +4323,8 @@
       "expect": {
         "preconditions": {
           "silhouette": "no-subject",
-          "outline": "no-subject"
+          "outline": "no-subject",
+          "motion": "single-frame"
         },
         "noBlocking": true
       }
@@ -4287,7 +4338,8 @@
       "expect": {
         "preconditions": {
           "silhouette": "no-subject",
-          "outline": "no-subject"
+          "outline": "no-subject",
+          "motion": "single-frame"
         },
         "noBlocking": true
       }
@@ -4301,7 +4353,8 @@
       "expect": {
         "preconditions": {
           "silhouette": "no-subject",
-          "outline": "no-subject"
+          "outline": "no-subject",
+          "motion": "single-frame"
         },
         "noBlocking": true
       }
@@ -4315,7 +4368,8 @@
       "expect": {
         "preconditions": {
           "silhouette": null,
-          "outline": null
+          "outline": null,
+          "motion": "single-frame"
         },
         "noBlocking": true,
         "measure": {
@@ -4361,7 +4415,8 @@
       "expect": {
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "noBlocking": false,
         "measure": {
@@ -5203,7 +5258,8 @@
         "verdict": "fail",
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         }
       }
     },
@@ -5822,7 +5878,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         }
       }
     },
@@ -6409,7 +6466,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": null
+          "outline": null,
+          "motion": "single-frame"
         }
       }
     },
@@ -6746,7 +6804,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         }
       }
     },
@@ -7150,7 +7209,8 @@
         "verdict": "fail",
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         }
       }
     },
@@ -7337,7 +7397,8 @@
         "verdict": "fail",
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         }
       }
     },
@@ -7956,7 +8017,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         }
       }
     },
@@ -8072,7 +8134,8 @@
           "noBlocking": true,
           "preconditions": {
             "silhouette": "no-subject",
-            "outline": "no-subject"
+            "outline": "no-subject",
+            "motion": "single-frame"
           }
         }
       },
@@ -8186,7 +8249,8 @@
           ],
           "preconditions": {
             "silhouette": "no-subject",
-            "outline": "no-subject"
+            "outline": "no-subject",
+            "motion": "single-frame"
           }
         }
       },
@@ -8272,7 +8336,8 @@
         "noBlocking": false,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -8360,7 +8425,8 @@
         "noBlocking": false,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -8461,7 +8527,8 @@
         "verdict": "fail",
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 3,
@@ -8589,7 +8656,8 @@
         "verdict": "fail",
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 1,
@@ -8732,7 +8800,8 @@
         "verdict": "fail",
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "connectivity": {
           "four": 7,
@@ -8900,7 +8969,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "measure": {
           "N": [
@@ -9046,7 +9116,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "measure": {
           "N": [
@@ -9141,7 +9212,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "measure": {
           "N": [
@@ -9253,7 +9325,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "measure": {
           "N": [
@@ -9756,7 +9829,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "measure": {
           "N": [
@@ -10259,7 +10333,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "measure": {
           "N": [
@@ -10362,7 +10437,8 @@
         "noBlocking": false,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "measure": {
           "N": [
@@ -10476,7 +10552,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "measure": {
           "N": [
@@ -10619,7 +10696,8 @@
         "noBlocking": true,
         "preconditions": {
           "silhouette": null,
-          "outline": "no-outline"
+          "outline": "no-outline",
+          "motion": "single-frame"
         },
         "measure": {
           "N": [

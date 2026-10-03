@@ -591,6 +591,40 @@ export const QUALITY_FIX_ADVICE: Readonly<Record<string, CodeAdvice>> = {
     guidance:
       'Every frame is byte-identical. If you meant to animate this, one of them was never drawn; if you meant a hold, this is fine and the advisory can be ignored.',
   },
+  'silhouette-instability': {
+    noRegion:
+      'The issue compares whole frames, so it names no region: §4.6 measures the spread of solid area across the sequence, and a shape that changes size is not a place on any one canvas.',
+    guidance:
+      'No op, and this one is arithmetically impossible rather than a judgement call. §4.6 fires at an area spread above 150 per-mille, so the sprite genuinely occupies a different number of pixels on one frame than on the others — repairing it means *removing or adding pixels to a frame*, which is the drawing, not a repair. `silhouette` will name a region on its own issues (a detached piece, a hole), so if the instability is one stray mass appearing on one frame, that is the code to read and the frame to fix. Read `motion`\'s own numbers first: the spread, and which frame is the outlier. An area that grows and shrinks by a little is often a deliberate squash-and-stretch on a walk cycle and is worth keeping; an area that collapses because a frame was drawn with a limb missing is damage. Either way the correction is to redraw that frame, then re-run `evaluate` — note that fixing it can change `worstFrameWins` selection, so the number to trust afterwards is not the one you started with.',
+  },
+  'loop-seam-pop': {
+    guidance:
+      'No op. §4.6 compares the last frame back to the first, so the discontinuity is between two frames you already drew and there is no third frame to repair — the loop is either played forward or closed by changing one of the two endpoints. Read the seam pixel count and the loop duration before acting: a loop that pops because the character genuinely travels and returns is doing what a walk cycle does, and a pop on a hold or a breathing loop is damage. If it is damage, redraw the frame where the jump lands so its silhouette matches frame 0, then re-run `evaluate`.',
+  },
+  'loop-seam-jump': {
+    guidance:
+      'No op, for the same reason as `loop-seam-pop`, and read that guidance first — this code is the positional form of the same defect. The seam step is measured in pixels, so read how far it is before deciding: a one-pixel return is rounding, a two-pixel return on a 16px sprite is not. `apply_transform {dx}` on the returning frame is the mechanical answer if the offset is genuinely uniform across a loop, but a walk cycle whose stride is uneven needs its own frame redrawn.',
+  },
+  'frame-jitter': {
+    guidance:
+      'No op. This fires on an *internal* transition being much larger than the median transition, which is a claim about one frame in the middle of the sequence rather than about the two ends. Read the churn numbers: the offending transition and the median beside it. A single frame that jumps further than every other is usually a frame drawn at the wrong size or with a limb in the wrong position, and the correction is to redraw it. Be aware that a deliberate accent — a fast strike in an otherwise even cycle — looks identical to a mistake here, and §4.6 deliberately does not try to tell those apart.',
+  },
+  'timing-outlier': {
+    guidance:
+      'No op, and this is the one §4.6 code with a real op available, which is worth saying plainly. The fix is `set_frame_durations`, and it is mechanical: find the frame held far longer than the median, and decide whether that hold is the beat you wanted. A held frame at a contact point is standard animation practice; a held frame in the middle of an even stride is a typo. Read the durations array before changing anything, because one outlier among four similar frames means something different from one outlier among forty.',
+  },
+  'timing-mismatch': {
+    noRegion:
+      'The issue compares frame durations against the motion between frames, so it names no region: there is no place on the canvas where the timing is wrong.',
+    guidance:
+      'No op. §4.6 fires this when the frames move by uneven amounts but are held for equal time, which means the *timing* is wrong rather than the pixels, and the correction is `set_frame_durations`. Read the two numbers it reports together: the per-mille spread of the movement between frames, and the spread of the durations. Both near zero is fine. Movement uneven with durations uneven is a deliberate hold and this code stays silent by design — that is the near-miss case, not an oversight. Only uniform timing over uneven motion fires, and then the fix is to give the frame that moves least the shortest hold.',
+  },
+  'loop-duration-out-of-range': {
+    noRegion:
+      'The issue is about the whole loop\'s duration rather than a place on a canvas, so it names no region.',
+    guidance:
+      'No op. §4.6 checks the cycle against a window, and the correction is `set_frame_durations` on the frames that make it up. Read the reported loop duration and the window first: a cycle faster than the floor is usually too few frames for the motion rather than durations that are too long, in which case adding a frame fixes it and shortening the others does not. This is an advisory at 0.30 because loop speed is a design decision more often than it is an error.',
+  },
   'outline-gap': {
     noRegion:
       'The issue names no region: the contour stops and resumes in several places around the whole silhouette, so the gaps are scattered by construction and bounding them all would be a box around the sprite.',
@@ -956,7 +990,20 @@ export function qualityGateRefusalMessage(decision: QualityGateDecision): string
   const count = extra > 0 ? ` (+${extra} more)` : '';
   // The body is what gets clipped, never the tail. A refusal whose actionable sentence was cut off
   // to make room for more reasons is a worse refusal than one that named fewer of them.
-  const body = clip(named.join('; ') + count, Math.max(0, REFUSAL_MESSAGE_BUDGET - prefix.length - REFUSAL_TAIL.length - 2));
+  //
+  // **The count is budgeted BEFORE the body, not concatenated onto it and clipped with it.** It used
+  // to be appended first and then clipped as part of the same string, which meant a decision whose
+  // named refusals ran long lost the count entirely — and this function's own docstring says the
+  // count is kept rather than dropped, because "+4 more" is actionable and a silent truncation is
+  // not. §4.6 registering `motion` added a fourth blocking refusal to
+  // `motion/worst-frame-wins-16` and exposed it: three long prose refusals fill the budget, and the
+  // message silently named three of seven. A stated guarantee the code does not keep is the same
+  // defect class as a threshold that fires on the wrong side of its own unit.
+  const room = Math.max(
+    0,
+    REFUSAL_MESSAGE_BUDGET - prefix.length - REFUSAL_TAIL.length - 2 - count.length,
+  );
+  const body = clip(named.join('; '), room) + count;
   return `${prefix}${body}. ${REFUSAL_TAIL}`;
 }
 

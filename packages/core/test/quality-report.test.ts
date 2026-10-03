@@ -26,6 +26,7 @@ import { valueAnalyzer } from '../src/quality/value.js';
 import { paletteAnalyzer } from '../src/quality/palette.js';
 import { noiseAnalyzer } from '../src/quality/noise.js';
 import { outlineAnalyzer } from '../src/quality/outline.js';
+import { motionAnalyzer } from '../src/quality/motion.js';
 import {
   assertReportInvariants,
   DEFAULT_QUALITY_WEIGHTS,
@@ -453,34 +454,32 @@ describe('motion applicability is the aggregator\'s, and stays the contract\'s t
 });
 
 describe('a dimension with no analyzer is reported as unmeasured, not as perfect', () => {
-  it('accounts for every id exactly once while one of six does not exist', () => {
-    // **Was "five of six", then "four of six", then "three of six", then "two of six"**, and each rename is the
-    // point rather than a chore: `value` landed with an analyzer and a registration, then `noise` did,
-    // then `palette`, then `outline`.
-    // The invariant underneath is unchanged and is the reason this test exists — no id is in neither
-    // map, which is the silent hole a `Record` would have had no way to express.
+  it('accounts for every id exactly once, and every absence names a reason', () => {
+    // **Was "one of six does not exist", and the rename is the point rather than a chore.** `value`
+    // landed with an analyzer and a registration, then `noise`, then `palette`, then `outline`, then
+    // `motion`. The invariant underneath never changed and is the reason this test exists — no id is
+    // in neither map, which is the silent hole a `Record` would have had no way to express.
     //
-    // **`outline` is in `excluded` and its reason is `no-outline`, not `not-implemented`, and that is
-    // §4.5's own revision measured on this fixture.** `insetBy(2)` is a plain flat block with no
-    // contour drawn on it, so `outlineApplicability` declines the whole document and says *why*:
-    // "the artwork declares no contour" is a claim about the picture, while `not-implemented` is a
-    // claim about the build. Both are exclusions — the key leaves `dimensions` and its weight leaves
-    // the §5.2 denominator either way — but only one of them is honest about what was not read. So
-    // the two absent ids now abstain for **different reasons**, and asserting the pair is the point:
-    // a registry that reported both as `not-implemented` would be reporting a build fact about a
-    // dimension that is very much implemented and running.
+    // **Both absences now name a reason about the document rather than about the build.**
+    // `insetBy(2)` is a plain flat block with no contour and one frame, so `outlineApplicability`
+    // declines it with `no-outline` ("the artwork declares no contour") and `motionApplicability`
+    // declines it with `single-frame` ("there is one frame"). Neither is `not-implemented`, which
+    // was the honest answer while a dimension was genuinely unwritten and is now a claim about
+    // nothing: all six are implemented and running. A registry still reporting `not-implemented`
+    // here would be asserting a build fact that is false.
     const report = evaluate(firstContext(insetBy(2)));
     expect(Object.keys(report.dimensions)).toEqual(['silhouette', 'value', 'palette', 'noise']);
     expect(report.excluded).toEqual({
       outline: 'no-outline',
-      motion: 'not-implemented',
+      motion: 'single-frame',
     });
     // And the two reasons are not interchangeable: on a document that *does* declare a contour,
-    // `outline` is measured and `motion` still is not.
+    // `outline` is measured and `motion` still is not — the first absence is about the picture and
+    // the second is about the build, which is the distinction the pair exists to keep.
     const contoured = evaluate(firstContext(ringedBlock()));
     expect(contoured.dimensions.outline).toBeDefined();
     expect(contoured.excluded.outline).toBeUndefined();
-    expect(contoured.excluded.motion).toBe('not-implemented');
+    expect(contoured.excluded.motion).toBe('single-frame');
     expect(reportInvariantViolations(report)).toEqual([]);
   });
 
@@ -665,7 +664,7 @@ describe('the blocking list is assembled from present dimensions and the aggrega
  * ------------------------------------------------------------------ */
 
 describe('the registry is partial on purpose and works that way', () => {
-  it('registers five of six today, and DEFAULT_ANALYZERS is a projection of the registry', () => {
+  it('registers all six today, and DEFAULT_ANALYZERS is a projection of the registry', () => {
     // **Was "registers silhouette, value, palette and noise today"** — four of six, with two ids
     // reading `analyzerFor() === undefined`. `outline` is the fifth and the assertion is the same
     // shape with one fewer hole in it: `analyzerFor('outline')` now returns the analyzer,
@@ -697,6 +696,7 @@ describe('the registry is partial on purpose and works that way', () => {
       'palette',
       'noise',
       'outline',
+      'motion',
     ]);
     expect(DEFAULT_ANALYZERS).toEqual([
       silhouetteAnalyzer,
@@ -704,17 +704,19 @@ describe('the registry is partial on purpose and works that way', () => {
       paletteAnalyzer,
       noiseAnalyzer,
       outlineAnalyzer,
+      motionAnalyzer,
     ]);
     expect(analyzerFor('silhouette')).toBe(silhouetteAnalyzer);
     expect(analyzerFor('value')).toBe(valueAnalyzer);
     expect(analyzerFor('palette')).toBe(paletteAnalyzer);
     expect(analyzerFor('noise')).toBe(noiseAnalyzer);
     expect(analyzerFor('outline')).toBe(outlineAnalyzer);
-    // **One** dimension has no analyzer, which is a fact about the build rather than about any
-    // document, and is reported as such. This was a two-element list until `outline` registered.
-    for (const id of ['motion'] as const) {
-      expect(analyzerFor(id)).toBeUndefined();
-    }
+    expect(analyzerFor('motion')).toBe(motionAnalyzer);
+    // **All six are written, so `not-implemented` is now unreachable from this pipeline.** It was a
+    // two-element list, then one, and is now empty — which is the honest state of the judgement
+    // layer, and the reason this file's `ExcludedReason` assertions had to be rewritten from
+    // "one dimension has no analyzer" to "every absence names a reason about the document".
+    expect(QUALITY_DIMENSIONS.filter((id) => analyzerFor(id) === undefined)).toEqual([]);
     // The projection really is a projection: one entry per registration, in registry order, with no
     // second list to keep in step. Asserted as a length rather than only as an equality so a
     // registration added *and* an entry added elsewhere cannot satisfy both by coincidence.

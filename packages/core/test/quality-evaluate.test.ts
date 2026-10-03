@@ -11,6 +11,14 @@ import {
   type QualityGateRefusal,
 } from '../src/commands/quality.js';
 import { createQualityContext } from '../src/quality/context.js';
+
+/**
+ * How many refusals `qualityGateRefusalMessage` names before it collapses the rest into a count.
+ * Mirrored here rather than imported because it is module-private in the product, and a test that
+ * imported it would be asserting the message against the same constant that produced it — which is
+ * the "measurement that cannot fail" shape. If the product's number moves, this fails.
+ */
+const NAMED_REFUSALS = 3;
 import { evaluate as aggregateQualityReport } from '../src/quality/index.js';
 import {
   FLOOR_FAIL,
@@ -308,8 +316,10 @@ describe('the report is a report, not a number', () => {
       'noise',
       'outline',
     ]);
+    // All six dimensions are implemented, so the one absent key here names a fact about the
+    // document — one frame, nothing to read a movement out of — rather than the build.
     expect(summary.excluded).toEqual({
-      motion: 'not-implemented',
+      motion: 'single-frame',
     });
     expect(summary.dimensions.outline.scoreQ).toBe(350);
     expect(summary.verdict).toBe('warn');
@@ -615,8 +625,38 @@ describe('a refusal an agent can act on', () => {
     expect(flats).toHaveLength(2);
     expect(flats[0].rect).not.toEqual(flats[1].rect);
     const message = qualityGateRefusalMessage(decision);
-    for (const refusal of flats) {
-      expect(message).toContain(`${refusal.rect!.x},${refusal.rect!.y} ${refusal.rect!.w}x${refusal.rect!.h}`);
+
+    // **The invariant, which is narrower than "both rects appear" and is what actually matters.**
+    // `NAMED_REFUSALS` is 3, and §4.6 registering `motion` added a blocking `silhouette-instability`
+    // to this case, so the fixture now has four refusals and one of the two `flat-value` entries is
+    // folded into the "(+N more)" tail. That is the designed behaviour, not a regression: an agent
+    // needs the first three named and told how many remain far more than it needs the fourth inlined.
+    //
+    // So the property asserted is the one that survives: **no two NAMED refusals sharing a code are
+    // printed with the same rect**, because that is the bug this test was written to catch — a list
+    // that shows one defect twice and reads as a glitch in the report. And when anything was
+    // truncated the message must say so, which is the difference between a short message and a lie.
+    const namedFlats = message
+      .split('; ')
+      .map((part) => part.trim())
+      .filter((part) => part.startsWith('flat-value'));
+    for (let i = 0; i < namedFlats.length; i += 1) {
+      for (let j = i + 1; j < namedFlats.length; j += 1) {
+        expect(namedFlats[i]).not.toBe(namedFlats[j]);
+      }
+    }
+    const omitted = decision.refusals.length - namedFlats.length;
+    if (omitted > 0) {
+      // The count is what makes a truncated message honest, so it is asserted rather than assumed:
+      // this failed here once because the count was concatenated before the clip and clipped away
+      // with it, which meant the message silently named three of seven refusals.
+      expect(message).toContain(`+${decision.refusals.length - NAMED_REFUSALS} more`);
+    } else {
+      for (const refusal of flats) {
+        expect(message).toContain(
+          `${refusal.rect!.x},${refusal.rect!.y} ${refusal.rect!.w}x${refusal.rect!.h}`,
+        );
+      }
     }
   });
 

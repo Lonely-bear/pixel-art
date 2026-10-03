@@ -311,6 +311,7 @@ describe('the corpus is a regression guard, not a report', () => {
       'plane-crosses-form',
       'shadow-crushed',
       'shape-clipped',
+      'silhouette-instability',
       'single-pixel-spur',
       'stray-colour',
       'subject-undersized',
@@ -871,18 +872,33 @@ describe('multi-frame: the worst frame wins, and a degenerate sequence is exclud
     expect(hold.actualVerdict).toBe('fail');
     expect(hold.frames).toHaveLength(3);
     expect(hold.attributes.frames).toBe(3);
-    // And the exclusion travels in `evaluate` as `not-implemented` today, which is why the corpus
-    // reads the predicate rather than the report. The divergence is visible rather than inferred.
-    expect(hold.excluded.motion).toBe('not-implemented');
+    // And the exclusion now travels in `evaluate` as the aggregator's own reason rather than as
+    // `'not-implemented'`, which is the whole point of having written the predicate first: the
+    // report says *why* the dimension is absent instead of saying the build is incomplete.
+    expect(hold.excluded.motion).toBe('no-motion-content');
+    expect(hold.scores.motion).toBeUndefined();
   });
 
   it('excludes motion as single-frame for a still sprite, from the predicate', () => {
     // A still sprite is the degenerate input the mechanism was designed for, and the aggregator is
-    // the right place to decide it, so this is asserted on the predicate rather than on the report:
-    // `evaluate` says `not-implemented` today and will say `single-frame` once T-017 lands,
-    // without this test needing to change.
+    // the right place to decide it, so this is asserted on the predicate rather than on the report.
+    // It now agrees with the report as well, which is the state T-017 was waiting for: the key is
+    // absent from `dimensions` and the reason is in `excluded`, not `'not-implemented'`.
     for (const id of ['control/clean-blob-16', 'artwork/verify/lantern-keeper.pixel']) {
       expect(row(id).preconditions.motion).toBe('single-frame');
+      expect(row(id).excluded.motion).toBe('single-frame');
+      expect(row(id).scores.motion).toBeUndefined();
+    }
+  });
+
+  it('re-derives every `motion` exclusion from the corpus rather than from the committed table', () => {
+    // `expect.preconditions.motion` is declared on all 76 buildable cases, so a gate that stopped
+    // firing in either direction — a still sprite measured, or an animation declined — is a failing
+    // case rather than a row that quietly reads differently.
+    const declared = SPEC.cases.filter((entry) => entry.tier !== 'human');
+    expect(declared.length).toBe(76);
+    for (const entry of declared) {
+      expect(row(entry.id).preconditions.motion, entry.id).not.toBeUndefined();
     }
   });
 
@@ -2231,6 +2247,7 @@ describe('the report', () => {
       'palette',
       'noise',
       'outline',
+      'motion',
     ]);
     expect(measured[0].min).toBeLessThan(measured[0].max);
     expect(measured[1].min).toBeLessThan(measured[1].max);
@@ -2249,9 +2266,17 @@ describe('the report', () => {
     // sits on the repository's one rated artwork is a much better argument for calibrating this
     // dimension than any of the other four can make.
     expect(measured[4].median).toBe(650);
-    // `motion` is the one dimension that does not exist, absent rather than zero, which is the
-    // `not-implemented` bookkeeping working and not a gap in the corpus.
-    expect(DISTRIBUTION.scores.filter((entry) => entry.values.length === 0)).toHaveLength(1);
+    // **`motion` was the one dimension that did not exist, and it is the last.** Two numbers rather
+    // than seventy-six, because 73 of the 76 buildable cases are `single-frame` and
+    // `motion/frames-identical-16` is `no-motion-content`. **This is the exclusion working and it is
+    // also the reason this dimension's corpus distribution cannot be read as "does it fire on good
+    // work"** — with n = 2 there is no negative control to read, which is the gap §4.6's remaining
+    // six corpus cases would close. The two numbers are `motion/worst-frame-wins-16` at 800 (a base
+    // of 1000 less §4.6's 200 for a 169 per-mille area change) and `motion/blank-frame-16` at 1000,
+    // which is the guard holding: the blank frame contributes churn and contributes no area.
+    const motion = DISTRIBUTION.scores.find((entry) => entry.dimension === 'motion');
+    expect(motion?.values).toEqual([800, 1000]);
+    expect(DISTRIBUTION.scores.filter((entry) => entry.values.length === 0)).toHaveLength(0);
   });
 });
 
@@ -2617,14 +2642,16 @@ describe('coverage is aimed at the failures that were found, not exhaustive', ()
     // the corpus, both are gone, and **a kind that later loses its case goes red here again** — which
     // is the property the subtraction had quietly given away.
     const declared = new Set(synthetic().flatMap((entry) => entry.defects.map((d) => d.kind)));
-    // `palette` makes it 26, and all six of its codes arrived with the dimension rather than after
-    // it. §3.5's fourth rule is a hard order — a defect cannot be declared until the report can
-    // carry it — so a dimension landing with six codes and no cases could not be accepted, and this
-    // assertion is what says so. Three of the nine cases it added are **negative controls** rather
-    // than defects, which is the other half of §3.5: `hue-sprawl`, `grey-colours` and
-    // `colour-budget-exceeded` each needed a shape on the *other* side of its own gate.
+    // `palette` made it 26 and `motion` makes it 27, but `motion`'s seven codes are not seven cases
+    // and this is the one place the difference is written down. `silhouette-instability` is the only
+    // one a case declares, because `motion/worst-frame-wins-16` draws a 64px block and then 54px of
+    // masses and genuinely has that defect. The other six are in §4.6's issue table, are emitted by
+    // `motion.ts`, and are covered by `quality-motion.test.ts`'s MUST FIRE / NEAR MISS pairs — and
+    // they are **owed a corpus case each**. Listing them here without one would make this assertion
+    // vacuous and the closed list a list of unimplemented features, which is the failure it exists
+    // to prevent, so they are absent rather than present-and-red.
     expect([...declared].sort()).toEqual(DEFECT_KINDS.slice().sort());
-    expect(DEFECT_KINDS.length).toBe(26);
+    expect(DEFECT_KINDS.length).toBe(27);
     expect(DEFECT_KINDS.filter((kind) => !declared.has(kind)).sort()).toEqual([]);
     // And the gap, named rather than left to be inferred. `key-light-inconsistent` is the one
     // `value` code with no case that *declares* it, because §4.2's `keyLight` is a subject-level

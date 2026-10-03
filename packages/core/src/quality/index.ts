@@ -3,6 +3,7 @@ import { valueAnalyzer } from './value.js';
 import { paletteAnalyzer } from './palette.js';
 import { noiseAnalyzer } from './noise.js';
 import { outlineAnalyzer, outlineApplicability } from './outline.js';
+import { motionAnalyzer } from './motion.js';
 import { edgeGapOf, SUBJECT_REQUIRED_MARGIN } from './measure.js';
 import {
   assertReportInvariants,
@@ -241,11 +242,8 @@ export function compositesAreIdentical(composite: readonly QualityCel[]): boolea
  * is blind to. So the decision is made here, before the analyzer is called, and the
  * aggregator does not run the analyzer at all.
  *
- * It ships ahead of the analyzer it guards: T-017 adds `motionAnalyzer` to
- * {@link DEFAULT_DIMENSIONS} and this function becomes its precondition, unchanged. Until
- * then the dimension has no registration, so `evaluate` records `'not-implemented'` for it
- * — a stronger and more truthful statement than "this sprite has no motion to measure",
- * which would imply there was a measurement to have made.
+ * It shipped ahead of the analyzer it guards, and `motionAnalyzer` is now registered against it
+ * unchanged, so this function is the precondition `evaluate` consults before the analyzer runs.
  */
 export function motionApplicability(context: QualityContext): ExcludedReason | null {
   // `< 2` rather than `=== 1` so the empty case lands here too: `evaluate` rejects a
@@ -325,8 +323,8 @@ export interface QualityDimensionRegistration {
  * {@link requiresReadableSubject}, which §3.3's `no-subject` member already named it for. See the
  * per-registration comments below for the argument in each case.
  *
- * The sixth dimension is still to come, and it is the last: `motion` (T-017, with
- * {@link motionApplicability}).
+ * The sixth dimension is `motion`, registered last, with {@link motionApplicability} — the only
+ * precondition in this file that guards against a *perfect* measurement rather than a wrong one.
  *
  * **`value` registers with no `applies` at all**, and that is a decision rather than an omission.
  * {@link requiresReadableSubject} is the one precondition in this file and it exists because a
@@ -399,6 +397,13 @@ export const DEFAULT_DIMENSIONS: readonly QualityDimensionRegistration[] = [
   // The corpus is ARMED, not blind: 76 cases now declare `expect.preconditions.outline` and
   // `baseline.md` carries the column, so the next person to register this meets those 6 failures
   // immediately instead of discovering them by eye.
+  //
+  // `motion` is the last of the six, and it is the only one whose exclusion the aggregator had to own
+  // from the start: `motionApplicability` was written and exported before the analyzer existed,
+  // because a motion analyzer asked to score an identical sequence would hand back its BEST band —
+  // churn 0, seam 0, `seamRatio` 0/max(1,0) — for a sprite that does not move. So the precondition is
+  // `motionApplicability` unchanged, and it runs before the analyzer rather than inside it.
+  { id: 'motion', analyze: motionAnalyzer, applies: motionApplicability },
 ];
 /**
  * The default analyzers as bare callables, derived rather than listed.
@@ -649,3 +654,4 @@ export * from './value.js';
 export * from './palette.js';
 export * from './noise.js';
 export * from './outline.js';
+export * from './motion.js';

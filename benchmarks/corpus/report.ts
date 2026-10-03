@@ -48,6 +48,7 @@ import {
 } from '../../packages/core/src/quality/types.js';
 import { buildSolidMask, connectedComponents, countConvexStaircaseCorners, edgePixelCount } from '../../packages/core/src/quality/measure.js';
 import { measureValue } from '../../packages/core/src/quality/value.js';
+import { measureMotion } from '../../packages/core/src/quality/motion.js';
 import type { Sprite } from '../../packages/core/src/index.js';
 import {
   DECLARED_QUANTITIES,
@@ -215,6 +216,41 @@ export interface ValueReading {
   readonly highlightShareQ: number;
 }
 
+/**
+ * §4.6's readings for one sequence, in the shape the report prints them.
+ *
+ * `MotionSequence`'s own field names, so the table and the record cannot drift, and the two channel
+ * columns (`seam`/`lumSeam` beside `churnMedian`/`lumMedian`) are printed together because §4.6's
+ * primary ratio is **the larger of the two** and a reader who only sees one of them cannot tell
+ * which channel a pop was found in.
+ */
+export interface MotionReading {
+  readonly frames: number;
+  readonly inkedFrames: number;
+  /** §4.6's `churn_i` for every transition, the last entry being the seam. */
+  readonly churn: readonly number[];
+  readonly churnMedian: number;
+  readonly churnMax: number;
+  readonly seam: number;
+  readonly lumDelta: readonly number[];
+  readonly lumMedian: number;
+  readonly lumSeam: number;
+  readonly areas: readonly number[];
+  readonly areaSpreadQ: number;
+  readonly durations: readonly number[];
+  readonly loopMs: number;
+  readonly deltaSpreadQ: number;
+  /** Chebyshev centroid step at the loop point, in 1/64 px. */
+  readonly seamStep: number;
+  /** The largest in-loop centroid step, same units. */
+  readonly maxStep: number;
+  readonly lumPrimary: boolean;
+  readonly baseQ: number;
+  readonly adjustmentQ: number;
+  readonly scoreQ: number;
+  readonly codes: readonly string[];
+}
+
 /** How a case ended. The three are not gradations: `awaiting-rating` is not a pass. */
 export type RowStatus = 'pass' | 'fail' | 'awaiting-rating';
 
@@ -253,6 +289,14 @@ export interface CorpusRow {
    * to check and a reader has to be able to see `bendQ` and the unscored `spanQ` to check it.
    */
   readonly value: ValueReading | null;
+  /**
+   * The sequence's `motion` reading, or `null` where the dimension could not measure it.
+   *
+   * `null` is the aggregator's two exclusions — `'single-frame'` and `'no-motion-content'` — and
+   * neither of them ever reaches the analyzer, so this field is the honest record of "the dimension
+   * had nothing to measure here" rather than of a zero.
+   */
+  readonly motion: MotionReading | null;
   /** The worst frame's score, the mean, and whether the analyzer took the minimum. */
   readonly worstScoreQ: number | null;
   /** `compactnessQ` of the frame that decided `worstScoreQ`, for the contrast-pair report. */
@@ -319,6 +363,7 @@ function evaluateCase(entry: CorpusCase, sprite: Sprite | null): CorpusRow {
       preconditions: {},
       frames: [],
       value: null,
+      motion: null,
       worstScoreQ: null,
       worstFrameCompactnessQ: null,
       worstFrameThicknessQ: null,
@@ -372,6 +417,38 @@ function evaluateCase(entry: CorpusCase, sprite: Sprite | null): CorpusRow {
           shadowShareQ: worstValue.shadowShareQ,
           highlightShareQ: worstValue.highlightShareQ,
         };
+  // §4.6 is measured here through the shared `measureMotion`, and recorded **only when the
+  // dimension was applicable**. A still sprite and a hold are the aggregator's two exclusions, so
+  // this is `null` on both rather than a reading of a sequence the dimension refused to look at.
+  const motionApplicable = motionApplicability(context);
+  const measuredMotion = motionApplicable === null ? measureMotion(context) : null;
+  const motion: MotionReading | null =
+    measuredMotion === null || !measuredMotion.measured
+      ? null
+      : {
+          frames: measuredMotion.frames,
+          inkedFrames: measuredMotion.inkedFrames,
+          churn: measuredMotion.churn,
+          churnMedian: measuredMotion.churnMedian,
+          churnMax: measuredMotion.churnMax,
+          seam: measuredMotion.seam,
+          lumDelta: measuredMotion.lumDelta,
+          lumMedian: measuredMotion.lumMedian,
+          lumSeam: measuredMotion.lumSeam,
+          areas: measuredMotion.areas,
+          areaSpreadQ: measuredMotion.areaSpreadQ,
+          durations: measuredMotion.durations,
+          loopMs: measuredMotion.loopMs,
+          deltaSpreadQ: measuredMotion.deltaSpreadQ,
+          seamStep: measuredMotion.seamStep,
+          maxStep: measuredMotion.maxStep,
+          lumPrimary: measuredMotion.lumPrimary,
+          baseQ: measuredMotion.baseQ,
+          adjustmentQ: measuredMotion.adjustmentQ,
+          scoreQ: measuredMotion.scoreQ,
+          codes: measuredMotion.issues.map((issue) => issue.code),
+        };
+
   const frameScores = measurements.filter((frame) => frame.measured).map((frame) => frame.scoreQ);
 
   const preconditions: Record<string, CorpusExcludedReason | null> = {};
@@ -461,6 +538,7 @@ function evaluateCase(entry: CorpusCase, sprite: Sprite | null): CorpusRow {
     preconditions,
     frames: readings,
     value,
+    motion,
     worstScoreQ: frameScores.length === 0 ? null : Math.min(...frameScores),
     worstFrameCompactnessQ: worstFrame === null ? null : worstFrame.compactnessQ,
     worstFrameThicknessQ: worstFrame === null ? null : worstFrame.thicknessQ,
@@ -1259,11 +1337,94 @@ export function renderMarkdown(spec: CorpusSpec, scores: CorpusScores, rows: rea
   );
   out.push('');
 
+  /* --- motion --- */
+  out.push('## 2c · `motion`, and the seam it exists to catch', '');
+  out.push(
+    '**Two cases in this corpus have a sequence `motion` can measure**, and they are the only rows ' +
+      'in this section. Every still sprite in the rest of the corpus is the aggregator\'s ' +
+      '`single-frame` exclusion and `motion/frames-identical-16` is `no-motion-content`, so neither ' +
+      'appears here at all: a dimension excluded for applicability contributes no row rather than a ' +
+      'row of zeros, because §4.6\'s own argument is that a degenerate sequence measures as a ' +
+      '*perfect* animation and must never be handed a number.',
+    '',
+    '`churn` is listed per transition with the seam last, so the ratio can be checked by hand: ' +
+      '`churnMed` is the lower median of the internal entries only, and the seam is `churn[n-1]`. ' +
+      'The seam is deliberately outside `churnMax` and `deltaQ`, because the loop point is *supposed* ' +
+      'to differ and counting it twice would punish a loop for the one thing a loop may do.',
+    '',
+    '**The two channels are printed side by side because §4.6\'s primary ratio is the larger of ' +
+      'them.** A loop whose pixels match across the seam and whose tone does not is invisible to a ' +
+      'mask-only reading, and the `channel` column says which one the band was read from. `durations` ' +
+      'and `loopMs` are the timing half: `timing-outlier` is a frame held more than 3x the median, ' +
+      '`loop-duration-out-of-range` is a cycle outside 80..1200ms, and `timing-mismatch` is uniform ' +
+      'timing over a `deltaQ` of 600 or more.',
+    '',
+  );
+  out.push('');
+  out.push(
+    ...table(
+      [
+        'case',
+        'frames',
+        'inked',
+        'churn',
+        'churnMed',
+        'churnMax',
+        'seam',
+        'lumDelta',
+        'lumMed',
+        'lumSeam',
+        'channel',
+        'areaSpreadQ',
+        'seamStep',
+        'maxStep',
+        'durations',
+        'loopMs',
+        'deltaQ',
+        'baseQ',
+        'adj',
+        'scoreQ',
+        'codes',
+      ],
+      rows
+        .filter((row): row is CorpusRow & { readonly motion: MotionReading } =>
+          row.tier !== 'human' && row.motion !== null,
+        )
+        .map((row) => {
+          const m = row.motion;
+          return [
+            row.id,
+            String(m.frames),
+            String(m.inkedFrames),
+            m.churn.join(' '),
+            String(m.churnMedian),
+            String(m.churnMax),
+            String(m.seam),
+            m.lumDelta.join(' '),
+            String(m.lumMedian),
+            String(m.lumSeam),
+            m.lumPrimary ? 'tone' : 'silhouette',
+            String(m.areaSpreadQ),
+            String(m.seamStep),
+            String(m.maxStep),
+            m.durations.join(' '),
+            String(m.loopMs),
+            String(m.deltaSpreadQ),
+            String(m.baseQ),
+            String(m.adjustmentQ),
+            String(m.scoreQ),
+            listOrNone(m.codes),
+          ];
+        }),
+    ),
+  );
+  out.push('');
+
   /* --- applicability --- */
   out.push('## 3 · Applicability');
   out.push('');
   out.push(
-    '`evaluate` records `not-implemented` for every dimension that has no analyzer, so the ' +
+    '`evaluate` records a reason in `excluded` for every dimension it did not measure, so the ' +
       "aggregator's own predicates are called directly as well. The middle three columns are what the " +
       'preconditions say; the right-hand one is only the reasons that are *not* `not-implemented`, ' +
       'because those are the same on every row and would bury the three that are not.',

@@ -142,7 +142,22 @@ export type DefectKind =
   | 'hue-sprawl'
   | 'muddy-mix'
   | 'grey-colours'
-  | 'invented-colours';
+  | 'invented-colours'
+  // T-017: **one of `motion`'s seven codes**, and the one this corpus reaches. The other six —
+  // `loop-seam-pop`, `loop-seam-jump`, `frame-jitter`, `timing-outlier`, `timing-mismatch` and
+  // `loop-duration-out-of-range` — are in §4.6's issue table and are emitted by `motion.ts`, but a
+  // `DefectKind` here obliges the corpus to carry a case that declares it, and this corpus has three
+  // multi-frame cases rather than nine. **This is a gap and not a decision**: §3.5's fourth rule is
+  // that a code cannot be declared until a case says what it means, and the honest reading is that
+  // those six are covered by `quality-motion.test.ts`'s MUST FIRE / NEAR MISS pairs and are owed a
+  // corpus case each. Adding the members without the cases would make `DEFECT_KINDS` a list of
+  // unimplemented features, which is the failure the list exists to prevent.
+  //
+  // `silhouette-instability` is the exception because a case already declares it: `motion/worst-
+  // frame-wins-16` is a 64px block on frame 0 and three masses totalling 54px on frame 1, which is
+  // `areaSpread 169` against §4.6's 150 gate — a real area change, drawn in on purpose, and the
+  // reason that case's verdict moved from `warn` to `fail` when this dimension landed.
+  | 'silhouette-instability';
 
 /** One injected defect and why it is there. The note is the reviewer's context, not the assertion. */
 export interface CorpusDefect {
@@ -898,6 +913,9 @@ export const DEFECT_KINDS: readonly DefectKind[] = [
   'muddy-mix',
   'grey-colours',
   'invented-colours',
+  // T-017: `motion` arrives with seven codes and the corpus reaches one of them, which is recorded
+  // as a gap above rather than papered over. See the note on `DefectKind`.
+  'silhouette-instability',
 ];
 
 const MEASURED_QUANTITIES: readonly MeasuredQuantity[] = [
