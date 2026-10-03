@@ -1,6 +1,6 @@
 {
   "name": "@pixel/app",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "description": "Pixel-art editor with a built-in MCP server, for humans and AI agents.",
