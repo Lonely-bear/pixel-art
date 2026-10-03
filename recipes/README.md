@@ -20,15 +20,41 @@ recipes/
 ```
 
 One file per recipe, flat, no subdirectories. The filename stem **is** the id, and the id is
-the path segment in `pixel://recipe/{id}` (T-036), so the two cannot drift: `validateRecipe`
+the path segment in `pixel://recipe/{id}`, so the two cannot drift: `validateRecipe`
 takes the filename and refuses a recipe whose `id` disagrees with it
 (`RecipeIssueCode: 'id_mismatch'`). A recipe is plain UTF-8 JSON with no comments and no
 trailing commas — it has to survive `JSON.parse` in every client, including the browser one.
 
+## What ships
+
+| id | class | animates |
+| --- | --- | --- |
+| `platformer` | Side-view platformer character | yes — idle, walk, run |
+| `topdown-rpg` | Three-quarter top-down RPG character | yes — idle, walk |
+| `dungeon-tileset` | Dungeon tile set and the map built from it | no |
+| `ui-icons` | UI icon for a button or a panel | no |
+| `item-icons` | Inventory item icon | no |
+
+The split in the last column is the format's `motion` field being optional, and the absence
+being the statement: `dungeon-tileset`, `ui-icons` and `item-icons` omit the key entirely
+rather than carrying an empty one, because present-and-empty is a different claim — that the
+author forgot — and the two must not be interchangeable.
+
+Read any of them through the MCP server:
+
+```
+describe_recipe                              # the catalogue, one line per recipe
+describe_recipe { id: "topdown-rpg" }       # one recipe, whole
+```
+
+or from a resource, which is the same bytes: `pixel://recipes` lists, `pixel://recipe/{id}`
+serves one, and `pixel://recipe/{id}` is listed on `resources/list` so a client can enumerate
+the catalogue without knowing the ids in advance.
+
 `packages/core/src/recipes.ts` owns the schema and the validation. It deliberately **does not
 read the filesystem** — `packages/core` may not import Node APIs — so it exposes
 `parseRecipe(text, {fileName})`, and the caller does one `readFileSync`. That split is what
-keeps the future `describe_recipe` tool a three-liner instead of a second copy of the schema.
+keeps the `describe_recipe` tool a three-liner instead of a second copy of the schema.
 
 ## Adding a recipe
 

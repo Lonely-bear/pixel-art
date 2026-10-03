@@ -1,0 +1,202 @@
+{
+  "schemaVersion": 1,
+  "id": "ui-icons",
+  "title": "UI icon",
+  "summary": "A 16x16 mark that has to be understood in one glance, at native size, next to a dozen others, in a panel the player is reading rather than looking at. It is the least forgiving asset class there is, because the whole surface is small and every pixel is a decision with no room to hide behind detail. The decision that separates a good UI icon from a bad one is the negative space. A UI icon is not a small picture of an object, it is a mark that stands for a verb, and the negative space is where the mark does its work: the gap between the two strokes of a pause, the wedge cut out of a speaker, the notch that separates two arrows. Filling that space with a plausible detail - giving the wrench teeth that cannot be resolved at 16px, adding a hinge to a door - destroys the legibility that the icon exists for. So the rule for this class is subtraction: block the silhouette, decide what the icon means at a glance, then remove everything the meaning does not need. A second thing this class forces that no other recipe has to make: the icon must survive two backgrounds. A mark that works on the panel's fill and dissolves on the hover fill is not finished, because hover is the state the player is in when they are deciding.",
+  "canvas": {
+    "sizes": [
+      {
+        "w": 16,
+        "h": 16,
+        "use": "The default. One-pixel strokes, at most four of them, and a silhouette that occupies 10-12px of the 16 so it does not float in its slot. This is the size the craft rules below assume."
+      },
+      {
+        "w": 24,
+        "h": 24,
+        "use": "Toolbar buttons and high-density displays. Enough for a two-tone body, and the first size at which an icon can carry a small highlight rather than only a silhouette."
+      },
+      {
+        "w": 32,
+        "h": 32,
+        "use": "Settings screens, empty states, and any icon shown at a size the player will actually look at. At this size the craft question changes: a 16x16 mark scaled up is blocky and reads as a mistake, so a 32px icon is drawn as a 32px icon and not as a scaled 16."
+      }
+    ],
+    "note": "Three size-specific rules, and the third is the one people get wrong. At 16px: one stroke width, one plane, no dither ever, and the silhouette must fill 10-12 of the 16px or it reads as an illustration rather than as an icon. At 24px and above: a two-tone body becomes affordable, so give the shape a lit face and a shadow face, and keep the highlight to one or two pixels. At 32px: the icon may be drawn as a picture, which is why the negative-space rule matters most here, because detail is exactly what fills the gaps that make a mark readable. A 16x16 icon upscaled to 32px has 2px strokes that are visibly 2px blocks and it reads as a scaled icon; draw the 32px version at 32px."
+  },
+  "palette": {
+    "base": "endesga16",
+    "locked": true,
+    "roles": [
+      {
+        "role": "ink",
+        "from": "#1b1c2c",
+        "to": "#4b4e69",
+        "steps": 2,
+        "hueShift": 10
+      },
+      {
+        "role": "accent",
+        "from": "#b3404a",
+        "to": "#ffc249",
+        "steps": 2,
+        "hueShift": 30
+      },
+      {
+        "role": "surface",
+        "from": "#6a6a85",
+        "to": "#d9d9e3",
+        "steps": 2,
+        "hueShift": 15
+      }
+    ],
+    "colourBudget": 8,
+    "rules": [
+      "Eight is what an icon uses, and it is far less than the palette holds. `endesga16` seeds 16 entries and the three two-step ramps append to it, so the document palette is much larger than eight on purpose: the palette is the constraint set the artwork snaps into, and eight is what gets painted. A UI set is the case where the gap matters most, because a palette with room to spare is a palette where a second, slightly different grey gets invented - and a UI panel with two greys for the same surface is a panel that looks broken.",
+      "Two steps per role, never three. An icon at 16px has a 10px silhouette; three steps inside it puts two transitions into eight pixels and the icon reads as a gradient rather than as a mark.",
+      "One accent, and it is used once per icon. An accent that appears on two strokes stops meaning emphasis and starts meaning colour, and the panel develops a stripe pattern the player learns to ignore.",
+      "The icon is drawn at full strength and the UI is expected to dim it. Draw an icon at 60% opacity so it matches a panel and it now cannot be drawn at full strength for a highlighted state, so it is drawn at 60% for the rest of the set too.",
+      "Every colour must be checked against the panel fill *and* the hover fill. `get_preview {background}` renders either in one call, which is how this class verifies the requirement that a single icon usually fails.",
+      "Keep the two anchors close in hue. `add_palette_ramp` interpolates along the shorter path round the HSL wheel, so a plum-to-tan pair passes through magenta and the ink ramp comes out pink in the middle."
+    ]
+  },
+  "layers": [
+    {
+      "name": "mark",
+      "purpose": "The flat silhouette in one colour. One mass, no interior detail, no holes that are not meaningful. This is the layer the icon is judged on, and it must be finished and correct before anything else is drawn, because the mark is what the player reads at 16px."
+    },
+    {
+      "name": "detail",
+      "purpose": "Interior colour, accents, and the one- or two-pixel highlight at 24px and above. Above `mark` so it can be hidden to check the silhouette alone."
+    }
+  ],
+  "tone": {
+    "lightFrom": "top-left",
+    "planes": [
+      {
+        "name": "highlight",
+        "rule": "One or two pixels on the top-left-facing edge of the mark, at 24px and above only. At 16px there is no room: a 16px icon with a highlight has a stroke of 2px on one side and the mark stops being even, and an even stroke weight is what makes a small icon look drawn rather than assembled."
+      },
+      {
+        "name": "lit",
+        "rule": "The main body colour of the mark. At 16px this is the whole icon, and any second plane is a mistake rather than a refinement."
+      },
+      {
+        "name": "core-shadow",
+        "rule": "One step below the lit plane, on the bottom-right edge only, and only at 24px and above. One step, never two: a two-step shadow on a 16px mark is the darkest thing in the slot and it separates the icon from the panel harder than the icon's own subject."
+      }
+    ],
+    "contrast": "The mark must contrast against the panel fill by at least a value step in either direction, and against the hover fill by the same. This is the one contrast rule in the project that is measured against something outside the artwork, which is why `get_preview {background}` appears in the checks: an icon judged against a transparent background has not been judged against anything. At 16px keep the mark two steps from the panel and keep the interior one step from the mark; a third plane inside a 10px silhouette is not resolvable."
+  },
+  "steps": [
+    {
+      "id": "block-mark",
+      "layer": "mark",
+      "goal": "The whole icon in one flat colour, in one mass, with the interior holes it needs and nothing else. Judge it here, at 16px, as a shape - because the shape is all a 16px player ever resolves, and every later pass only adds detail the eye cannot resolve anyway."
+    },
+    {
+      "id": "verify-shape",
+      "layer": "mark",
+      "goal": "Read the mark back as text and ask the only question that matters in this class: does the shape alone say the word? `read_grid {view: \"mask\"}` shows the silhouette with no colour in it, which is the closest a tool can get to the mark as it will actually be read at native size."
+    },
+    {
+      "id": "subtract",
+      "layer": "mark",
+      "goal": "Remove everything the meaning does not need. This step is the recipe. Details below a pixel of resolution - the hinge on a door, the teeth on a wrench, the grain in a wood - cost negative space and buy nothing, and the negative space is what carries the mark at 16px."
+    },
+    {
+      "id": "accent",
+      "layer": "detail",
+      "goal": "The one accent and the one highlight, if the size affords them. Skip both at 16px rather than compressing them; a squeezed highlight is the thing that makes a small icon look amateur."
+    },
+    {
+      "id": "check-against-surfaces",
+      "layer": "mark",
+      "goal": "Render the icon against the panel fill and against the hover fill before calling it done, because that is the requirement it usually fails and it cannot be seen in a transparent preview."
+    }
+  ],
+  "avoid": [
+    {
+      "what": "Filling the negative space with detail that cannot be resolved at the icon's size.",
+      "why": "The gaps are what make a mark read: the wedge of a speaker, the gap between pause bars, the notch that splits two arrows. Detail at an unresolvable scale converts a gap into texture and the mark stops meaning anything.",
+      "instead": "Decide what the icon says at native size, then delete everything the saying does not need. Subtraction is this class's craft."
+    },
+    {
+      "what": "Two stroke widths on the same icon.",
+      "why": "Uneven stroke weight is what makes a small icon look assembled rather than drawn, and the eye reads the inconsistency before it reads the subject. At 16px a 2px stroke beside a 1px stroke doubles the icon's apparent size on that side.",
+      "instead": "One stroke width, chosen to leave a gap of at least 1px between strokes and at least 2px between the mark and the tile edge."
+    },
+    {
+      "what": "Three or more value planes inside a 16px mark.",
+      "why": "The silhouette is 10px across, so a third plane puts two transitions into a space too small to resolve them, and the icon reads as a gradient blob rather than as a shape.",
+      "instead": "One plane at 16px. Two, and at most three at 24px and above."
+    },
+    {
+      "what": "Drawing a 16x16 icon and scaling it up to 32px.",
+      "why": "A 1px stroke scaled 2x is 2px of hard blocks, and at 32px the icon is being looked at rather than glanced at, so the blockiness is the first thing the eye finds. The 16px version is not a downsample of the 32px version either - it has to lose detail, not shrink.",
+      "instead": "Draw each size at its own size. For the smaller one, decide again what the mark says and remove the strokes that stop saying it."
+    },
+    {
+      "what": "A closed outline around the mark, as on a character sprite.",
+      "why": "The outline is 10-20% of a 16px icon's pixels and it costs the mark its edge against the panel, which is the only thing separating it from the background. Where a character outline separates two colours, an icon outline separates an icon from the thing it sits on, and the icon usually has enough contrast without it.",
+      "instead": "No outline. Get the contrast from the mark's own colour against the panel fill, and verify it with `get_preview {background}`."
+    },
+    {
+      "what": "Any dithering.",
+      "why": "A 2px dithered boundary is a third of the region it sits in, and in a class where the whole asset is a mark the pattern becomes the icon. This is the one class where the technique is never right at any size.",
+      "instead": "Solid fills, and a one-pixel step at the boundary if a transition is needed at all."
+    },
+    {
+      "what": "An icon that reads on the panel fill and dissolves on the hover fill.",
+      "why": "Hover is the state the player is in while they are deciding what to click, so the icon that fails on hover is the icon that fails at the moment it matters. A transparent preview cannot show this.",
+      "instead": "Render against both fills with `get_preview {background}` before calling it done."
+    },
+    {
+      "what": "An accent colour used on more than one stroke.",
+      "why": "An accent that appears twice stops meaning emphasis and starts meaning colour, and a panel of icons develops a stripe pattern the player learns to ignore - including the one icon where the accent was the point.",
+      "instead": "One accent, once. If the icon needs two, it needs two colours as deliberate roles, not as emphasis."
+    },
+    {
+      "what": "Anti-aliasing, or a soft edge, anywhere in the mark.",
+      "why": "A half-transparent edge pixel is not a pixel in this class: it is a colour that is on no swatch, it is not the icon and it is not the panel, and at 16px it is the difference between a mark and a smudge.",
+      "instead": "Hard pixels only. `despeckle` and `antialias` are the two commands you should be least tempted by in this class."
+    },
+    {
+      "what": "A clean-up pass run over the whole set at the end.",
+      "why": "A speckle rule applied across a set of icons finds one stray pixel in each and sands them all to the same bland shape, and a UI set is exactly where uniformity is least forgivable, because the player sees the icons side by side all the time.",
+      "instead": "Fix only what you can see at 100%: a clipped stroke, a gap that closed, a mark that lost a notch."
+    }
+  ],
+  "checks": [
+    {
+      "question": "Does the silhouette alone say the word, with no colour in it?",
+      "tool": "read_grid",
+      "view": "view: \"mask\", scope: \"cel\", layer: \"mark\" - this is the shape the player actually resolves at 16px, so it is the only view in which the subtraction step can be judged."
+    },
+    {
+      "question": "Is the mark even - one stroke width, and does it fill 10-12 of the 16px?",
+      "tool": "read_grid",
+      "view": "view: \"value\" on the mark layer, and read the row widths. Two different stroke widths or a mark floating in the middle of its slot both show up here as an uneven edge, which is invisible at a glance and obvious in the text."
+    },
+    {
+      "question": "Does the mark hold against both the panel fill and the hover fill?",
+      "tool": "get_preview",
+      "view": "Call it twice, once per `background`. This is the check a UI icon usually fails and it cannot be seen in a transparent preview at all."
+    },
+    {
+      "question": "Is the icon exactly the size it will be drawn at?",
+      "tool": "measure_region",
+      "view": "scope: \"cel\", layer: \"mark\" - a mark that measures 14px inside a 16px canvas has no breathing room, and one that measures 6px reads as an illustration rather than as an icon."
+    },
+    {
+      "question": "Does every colour in the icon come from the declared palette?",
+      "tool": "histogram",
+      "view": "The whole icon, and compare the distinct count against the palette and against the recipe's colour budget of eight. A stray anti-aliased pixel is the usual offender."
+    },
+    {
+      "question": "At 100%, does it read instantly, and is it visibly the same weight as its neighbours?",
+      "tool": "get_preview",
+      "view": "scale: 1 only. Never judge a UI icon from a zoom: upscaling exaggerates a 1px stroke and the usual result is thickening every stroke in the set until the panel looks clumsy."
+    }
+  ],
+  "notes": "This class does not animate, so `motion` is absent rather than present-and-empty: a UI icon that loops is a different asset with different conventions, and a breathing opacity effect is the hover state's job rather than the icon's. The recipe says nothing about which icons a set needs, and it says nothing about their grid arrangement - that is the UI layout's decision, and the constraint the icon has to satisfy is the 16x16 slot and the panel fill, both of which are stated above."
+}

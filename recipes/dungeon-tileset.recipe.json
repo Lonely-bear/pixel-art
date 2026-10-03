@@ -1,0 +1,220 @@
+{
+  "schemaVersion": 1,
+  "id": "dungeon-tileset",
+  "title": "Dungeon tileset and tilemap",
+  "summary": "A set of interlocking tiles that has to disappear into a map. The craft question is not whether any one tile is good, because no tile in a set is ever looked at alone: a floor tile that is a beautiful little piece of masonry reads as a mistake the moment a second one sits beside it. What the player sees is a 40x30 grid, and every judgement they make is made about that grid. The decision that separates a good tileset from a bad one is edge ownership: whether the boundary between two tiles is drawn by one tile, by both, or by neither. A wall tile that draws its own dark border on all four sides doubles that border wherever it meets another wall, so every interior wall grows a two-pixel seam that the eye reads as a grid of separate bricks rather than as a single wall. The tiles that work are the ones that only draw the edge they are actually adjacent to, and that is a decision made per tile, not per set. Everything else follows: build the edges first and the surface second, check the map rather than the tile, and treat the palette as one set shared by every tile rather than as a budget per tile.",
+  "canvas": {
+    "sizes": [
+      {
+        "w": 16,
+        "h": 16,
+        "use": "Default dungeon tile and the smallest size at which a wall face and a floor plane can both exist in one tile. Every interior region is at most 6px across, so detail below a whole pixel is wasted and a 2px dithered boundary is a third of the region it sits in. Most shipped roguelikes live here."
+      },
+      {
+        "w": 32,
+        "h": 32,
+        "use": "Spacious rooms, interior spaces where the camera is close, and any tile that carries an object the player must read at 1:1 - a chest, a lever, a door. Room for a 4-step stone ramp and a proper 3-5px dithered seam."
+      },
+      {
+        "w": 48,
+        "h": 48,
+        "use": "Hero tiles - the entrance, the boss arena, the shrine. Below about 40px a tile is drawn at close to 1:1 by a tile-based engine, and a 48px tile is where interior structure and a readable prop both become affordable without shrinking the grid."
+      }
+    ],
+    "note": "The craft rules do not scale with the tile the way a character's do, because the grid is what the eye integrates and the tile is not. What changes is how much interior structure fits: at 16px the rule is that a tile has a *plane* and an *edge*, and the plane is one flat colour with at most a jitter along its boundary. At 32px and above the plane earns two steps and a dithered seam between them. The rule that does not scale is the one that matters most: a tile must be authored at the same size it is used at. Drawing a 16px tile and upscaling it produces edges that are 2px wide at use size, so the doubled-border problem returns at exactly the moment the player is closest to it."
+  },
+  "palette": {
+    "base": "dawnbringer16",
+    "locked": true,
+    "roles": [
+      {
+        "role": "stone",
+        "from": "#3a2c44",
+        "to": "#9a8f88",
+        "steps": 4,
+        "hueShift": 15
+      },
+      {
+        "role": "timber",
+        "from": "#4a3020",
+        "to": "#a8763e",
+        "steps": 3,
+        "hueShift": 20
+      },
+      {
+        "role": "moss",
+        "from": "#2d4a3e",
+        "to": "#7fa05a",
+        "steps": 3,
+        "hueShift": 25
+      }
+    ],
+    "colourBudget": 13,
+    "rules": [
+      "Thirteen is what the whole set should use, not thirteen per tile. `dawnbringer16` seeds 16 entries and the three ramps append to it, so the document palette is larger than thirteen on purpose: the palette is the constraint set every tile snaps into, and thirteen is what gets painted across all of them. A per-tile budget is the mistake this class makes most often, because it is what makes each tile handsome and the set incoherent.",
+      "Four steps for stone and three for the rest, because the wall face and the floor plane are different materials sharing one hue family. Stone is the only surface in a dungeon set that has to describe two different planes within one tile, and it is the only ramp that needs a fourth step.",
+      "Keep every ramp's two anchors close in hue. `add_palette_ramp` interpolates along the HSL wheel by the shorter path, so a plum-to-tan pair (hue 244 to 50) passes through magenta and every stone comes out pink in the middle.",
+      "No pure black as an edge. Use the near-black entry. A pure-black border against a dark floor is the highest-contrast edge available, so it draws far more attention than the wall face it is supposed to describe.",
+      "The edge colour is a *function* of the two surfaces it separates, not of either one. Derive it from the darker of the two, one step down, so the same border works wherever that pair of surfaces meets. Two hand-picked border colours for the same junction is how a set ends up with three different-looking walls.",
+      "`paletteLocked: true` keeps every painted colour on a declared swatch, which is what makes the set re-tintable as one unit. Use opaque layers everywhere; the one legitimate translucent element, a shadow cast across a floor, composites into a colour that is on no swatch and must therefore be a declared one."
+    ]
+  },
+  "layers": [
+    {
+      "name": "floor",
+      "purpose": "The ground plane and everything that sits on it: the floor material, the mortar lines, the moss. Flat regions only, drawn at the tile's own alignment so a mortar line runs continuously across a run of floor tiles instead of stopping at every boundary."
+    },
+    {
+      "name": "structure",
+      "purpose": "Walls, pillars, doors and the vertical faces between them. Above `floor` so a change to the ground does not disturb the structure, and so the wall silhouette can be verified on its own layer with `read_grid {view: \"mask\"}`."
+    },
+    {
+      "name": "detail",
+      "purpose": "Props, rubble, cracks, and the shadow a structure casts onto the floor below it. Drawn last, because a prop is the only element in a set that gets iterated on independently of the set it belongs to."
+    }
+  ],
+  "tone": {
+    "lightFrom": "top-left",
+    "planes": [
+      {
+        "name": "lit",
+        "rule": "The top plane of every horizontal surface: the floor, the top of a wall, the cap of a pillar. The largest area on most tiles, and the plane the eye integrates across the map, so it must be the flattest thing in the set."
+      },
+      {
+        "name": "wall-face",
+        "rule": "The vertical surface, one step below the lit plane, running along the top-left-facing edges of a structure and down its face. A vertical face gets a different value than a horizontal one because it faces away from a light that is coming from above and to the left, and getting this wrong is what makes a 2D dungeon look like a photograph of a floor."
+      },
+      {
+        "name": "core-shadow",
+        "rule": "One step below the lit plane, and only where a structure meets the floor it stands on: the base of a wall, the foot of a pillar, the underside of an arch. Never across the middle of an open floor, which is where the temptation is and where it reads as dirt."
+      },
+      {
+        "name": "edge",
+        "rule": "The darkest plane, one step below the wall face, and only on the boundary a tile is actually adjacent to. This is the plane that has to be consistent across the whole set, because it is the only one the player sees as a line rather than as a surface."
+      }
+    ],
+    "contrast": "The wall face must sit at least two steps below the lit floor, so a wall reads as a wall from across the room rather than as a patch of darker floor. The edge must sit only one step below the wall face: a two-step edge is the darkest line in the set, it dominates every tile it touches, and at 16px it costs 6% of a tile's pixels for a division the player did not ask for. Check the relationship with `histogram` across the whole map rather than on one tile, because the ratios are between surfaces and no single tile can show them."
+  },
+  "steps": [
+    {
+      "id": "tile-up-the-set",
+      "layer": "floor",
+      "goal": "List the tiles the map needs, with the neighbourhood each one will actually see, before drawing any of them. A wall tile's border is a function of its neighbours, so the set cannot be authored tile-by-tile in isolation: this list is the document that makes edge ownership answerable. Include the awkward ones - the inside corner, the outside corner, the single pillar in an open room - because those are the tiles where edge ownership is decided and where a mistake is most visible."
+    },
+    {
+      "id": "floor-plane",
+      "layer": "floor",
+      "goal": "The ground plane first, one flat colour with at most a jitter along its boundary, and any feature aligned to a world grid rather than to the tile. A mortar line drawn per tile stops at every boundary and the stops become the grid; a mortar line drawn from world coordinates runs through. This is the step that decides whether the map reads as one surface."
+    },
+    {
+      "id": "edges",
+      "layer": "structure",
+      "goal": "Now the edges, and only the edges each tile is actually adjacent to. A wall tile draws its border on the sides that face open floor and on no others; two wall tiles side by side draw nothing between them. Get this wrong and the doubled border is not a subtle fault: at 16px it is a 2px line between every pair of adjacent walls, and the map reads as a grid of individual bricks."
+    },
+    {
+      "id": "wall-faces",
+      "layer": "structure",
+      "goal": "The vertical faces and their one-step core shadow at the base. Measure the wall-to-floor value relationship with `histogram` on a region that contains both, because that ratio is between surfaces and reading it off one tile tells you nothing."
+    },
+    {
+      "id": "map-verify",
+      "layer": "floor",
+      "goal": "Lay the tiles into a real map before drawing any props, and look at the map rather than at the tiles. `preview_tilemap` on an unbaked grid is the only view in which the set's seams, the doubled borders and the mortar-line stops are actually visible; they are invisible on the isolated tile by construction."
+    },
+    {
+      "id": "props",
+      "layer": "detail",
+      "goal": "Props and cast shadows last. A prop is drawn from the same ramps as the set and its shadow is a declared swatch rather than a translucent fill, because a translucent shadow composites into a colour no tile in the set uses and it will read as a different material."
+    }
+  ],
+  "avoid": [
+    {
+      "what": "A wall tile that draws a dark border on all four of its sides.",
+      "why": "Two adjacent wall tiles then stack two borders into a 2px seam, and every interior wall in the map grows a line the player reads as a grid of separate bricks rather than as one wall. It is invisible on the tile and it is the most visible fault in the set.",
+      "instead": "Draw the border only on the sides that face open floor. A wall beside another wall draws nothing, and the shared edge disappears, which is the point."
+    },
+    {
+      "what": "Mortar lines, cracks or flagstone joints drawn per tile instead of from world coordinates.",
+      "why": "A per-tile feature stops at every boundary, and a regular array of stops is a grid. The map then reads as a checkerboard of tiles with the tiling as the subject, which is the one thing a tileset exists to hide.",
+      "instead": "Draw the run in one `stroke_tilemap` pass in world coordinates, or bake the feature into the tileset only where it is genuinely tile-local."
+    },
+    {
+      "what": "Hand-picking a different edge colour for each junction.",
+      "why": "Every hand-picked edge is one more surface the eye has to learn, and the player learns none of them because they are only ever seen in context. The result is a set where the same kind of wall looks like two materials depending on what it touches.",
+      "instead": "Derive the edge from the darker of the two surfaces it separates, one step down. Write the rule down once and follow it for every tile."
+    },
+    {
+      "what": "A two-step edge, or a pure-black one.",
+      "why": "It is the darkest line in the set, so it dominates every tile it touches. At 16px a 2px border is 25% of a tile's edge pixels spent on a division, and against a dark floor it is the highest-contrast thing on the screen.",
+      "instead": "One step below the wall face, in a near-black rather than a true black."
+    },
+    {
+      "what": "Authoring the tiles at a size other than the one they are used at, and scaling them.",
+      "why": "A 2px border drawn at 16px and upscaled to 32px is 4px at use size, and the doubled-border problem returns at exactly the moment the player is closest to the wall. The error is introduced by a step nobody can see and nobody undoes.",
+      "instead": "One tileset per size, each authored at that size. Draw the border 1px at 16px and 2px at 32px deliberately, not as a side effect."
+    },
+    {
+      "what": "Shading a structure across the middle of the floor.",
+      "why": "There is nothing above that floor casting onto it, and the eye reads the band as dirt or as a puddle rather than as a shadow, so the map acquires a texture that no light in the game explains.",
+      "instead": "Core shadow only where a structure meets the floor it stands on, following the base of the wall or the foot of the pillar."
+    },
+    {
+      "what": "A translucent shadow layer over the floor.",
+      "why": "A translucent layer composites two swatches into a colour that is on no swatch, so `paletteLocked` cannot hold it and `histogram` reports a colour outside the set. The shadow then looks correct in isolation and wrong next to the other tiles.",
+      "instead": "A declared dark step from the stone ramp, filled opaque, drawn on `detail`."
+    },
+    {
+      "what": "Judging a tile from `get_preview` on its own.",
+      "why": "No tile in a set is ever seen alone, and the faults that matter in this class - doubled borders, mortar-line stops, an edge colour that disagrees with its neighbours - are all invisible on an isolated tile by construction. Judging the tile is judging the wrong thing.",
+      "instead": "`preview_tilemap` on a real map, with the grid overlay off, and look at the map the way the player will."
+    },
+    {
+      "what": "A dithered transition inside a 16px tile's interior plane.",
+      "why": "The largest interior region on a 16px tile is about 6px across, so a 2px dithered boundary is a third of the region and the pattern becomes the texture of the floor rather than a transition between two values.",
+      "instead": "Solid steps with a single-pixel jitter along the boundary. Below 24px a tile has a plane and an edge, and the plane is one flat colour."
+    },
+    {
+      "what": "A clean-up pass run over the whole set at the end.",
+      "why": "A speckle rule applied tile by tile finds a different speckle in each and sands the set flat, and rubble texture that reads as noise to a rule reads as texture to an eye. The set ends up uniform, which is the opposite of what a set is for.",
+      "instead": "Fix only what you can see at 100% on the map: a clipped highlight, a doubled border, a mortar line that stopped."
+    }
+  ],
+  "checks": [
+    {
+      "question": "Do two adjacent wall tiles draw anything between them?",
+      "tool": "preview_tilemap",
+      "view": "A 3x3 block of wall, grid overlay off. A 2px line down every interior boundary is the doubled border, and it is the fault this class exists to avoid."
+    },
+    {
+      "question": "Does a flagstone or mortar line run continuously across a run of floor tiles?",
+      "tool": "get_preview",
+      "view": "scale: 1 on a 4-tile-wide strip at 100%. A line that stops and restarts at each boundary has been drawn per tile; a line that runs through has been drawn in world coordinates."
+    },
+    {
+      "question": "Does every tile use colours from the same declared palette, and does the whole set fit the budget?",
+      "tool": "histogram",
+      "view": "The entire map, not a tile. A per-tile budget is what makes each tile handsome and the set incoherent, and only the map-wide histogram can see the total."
+    },
+    {
+      "question": "Is the wall face at least two steps darker than the floor, and the edge only one step below the face?",
+      "tool": "histogram",
+      "view": "A region containing both a wall and open floor, so the two distributions are in one reading. The ratios are between surfaces, and no single tile can show them."
+    },
+    {
+      "question": "Is every tile exactly the size the map is using?",
+      "tool": "measure_region",
+      "view": "One tile on the detail layer, and the tileset's own tile size from `get_document`. A mismatch means the set was scaled, and every border in it is now the wrong width."
+    },
+    {
+      "question": "Does the structure silhouette read as walls and pillars, at 100%?",
+      "tool": "read_grid",
+      "view": "view: \"mask\", scope: \"cel\", layer: \"structure\" - this is the one layer of the set whose silhouette can be judged on its own, and it is the layer whose borders are the most visible fault."
+    },
+    {
+      "question": "At 100%, does the map read as one place rather than as an array of tiles?",
+      "tool": "get_preview",
+      "view": "scale: 1 for the judgement. Judge the whole map at 100% and never a crop: the faults in this class are the ones that only exist across tile boundaries, and a crop cannot show a boundary it does not contain."
+    }
+  ],
+  "notes": "This recipe covers the tile set and the map, not the tools that build them. `stroke_tilemap` draws weighted terrain and bakes a preview, `autotile` resolves neighbour bits, and both are commands in the catalogue - call `describe_command` for either rather than improvising the terrain painting with `apply_ops`. The recipe also says nothing about how many tiles a set needs, because that is a property of the level design rather than of the art: build the list in the first step, from the map you actually have."
+}

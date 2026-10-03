@@ -1,0 +1,241 @@
+{
+  "schemaVersion": 1,
+  "id": "topdown-rpg",
+  "title": "Top-down RPG character",
+  "summary": "A three-quarter-view character seen from above at an oblique angle, which is the hardest convention in game sprite work and the one most agents get wrong in a specific, repeatable way. The camera looks down at roughly 45 degrees, so the figure is foreshortened vertically: the head is a wide ellipse rather than a circle, the shoulders read as the widest thing on the sprite, and the feet are almost entirely hidden by the torso. The decision that separates a good top-down character from a bad one is the relationship between the head ellipse and the shoulder line. Make the head a circle and the sprite reads as a top-down paper doll lying on the floor; make the head too small relative to the shoulders and it reads as a pinhead on a barrel, because the foreshortening means the visible head height is roughly a third of its visible width. Everything else here follows from getting that one ellipse right: block head and shoulders as separate masses, check the width ratio before anything else, and only then dress the figure. A second decision this class forces, which no side-view recipe has to make: the shadow. The figure casts it onto the ground behind it, offset toward the bottom of the canvas, and it is what stops the character from reading as a sticker lying on the floor.",
+  "canvas": {
+    "sizes": [
+      {
+        "w": 16,
+        "h": 16,
+        "use": "Crowd filler, distant NPCs, enemies in a large battle. Two pixels of shoulder width per side is the whole silhouette budget, so the head ellipse collapses to a 4px-wide arc and there is no interior structure to draw at all. Cheapest class to get right and the only one where the head-to-shoulder ratio cannot be corrected later."
+      },
+      {
+        "w": 32,
+        "h": 32,
+        "use": "Default party member and enemy. The head is about 8px wide by 6px tall, which is the smallest ellipse that still reads as foreshortened rather than as a circle with a mistake in it. The craft rules below assume this size."
+      },
+      {
+        "w": 48,
+        "h": 48,
+        "use": "Named protagonist or boss, where equipment and facing have to be distinguishable. A non-square-feeling sprite inside a square canvas is normal here: leave headroom above the head, because the camera is above the figure and a sprite that fills its box reads as a mural."
+      }
+    ],
+    "note": "The method is almost unchanged across these sizes, which is unusual and worth knowing why: the vertical squash is a property of the camera, not of the pixel count, so the head-to-shoulder ratio stays constant while everything else scales. Two size-dependent rules. Below about 24px, drop the cast shadow - it costs two rows and the shadow it was separating is not distinguishable from the outline at that size - and instead separate the figure from the floor with the outline alone. Above 32px, the cast shadow becomes affordable and should be an ellipse offset from the feet, never a full silhouette copy: a copy reads as a second character standing behind the first. Dither is not available in this class at any size, because the largest interior region on a top-down figure is a shoulder about 10px across and there is no seam anywhere on the sprite long enough for a 3px pattern to sit in without becoming the read."
+  },
+  "palette": {
+    "base": "dawnbringer16",
+    "locked": true,
+    "roles": [
+      {
+        "role": "skin",
+        "from": "#854c30",
+        "to": "#d2aa99",
+        "steps": 3,
+        "hueShift": 25
+      },
+      {
+        "role": "cloth",
+        "from": "#30346d",
+        "to": "#8595a1",
+        "steps": 3,
+        "hueShift": 20
+      },
+      {
+        "role": "leather",
+        "from": "#4e4a4e",
+        "to": "#a86a4f",
+        "steps": 3,
+        "hueShift": 15
+      }
+    ],
+    "colourBudget": 12,
+    "rules": [
+      "Twelve is the number of swatches the finished character should actually use. `dawnbringer16` seeds 16 entries and the three ramps append to it, so the document palette is larger than twelve on purpose: the palette is the constraint set the artwork snaps into, and twelve is what you paint with. `histogram` on the finished frame is what tells you whether you stayed inside it.",
+      "Three materials, because in this view almost all of the figure is covered. A top-down character shows the top of the head, the shoulders and a sliver of the torso; the legs are hidden by the body itself. Spending a ramp on trousers buys colours that are never visible, and spending it on the hair or the collar buys the two surfaces that fill most of the silhouette.",
+      "Keep every ramp's two anchors close in hue. `add_palette_ramp` interpolates along the HSL wheel by the shorter path, so a plum-to-tan pair (hue 244 to 50) passes through magenta and the skin comes out pink in the middle.",
+      "No pure black as a shadow and no pure white as a highlight. Use the near-black and near-white entries; the darkest plane is the outline's neighbourhood, not a hole.",
+      "Three steps per material, never five. The largest interior region on this class is a shoulder, and four steps inside it are indistinguishable while the budget is being spent elsewhere.",
+      "`paletteLocked: true` keeps every painted colour on a declared swatch, which is what makes the character tintable for a faction or an alignment. Use opaque layers: a translucent layer composites two swatches into a colour that is in no palette, and the cast shadow is the place this bites."
+    ]
+  },
+  "layers": [
+    {
+      "name": "shadow",
+      "purpose": "The cast shadow on the ground: a flat ellipse offset toward the bottom of the canvas from the feet, in one dark step, drawn first so everything else sits on top of it. It is not a silhouette copy and it is not blurred. Keeping it on its own layer is what lets you hide it for the 16px variant without rebuilding the figure."
+    },
+    {
+      "name": "base",
+      "purpose": "Flat blocked shapes in one colour per material: the head ellipse, the shoulder mass, the arms. No shading, no highlight, no outline. This is the layer the silhouette is judged on and it stays that way for the whole build."
+    },
+    {
+      "name": "shade",
+      "purpose": "Value planes on the head and shoulders only, following the top-down light. Above the base layer so a shading pass can be re-run without touching the silhouette."
+    },
+    {
+      "name": "outline",
+      "purpose": "A 1px contour, drawn last, in a dark desaturated version of the local fill. It carries the figure when there is no cast shadow, so at 16px it is doing the shadow's job and should be treated as structural rather than decorative."
+    }
+  ],
+  "tone": {
+    "lightFrom": "top-left",
+    "planes": [
+      {
+        "name": "crown-highlight",
+        "rule": "One or two pixels on the upper-left of the head ellipse only, following the ellipse's own curve rather than sitting as a round dot in the middle of it. A centred dot on a foreshortened head is the single most recognisable sign of a sprite drawn as a front view and then squashed."
+      },
+      {
+        "name": "lit",
+        "rule": "The base plane across the top of the head and the upper-left shoulder. Leave it dominant on both masses; if it is not, the figure has no form left and reads as a silhouette with colours in it."
+      },
+      {
+        "name": "core-shadow",
+        "rule": "A band nested one step inside the shoulder mass on the side away from the light, following the shoulder line's curve. It follows the contour of the shoulders, which in this view is the widest and most curved edge on the sprite, so it is the plane that most clearly marks the figure as seen from above."
+      },
+      {
+        "name": "occlusion",
+        "rule": "One ramp step below the core shadow, only where the head meets the shoulders and where an arm crosses the torso. Never on the lower edge of the figure, which is a free edge with nothing casting onto it."
+      }
+    ],
+    "contrast": "The darkest plane must sit at least two ramp steps below the lit plane. Keep the shadow side two steps down rather than to the darkest swatch: a top-down figure whose underside is black merges with its cast shadow and the figure stops being separate from the floor. Read the structure with `read_grid {view: \"value\"}`, where a collapsed ramp shows up as two tones reading as one glyph."
+  },
+  "motion": {
+    "loops": [
+      {
+        "name": "idle",
+        "frames": 2,
+        "durationMs": 500,
+        "direction": "pingpong"
+      },
+      {
+        "name": "walk",
+        "frames": 4,
+        "durationMs": 130,
+        "direction": "forward"
+      }
+    ],
+    "note": "In a top-down loop the body bobs vertically while the feet travel horizontally, and the bob is what sells the camera angle: if the sprite only moves its limbs and never changes its vertical position, the eye reads a side view sliding sideways. One pixel of bob over a four-frame walk is enough, and two is too much at 32px because the figure visibly bounces off its own feet. The last frame has to lead back into the first: build each frame by duplicating the previous one and moving exactly one thing, so the parts that should not move stay byte-identical, because a frame redrawn from scratch always drifts and the drift is different on each frame."
+  },
+  "steps": [
+    {
+      "id": "block-masses",
+      "layer": "base",
+      "goal": "Two flat shapes and nothing else: a head ellipse roughly twice as wide as it is tall, and a shoulder mass about twice the head's width and twice its height. Get these two ratios right before adding an arm, because both are invisible once clothing colour is on them and both are what the whole view convention depends on."
+    },
+    {
+      "id": "verify-ratio",
+      "layer": "base",
+      "goal": "Measure rather than judge. `measure_region` on the base layer gives the head and shoulder bounds, and the head's width-to-height ratio should be between 1.6 and 2.2 - below 1.5 the sprite reads as a front view, above 2.5 it reads as a pinhead. Do this before shading, because a ratio that is wrong cannot be corrected by any amount of tone."
+    },
+    {
+      "id": "cast-shadow",
+      "layer": "shadow",
+      "goal": "A flat ellipse on the ground, offset down and slightly right from the feet, one dark step, drawn before the figure so the figure overlaps it. Ellipse, not silhouette copy: a copied silhouette behind the figure reads as a second character standing behind the first."
+    },
+    {
+      "id": "core-shadow",
+      "layer": "shade",
+      "goal": "Lay the shadow planes on the shoulder mass and the head. Clip to the layer you are shading (`clip: {layer: \"base\"}`) so a band cannot spill into the transparent corners of the bounding box, which at this camera angle are large."
+    },
+    {
+      "id": "outline",
+      "layer": "outline",
+      "goal": "A 1px contour in a dark desaturated version of the local fill. Run `outline {scope: \"composite\"}`, then erase the segments on the upper-left where the light hits. At 16px this contour is doing the cast shadow's job, so keep it closed there rather than selective."
+    },
+    {
+      "id": "animate",
+      "layer": "base",
+      "goal": "Only once the still frame is right. Duplicate and move one thing per frame, and add the one-pixel vertical bob to the walk so the figure reads as seen from above."
+    }
+  ],
+  "avoid": [
+    {
+      "what": "A round head with a round width and height, on a body that is wider than it is tall.",
+      "why": "That is a front view, not a top-down view. It reads as a paper doll lying on the floor, and no amount of shading fixes it, because the error is in the silhouette rather than in the tone.",
+      "instead": "Measure the head. Make it about twice as wide as it is tall, and check the number with `measure_region` rather than by eye."
+    },
+    {
+      "what": "A cast shadow that is a dark copy of the whole silhouette.",
+      "why": "Two full-size figures overlapping read as a crowd of two, and the copy's outline is as legible as the figure's, so the eye resolves the shadow first.",
+      "instead": "A flat ellipse at the feet, offset toward the bottom of the canvas, in one dark step, with no outline of its own."
+    },
+    {
+      "what": "Full-length legs and a full-length torso.",
+      "why": "The camera is above the figure, so the legs are occluded by the torso in any correct rendering. Drawing them spends pixels on the one part of the sprite the player never sees and shrinks the parts they do.",
+      "instead": "Stop the figure at the upper thigh and let the torso overlap where the legs would be."
+    },
+    {
+      "what": "Shading applied as a straight horizontal band across the sprite.",
+      "why": "A level cut ignores the two masses. It is the front-view instinct - light from above, dark at the bottom - and on a foreshortened figure the lit plane wraps around the crown of the head instead.",
+      "instead": "Two bands, one per mass: a curved band nested inside the shoulder contour, and a small crescent on the head ellipse."
+    },
+    {
+      "what": "Facing indicated by a nose or a face on the front of the head ellipse.",
+      "why": "There is no front of the head from above. At 32px the pixels spent on a face are the pixels that made the shoulders read, and the direction indicator this class uses is the arrangement of equipment, not facial features.",
+      "instead": "A hair shape, a hat brim or a shoulder piece whose asymmetric silhouette names the facing. Keep the head interior for the crown highlight."
+    },
+    {
+      "what": "A centred highlight dot on the head.",
+      "why": "It marks the centre of a sphere, and the head is not a sphere from this camera. It is the single most recognisable sign of a sprite drawn front-on and then squashed.",
+      "instead": "Follow the ellipse's own upper-left arc with one or two pixels."
+    },
+    {
+      "what": "Any dithered transition.",
+      "why": "This class has no seam long enough to hold one: the largest interior region is a shoulder about 10px across, so a 3px dithered boundary is a third of the region and becomes the read.",
+      "instead": "Solid steps with a single-pixel jitter along the boundary between the crown highlight and the lit plane."
+    },
+    {
+      "what": "A walk loop where only the limbs move and the figure's vertical position never changes.",
+      "why": "The bob is what tells the eye the camera is above the figure. Without it the loop reads as a side view sliding across the floor, which contradicts every other decision in the sprite.",
+      "instead": "One pixel of vertical bob over the four-frame walk, applied on `layer: \"*\"` so the whole figure moves together."
+    },
+    {
+      "what": "Redrawing every frame from scratch to animate it.",
+      "why": "A redrawn frame always drifts by a pixel somewhere, and the drift differs on each frame, so the character shimmers while it walks - which is far more noticeable on a small top-down sprite than on a large side-view one.",
+      "instead": "`duplicate_frame` and move one thing. For the bob, `translate {layer: \"*\", dy: 1}` on the two frames that need it."
+    },
+    {
+      "what": "A clean-up pass run over the whole sprite at the end.",
+      "why": "Sparkle, grain and small clusters read as noise to a cleanup rule and as texture to an eye. Removing every last speckle sands the piece flat, and a character that has lost both its cast shadow and its crown highlight is finished, not improved.",
+      "instead": "Fix only what you can still see at 100% - a clipped highlight, a stray speck, a silhouette that lost its shape."
+    }
+  ],
+  "checks": [
+    {
+      "question": "Is the head ellipse roughly twice as wide as it is tall?",
+      "tool": "measure_region",
+      "view": "scope: \"cel\", layer: \"base\" - measure the head region alone and divide. Below 1.5 the sprite is a front view; above 2.5 it is a pinhead. This is the one ratio in the class that cannot be corrected later."
+    },
+    {
+      "question": "Does the figure read as two masses - head and shoulders - and not as one blob?",
+      "tool": "read_grid",
+      "view": "view: \"mask\", scope: \"cel\", layer: \"base\" - the neck notch between the head ellipse and the shoulder mass is 1-2px of background and it is what makes the two masses read separately."
+    },
+    {
+      "question": "Is the cast shadow an ellipse at the feet, and not a second figure?",
+      "tool": "read_grid",
+      "view": "scope: \"cel\", layer: \"shadow\" - on its own layer the shadow should be one closed ellipse with no limbs, no outline and no interior detail."
+    },
+    {
+      "question": "Does the shading wrap around the crown and the shoulder curve?",
+      "tool": "read_grid",
+      "view": "view: \"value\" - a straight horizontal terminator across the sprite is the front-view mistake; a curved one that follows the shoulder contour is the top-down read."
+    },
+    {
+      "question": "Does every colour in the sprite come from the declared palette?",
+      "tool": "histogram",
+      "view": "Full frame, and compare the distinct count against the palette and against the recipe's colour budget. The cast shadow is the usual offender, because a translucent shadow composites into a colour that is on no swatch."
+    },
+    {
+      "question": "At 100%, does this still read as a character seen from above?",
+      "tool": "get_preview",
+      "view": "scale: 1 for the judgement, then crop-zoom the head-and-shoulder junction. Never judge the whole piece from a zoom: upscaling exaggerates a 1px notch and the usual result is deleting the notch that made the two masses read."
+    },
+    {
+      "question": "Does the walk loop close, and does the figure stay the same size across frames?",
+      "tool": "preview_animation",
+      "view": "tag: \"walk\", onion: { before: 1, after: 1 } - this follows the tag's real playback order, so the seam between the last frame and the first is actually looked at."
+    }
+  ],
+  "notes": "This recipe describes four directions, not eight: north, south, east and west, where south is the front view and north is the back of the same mass. Diagonals are a second pass, and they are not a matter of rotating these frames - the shoulder width changes with the angle and the head ellipse turns with it. The recipe says nothing about what the character *is*, for the reason `platformer` gives: nothing in the tool surface can tell you whether the mass you blocked is the right creature."
+}

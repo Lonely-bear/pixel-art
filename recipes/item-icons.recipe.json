@@ -1,0 +1,206 @@
+{
+  "schemaVersion": 1,
+  "id": "item-icons",
+  "title": "Inventory item icon",
+  "summary": "A 16x16 object drawn as if lying on a surface under a fixed light, and read not alone but packed shoulder to shoulder with forty other objects in a grid. The class has two hard requirements that pull against each other: the item has to be recognisable as itself, and it has to be separable from whatever is in the slot beside it. The decision that separates a good item icon from a bad one is the margin. Almost every failure in this class is a touching edge: an item drawn to the full 16x16 bleeds into its neighbour and a row of them reads as one long object rather than as a shelf, and the fix is not a border but an inset of 1-2px of empty slot around every item, held consistently across the whole set. That margin is also what gives the item a place to cast its own shadow, which is the second thing this class needs and the reason a two-tone body is worth the two extra swatches: an object lying on a surface reads as an object because of the shadow beside it and the lit face above it. So: keep the footprint small and consistent, put the shadow inside the margin, and spend the remaining pixels on the one feature that distinguishes this object from its nearest neighbour in the set.",
+  "canvas": {
+    "sizes": [
+      {
+        "w": 16,
+        "h": 16,
+        "use": "The default inventory slot. Footprint 12x12 with a 2px margin, a two-tone body and a one- or two-pixel cast shadow in the margin. At this size a single distinguishing feature carries the whole item: a potion's neck, a key's wards, a coin's milled edge."
+      },
+      {
+        "w": 24,
+        "h": 24,
+        "use": "Equipment slots, crafting screens, and containers where the item has to be inspected rather than glanced at. Room for a handle, a strap, or a second material, and the first size at which a proper 3px dithered seam between the lit and shadow faces is affordable."
+      },
+      {
+        "w": 32,
+        "h": 32,
+        "use": "Hero items, quest items, and anything shown in a large preview panel. A 16x16 item scaled to 32px has 1px edges that become 2px blocks, and unlike the surrounding items it is being looked at rather than scanned, so it has to be drawn at its own size."
+      }
+    ],
+    "note": "Two rules are size-independent and they are the ones that matter. The margin holds at every size - 2px on a 16px icon, 3px on a 24px one, proportionally scaled - because the whole point of the margin is the slot beside it, and that neighbour exists at every size. The footprint being *similar* across the set also matters more than it does anywhere else in the project: a sword that fills its slot and a potion that does not makes the inventory look like a ransom note rather than a collection. Size-dependent rules: at 16px one distinguishing feature and no interior detail, because the distinguishing feature is competing with thirty-nine other slots; at 24px and above, interior material and a handle become affordable; above 32px the icon may be drawn as a picture, and the single-feature rule relaxes with it."
+  },
+  "palette": {
+    "base": "endesga16",
+    "locked": true,
+    "roles": [
+      {
+        "role": "metal",
+        "from": "#3b3b58",
+        "to": "#a3aed0",
+        "steps": 3,
+        "hueShift": 15
+      },
+      {
+        "role": "wood",
+        "from": "#5a3a22",
+        "to": "#c08a4a",
+        "steps": 3,
+        "hueShift": 20
+      },
+      {
+        "role": "cloth",
+        "from": "#6b2f4a",
+        "to": "#c96f7c",
+        "steps": 3,
+        "hueShift": 25
+      }
+    ],
+    "colourBudget": 12,
+    "rules": [
+      "Twelve is what one item uses, and the same twelve serve the whole set - which is the point. `endesga16` seeds 16 entries and the three ramps append to it, so the document palette is larger than twelve on purpose: the palette is the constraint set, and twelve is what gets painted. Two items that each pick their own twelve from a palette of thirty look hand-drawn and unrelated next to each other, and an inventory is precisely where they are compared side by side.",
+      "Three steps per material, never more. A 16px item has a 12px footprint, so a fourth step inside it is one transition too many and the body reads as a gradient rather than as a lit surface.",
+      "Two materials per item, three at the very largest sizes. A third material at 16px means the distinguishing feature is competing with two other colour changes, and the item stops being the thing it is.",
+      "Keep the two anchors close in hue. `add_palette_ramp` interpolates along the HSL wheel by the shorter path, so a plum-to-tan pair (hue 244 to 50) passes through magenta and the wood comes out pink in the middle.",
+      "The cast shadow is a declared step from the item's own material ramp, not a translucent black and not a neutral grey. A translucent shadow composites into a colour that is on no swatch and it reads as dirt in the slot; a neutral grey reads as a different object lying next to the item.",
+      "`paletteLocked: true` keeps every painted colour on a declared swatch, which is what lets a rarity tier recolour an item without touching its art. Use opaque layers everywhere."
+    ]
+  },
+  "layers": [
+    {
+      "name": "shadow",
+      "purpose": "The cast shadow the object throws onto the slot's floor, offset down and right from the body, in one dark step from a material ramp. Inside the 2px margin and no further. It is what makes the object read as lying on something, and keeping it on its own layer means the shadow can be moved for every item in the set by the same offset, which is what makes the light read as one light."
+    },
+    {
+      "name": "base",
+      "purpose": "The object's flat silhouette in one colour per material, inset from the tile edge by the margin. No shading, no outline. This is the layer the footprint is judged on and it stays that way for the whole build, because the footprint is what keeps items separable from their neighbours."
+    },
+    {
+      "name": "shade",
+      "purpose": "The lit face, the shadow face and the single distinguishing feature. Above `base` so a shading pass can be re-run without disturbing the footprint."
+    }
+  ],
+  "tone": {
+    "lightFrom": "top-left",
+    "planes": [
+      {
+        "name": "lit",
+        "rule": "The face turned toward the light: the top of a coin, the upper-left of a flask's body, the flat of a blade. A translated portion of the object's own footprint, following its contour - not a straight band and not an ellipse, because the object is the subject here and a shape the object does not have will be read as a highlight on something else."
+      },
+      {
+        "name": "core-shadow",
+        "rule": "One step below the lit plane, on the bottom-right face of the object only, following the same contour. One step, and never two: at a 12px footprint a two-step shadow puts three pixels of the object's front face into darkness and the item's own form stops being readable."
+      },
+      {
+        "name": "cast",
+        "rule": "The darkest plane, one step below the core shadow, and it lies *outside* the object's footprint in the margin: a translated copy of the bottom-right edge, 1-2px offset, never a full silhouette copy. The cast is the only plane in this class that is not on the object, and that is what makes it read as a shadow rather than as a darker side."
+      }
+    ],
+    "contrast": "The cast must sit one step below the core shadow and no further: two steps makes the shadow the darkest thing in the slot and the eye reads it as a second, smaller object lying beside the first. The lit and core-shadow planes must be adjacent steps of the same ramp, so the object's own form is legible even when the cast shadow is not drawn. Read the three planes with `histogram` on the item alone and compare the counts, because on a 12px footprint the cast may legitimately be the largest single region and that is fine - what must not happen is the cast being the darkest."
+  },
+  "steps": [
+    {
+      "id": "reserve-margin",
+      "layer": "base",
+      "goal": "Decide the footprint and mark it: 12x12 inside a 16x16 slot, 2px of empty slot on every side. Draw it as a rectangle and look at it, because the footprint is the decision this class makes that no other class makes, and a set with two different margins reads as two different artists."
+    },
+    {
+      "id": "block-silhouette",
+      "layer": "base",
+      "goal": "The object flat, inside the margin, in one colour per material. Decide now which single feature distinguishes it from the item next to it in the set - the neck, the wards, the strap - and make sure that feature is inside the silhouette, because a feature drawn in colour alone disappears when the item is seen as a shape."
+    },
+    {
+      "id": "verify-footprint",
+      "layer": "base",
+      "goal": "Measure rather than judge. `measure_region` on the base layer gives the real bounds, and the numbers answer the question the eye is bad at: does every item in the set measure about the same, and is any of them touching the tile edge? Two items with wildly different footprints break the grid long before either is individually wrong."
+    },
+    {
+      "id": "lit-and-shadow-faces",
+      "layer": "shade",
+      "goal": "The lit face and the core shadow, both following the object's own contour and both one ramp step apart. Clip to the layer you are shading (`clip: {layer: \"base\"}`) so a band cannot spill into the margin, where the cast shadow has to go."
+    },
+    {
+      "id": "cast-shadow",
+      "layer": "shadow",
+      "goal": "The cast, offset down and right into the margin, one dark step, drawn before the body so the body overlaps it. Use the same offset for every item in the set - that shared offset is what makes forty objects read as lying under one light rather than under forty."
+    }
+  ],
+  "avoid": [
+    {
+      "what": "An item drawn to the full 16x16, touching the tile edge.",
+      "why": "The item and its neighbour in the next slot form one continuous shape, and a row of them reads as a single long object rather than as a shelf. It is invisible when the item is looked at and it is the fault players report as a broken inventory without being able to say what is wrong.",
+      "instead": "A 12x12 footprint in a 16x16 slot: 2px of empty slot on every side, on every item in the set."
+    },
+    {
+      "what": "A cast shadow that is a full silhouette copy of the item.",
+      "why": "Two overlapping shapes of the same size read as two objects, and the copy's edges are as legible as the item's, so the eye resolves the shadow before the thing.",
+      "instead": "Translate the item's bottom-right edge 1-2px into the margin and fill it with one dark step. Keep the copy inside the margin."
+    },
+    {
+      "what": "A translucent or neutral-grey shadow.",
+      "why": "A translucent layer composites into a colour that is on no swatch, so `paletteLocked` cannot hold it and it reads as dirt in the slot. A neutral grey reads as a different object lying next to the item rather than as its shadow.",
+      "instead": "A declared dark step from the item's own material ramp, filled opaque, at the same offset as every other item in the set."
+    },
+    {
+      "what": "Two or more distinguishing features on a 16px item.",
+      "why": "The item sits among forty others and each feature costs pixels from the footprint, so two features make it both less specific (it could be either thing) and less readable (neither is clear at native size). It is the inventory's version of over-detailing a UI icon.",
+      "instead": "One feature, inside the silhouette, chosen because it is the one thing that separates this item from its nearest neighbour in the set."
+    },
+    {
+      "what": "A different margin, or a different light offset, per item.",
+      "why": "The player does not consciously compare footprints, but the eye integrates the grid, so forty items with varying margins and forty shadow offsets read as a mess of unrelated drawings. This is the failure that is invisible on any single item and unmissable in the grid.",
+      "instead": "One margin and one shadow offset for the whole set, fixed before the first item is drawn."
+    },
+    {
+      "what": "A straight horizontal band of shadow across the item.",
+      "why": "A level cut is the front-view instinct and it produces a form the object does not have, so the eye reads the band as part of the object rather than as a lit and a shadowed face of it.",
+      "instead": "Follow the object's own contour: translate the footprint's edges along the light axis and step the ramp down there."
+    },
+    {
+      "what": "Four or more ramp steps inside a 16px item.",
+      "why": "A 12px footprint with three transitions in it is a gradient, not a material, and the extra steps come out of the twelve-colour budget the next item needed.",
+      "instead": "Three steps per material, one step between lit and core shadow, one more for the cast."
+    },
+    {
+      "what": "Dithering at 16px.",
+      "why": "The largest interior region on a 12px footprint is about 5px across, so a 2px dithered boundary is two-fifths of the region and becomes the item's texture. This is the size at which dither is never available, and there is no seam on this object long enough for it to work.",
+      "instead": "Solid steps with a one-pixel jitter along the boundary between the lit face and the core shadow."
+    },
+    {
+      "what": "Drawing a 16x16 item and scaling it to 32px.",
+      "why": "The distinguishing feature - the whole point of the item - was sized for one pixel at 16px, and scaled up it becomes a 2px block that reads as an artefact rather than as the feature.",
+      "instead": "Draw each size at its own size, with the margin and the shadow offset scaled deliberately rather than as a side effect."
+    },
+    {
+      "what": "A clean-up pass run over the whole set at the end.",
+      "why": "A speckle rule applied across a set finds a different stray pixel in each item and erodes forty objects by one pixel each, which shrinks every footprint and eats every margin. The set ends up uniform and slightly smaller than it should be, and the erosion is invisible item by item.",
+      "instead": "Fix only what you can see at 100% on a single item: a clipped highlight, a shadow that escaped the margin, a footprint that lost a pixel."
+    }
+  ],
+  "checks": [
+    {
+      "question": "Is the item inset from the tile edge, and does every item in the set measure about the same?",
+      "tool": "measure_region",
+      "view": "scope: \"cel\", layer: \"base\" on each item in turn. This is the check that answers the question the eye is bad at, and it is the one an item set fails most often."
+    },
+    {
+      "question": "Does the item read as an object lying on a surface, rather than as a sticker?",
+      "tool": "get_preview",
+      "view": "scale: 1, over a filled background rather than a transparent one. The cast shadow is what does this work and it is invisible against transparency."
+    },
+    {
+      "question": "Is the cast a translated edge rather than a second copy of the object?",
+      "tool": "read_grid",
+      "view": "scope: \"cel\", layer: \"shadow\" - on its own layer the cast should be a crescent hugging the bottom-right edge, with no interior detail and no limbs or protrusions of its own."
+    },
+    {
+      "question": "Do the lit face and the core shadow follow the object's own contour?",
+      "tool": "read_grid",
+      "view": "view: \"value\" on the shade layer - a straight horizontal terminator is the front-view mistake, and a staircase terminator that mirrors the silhouette is the right one."
+    },
+    {
+      "question": "Does every colour in the item come from the declared palette, and does the set fit one budget?",
+      "tool": "histogram",
+      "view": "One item, then the whole set. The per-item reading catches an off-palette pixel; the set-wide one is what catches two items that each picked their own twelve from a palette of thirty."
+    },
+    {
+      "question": "In a packed grid, do the items stay separate objects?",
+      "tool": "get_preview",
+      "view": "Lay several items side by side at 100% on the panel background. Judged alone, an item that touches its neighbour looks perfect; judged in the row, the touching is the only thing visible."
+    }
+  ],
+  "notes": "This class does not animate, so `motion` is absent rather than present-and-empty: an item that spins in the inventory slot is a different asset with different conventions, and a rarity glow is the UI layer's job. The rarity tier recolours the item rather than redrawing it, which is why `paletteLocked: true` matters here more than in a character - it is what lets the same artwork ship as common, rare and legendary."
+}

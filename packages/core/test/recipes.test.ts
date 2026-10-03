@@ -77,13 +77,75 @@ describe('recipe format: the shipped catalogue', () => {
     expect(problems).toEqual([]);
   });
 
-  it('ships exactly one recipe, and it is named by its own id', () => {
-    const names = readdirSync(RECIPES_DIR).filter((n) => n.endsWith('.recipe.json'));
-    // T-030's scope is the format plus one reference recipe. A count assertion is not
-    // ceremony: T-031..T-035 land as files, and this is the line that has to move with them.
-    expect(names).toEqual(['platformer.recipe.json']);
+  it('ships the five catalogue recipes, and each is named by its own id', () => {
+    const names = readdirSync(RECIPES_DIR).filter((n) => n.endsWith('.recipe.json')).sort();
+    // T-030..T-035 are the format plus one recipe per asset class. A count assertion is
+    // not ceremony: a recipe lands as a file, and this is the line that has to move with
+    // it. The ids are spelled out rather than derived from the listing so that a file
+    // deleted by accident fails here instead of quietly shrinking the catalogue.
+    expect(names).toEqual([
+      'dungeon-tileset.recipe.json',
+      'item-icons.recipe.json',
+      'platformer.recipe.json',
+      'topdown-rpg.recipe.json',
+      'ui-icons.recipe.json',
+    ]);
+    for (const name of names) {
+      const result = parseRecipe(readFileSync(`${RECIPES_DIR}${name}`, 'utf8'), { fileName: name });
+      expect(result.ok, name).toBe(true);
+      if (result.ok) expect(result.value.id).toBe(recipeIdFromFileName(name));
+    }
     expect(shipped().id).toBe('platformer');
   });
+
+  it('splits the catalogue into the classes that animate and the ones that do not', () => {
+    // `motion` is optional and its *absence* is the statement that a class does not
+    // animate, so the catalogue is only correct if the animated classes carry it and the
+    // still classes do not carry it at all. Asserting the split rather than one example
+    // is what stops a still class from acquiring a two-frame idle by copy-paste, which
+    // would be a claim the class cannot make: a UI icon that loops is a different asset
+    // with different conventions.
+    const byId = new Map<string, Recipe>();
+    for (const name of readdirSync(RECIPES_DIR).filter((n) => n.endsWith('.recipe.json')).sort()) {
+      const result = parseRecipe(readFileSync(`${RECIPES_DIR}${name}`, 'utf8'), { fileName: name });
+      if (!result.ok) throw new Error(`${name} does not validate`);
+      byId.set(result.value.id, result.value);
+    }
+
+    // Two character classes move. The other three are a tile set, a UI mark and an
+    // inventory object, and none of them has a loop worth shipping.
+    for (const id of ['platformer', 'topdown-rpg']) {
+      const recipe = byId.get(id);
+      expect(recipe, id).toBeDefined();
+      expect(recipe?.motion?.loops.length, `${id} must ship loops`).toBeGreaterThan(0);
+    }
+    for (const id of ['dungeon-tileset', 'ui-icons', 'item-icons']) {
+      const recipe = byId.get(id);
+      expect(recipe, id).toBeDefined();
+      // Not "falsy motion": the key must be absent, because present-and-empty is a
+      // different claim (the author forgot) and the two must not be interchangeable.
+      expect(Object.hasOwn(recipe as Recipe, 'motion'), `${id} must omit motion entirely`).toBe(false);
+    }
+  });
+
+  it('gives every recipe a summary that names the decision it turns on', () => {
+    // The summary is the text an agent reads before it opens the file, so "what this class
+    // is" is not enough in it: the class has to say the single decision that separates a
+    // good asset from a bad one. A summary that only describes the class is the failure
+    // this asserts on, and it is invisible to every other check in this file.
+    for (const name of readdirSync(RECIPES_DIR).filter((n) => n.endsWith('.recipe.json')).sort()) {
+      const result = parseRecipe(readFileSync(`${RECIPES_DIR}${name}`, 'utf8'), { fileName: name });
+      if (!result.ok) throw new Error(`${name} does not validate`);
+      const { summary } = result.value;
+      expect(summary.length, `${name}: summary is too short to carry a decision`).toBeGreaterThan(300);
+      expect(summary, `${name}: summary must name the decision`).toMatch(/decision that separates/i);
+    }
+  });
+
+  // The companion check on recipe *prose* - that it names tools which exist - lives in
+// `packages/mcp/test/recipes.test.ts`, because the set of names a recipe may legitimately
+// use is the advertised tool list plus the command catalogue, and `packages/core` can see
+// only the second half of that.
 });
 
 describe('recipe format: structure', () => {

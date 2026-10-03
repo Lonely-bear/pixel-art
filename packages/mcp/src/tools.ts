@@ -84,6 +84,7 @@ import { BUILTIN_PALETTES, type DocumentStore, type PixelDocument } from './sess
 import { PIXEL_ART_SKILL } from './skill.js';
 import { advertiseSchema, TOOL_RESULT_ENVELOPE } from './surface.js';
 import { analyzeTilemapQuality } from './quality-tilemap.js';
+import { listRecipeIds, loadRecipe, summarise } from './recipe-catalogue.js';
 import { QUALITY_OUTPUT_SCHEMA, qualityPayload } from './quality-report.js';
 import { renderTilemapPreview } from './tilemap-preview.js';
 
@@ -303,6 +304,7 @@ const READ_ONLY_TOOLS = new Set([
   'list_documents',
   'list_plugins',
   'read_skill',
+  'describe_recipe',
 ]);
 
 /**
@@ -423,6 +425,7 @@ const SESSION_TOOLS: Array<{ name: string; description: string }> = [
   { name: 'list_commands', description: 'The command catalogue. Looking one up by name also promotes it to a direct tool.' },
   { name: 'describe_command', description: 'One exact command schema plus its long-form manual; also promotes it to a direct tool.' },
   { name: 'find_workflow', description: 'Task-level workflows, with their recommended commands promoted to direct tools.' },
+  { name: 'describe_recipe', description: 'The art-direction recipe for one class of game asset: sizes, palette, layers, tone, steps, mistakes and read-only checks.' },
 ];
 
 /**
@@ -4261,6 +4264,57 @@ export function registerTools(
       annotations: { readOnlyHint: true },
     },
     () => ok({ ok: true, skill: PIXEL_ART_SKILL }),
+  );
+
+  /* -------------------------------------------------------------- recipes */
+
+  addTool(
+    server,
+    'describe_recipe',
+    {
+      title: 'Read an art-direction recipe',
+      description:
+        'The art-direction brief for one class of game asset - platformer, top-down RPG, dungeon tileset, UI icon, inventory item. Call it with no `id` to list what ships. A recipe is guidance, not a command sequence: it names sizes, palette ramps, layers, tone planes, production order, the mistakes that class keeps making, and read-only checks. It carries no scores, so there is nothing in it to optimise toward.',
+      inputSchema: z.object({
+        id: z
+          .string()
+          .optional()
+          .describe(
+            'Kebab-case recipe id, e.g. "topdown-rpg" or "ui-icons" - the same id as in pixel://recipe/{id}. Omit it to get the catalogue with one-line summaries instead of a whole recipe.',
+          ),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    (args) => {
+      const id = args.id as string | undefined;
+
+      // No id is a listing rather than an error, because "what recipes are there?" is a
+      // question this tool exists to answer and the catalogue is small enough to return
+      // whole. It also means the discovery path costs one call, not a failure and a retry.
+      if (id === undefined) {
+        const ids = listRecipeIds();
+        const recipes = ids.map((candidate) => loadRecipe(candidate));
+        return ok({
+          ok: true,
+          count: ids.length,
+          ids,
+          // A broken file is reported in place rather than dropped: a recipe that exists
+          // on disk and cannot be read is a defect an agent has to know about, and a
+          // catalogue that silently omits it looks exactly like a catalogue where nobody
+          // has written that recipe yet.
+          recipes: recipes.map((loaded) => (loaded.ok ? summarise(loaded.recipe) : { id: loaded.id, issues: loaded.issues })),
+        });
+      }
+
+      const loaded = loadRecipe(id);
+      if (!loaded.ok) {
+        return fail(
+          loaded.issues.map((issue) => (issue.path ? `${issue.path}: ${issue.message}` : issue.message)).join(' ').slice(0, 320),
+          { code: 'unknown_recipe', id, issues: loaded.issues },
+        );
+      }
+      return ok({ ok: true, id: loaded.recipe.id, source: loaded.source, recipe: loaded.recipe });
+    },
   );
 }
 

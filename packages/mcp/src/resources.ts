@@ -36,6 +36,7 @@ import {
 } from '@pixel/core';
 import type { DocumentStore } from './session.js';
 import { qualityPayload } from './quality-report.js';
+import { listRecipeIds, loadRecipe, summarise } from './recipe-catalogue.js';
 import { PIXEL_ART_SKILL, SCRIPT_GUIDE, SCRIPT_GUIDE_URI, SKILL_URI } from './skill.js';
 
 /** Grid views a client can ask `pixel://grid` for. */
@@ -354,6 +355,56 @@ export function registerResources(server: McpServer, store: DocumentStore): void
     }),
     qualityConfig,
     readQuality,
+  );
+
+  server.registerResource(
+    'recipes',
+    'pixel://recipes',
+    {
+      title: 'Recipe catalogue',
+      description:
+        'Every art-direction recipe that ships with this server, one line each. A recipe is a reusable brief for one class of game asset - what size to build, how to build the palette, which layers exist, where the light comes from, the production order, the mistakes that class keeps making, and the read-only checks to run at each gate. Read one at pixel://recipe/{id}. A recipe carries construction numbers and no scores, so nothing in it is a target to optimise toward.',
+      mimeType: 'application/json',
+    },
+    (uri) => {
+      const ids = listRecipeIds();
+      return json(uri, {
+        count: ids.length,
+        recipes: ids.map((id) => {
+          const loaded = loadRecipe(id);
+          return loaded.ok ? summarise(loaded.recipe) : { id: loaded.id, issues: loaded.issues };
+        }),
+      });
+    },
+  );
+
+  server.registerResource(
+    'recipe',
+    new ResourceTemplate('pixel://recipe/{id}', {
+      // Every shipped recipe, listed, so a client can enumerate the channel without
+      // having to know the ids in advance. This is the discovery path the recipe format
+      // needs: recipes are files, and a resource list is how a file catalogue becomes
+      // something a client can see.
+      list: () => ({ resources: listRecipeIds().map((id) => ({ uri: `pixel://recipe/${id}`, name: id })) }),
+    }),
+    {
+      title: 'Art-direction recipe',
+      description:
+        'The full recipe for one class of game asset: canvas sizes with what each buys, palette ramps and colour budget, the layer stack bottom-first, the tone planes and where the light comes from, the production order, the mistakes to avoid each with an action instead, and the read-only checks that verify the result. Guidance an agent reads before drawing, not a command sequence - everything it names is an ordinary tool. It carries construction numbers and no scores.',
+      mimeType: 'application/json',
+    },
+    (uri, variables) => {
+      const id = String(variables.id);
+      const loaded = loadRecipe(id);
+      if (!loaded.ok) {
+        // The same refusal the tool returns, as a message: this is a client asking for a
+        // resource, so the SDK has one channel and it is `Error`.
+        throw new Error(
+          loaded.issues.map((issue) => (issue.path ? `${issue.path}: ${issue.message}` : issue.message)).join(' ').slice(0, 320),
+        );
+      }
+      return json(uri, { source: loaded.source, recipe: loaded.recipe });
+    },
   );
 
   server.registerResource(
