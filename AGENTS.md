@@ -177,10 +177,11 @@ Things that will bite:
 
 ## The MCP tool surface is budgeted
 
-The advertised tool list is deliberately 36 entry-point tools; the 94 core commands are **not**
-in it until a session touches one. `commands: 'lazy'` promotes a command to a first-class tool when
-it is looked up (`list_commands`/`describe_command`/`find_workflow`) or actually run
-(`apply_ops`/`run_script`), and announces the new list.
+The advertised tool list is deliberately 37 entry-point tools (`describe_recipe` was the 37th, and
+`docs/REFERENCE.md` lists them); the 94 core commands are **not** in it until a session touches one.
+`commands: 'lazy'` promotes a command to a first-class tool when it is looked up
+(`list_commands`/`describe_command`/`find_workflow`) or actually run (`apply_ops`/`run_script`), and
+announces the new list.
 
 > **These counts drift.** Measure them (`node scripts/mcp-call.mjs list` for tools,
 > `list_commands` for commands) rather than trusting any number written in prose — including the

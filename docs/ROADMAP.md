@@ -28,10 +28,10 @@ constraints — are in `AGENTS.md`, which is where a change to them belongs.
 
 ## Where the judgement layer stands
 
-**4 of 6 dimensions are registered**: `silhouette`, `value`, `palette`, `noise`. `outline` and
-`motion` are specified and unwritten.
+**5 of 6 dimensions are registered**: `silhouette`, `value`, `palette`, `noise`, `outline`. `motion`
+is specified and unwritten.
 
-All four are reachable: the `evaluate` command, the `evaluate` MCP tool, and the
+All five are reachable: the `evaluate` command, the `evaluate` MCP tool, and the
 `pixel://quality/{doc}` resource. `finalize_document` refuses an asset that fails the gate, and a
 bypass is possible but leaves a notice in the result. `fix` turns issues into ops where a safe repair
 exists and says so in prose where one does not.
@@ -43,8 +43,28 @@ section below.
 
 ### Next in the layer
 
-- **`outline`** — 5th dimension, weight 100. `no-subject` applicability already exists. Check first whether
-  it duplicates `value`: they read the same planes, and `app/icon.png` reads `curvedQ max` 818 in both.
+- **`motion`** — the last dimension, weight 80. `single-frame` applicability already exists. It is the
+  only dimension that can be calibrated cheaply, because frame-difference defects are objective.
+- **`outline` is registered and carries one known limitation, deliberately shipped.** Its predicate is
+  topological (`encloses`: a contour wraps the subject, a cast shadow occupies one side), which
+  repairs the two defects an earlier local-contrast test had, and `outline-missing` became a real
+  `ExcludedReason` (`no-outline`) rather than an issue code — so §4.5's claim that "no outline is
+  neutral, not bad" is finally true. It reads min 350 / median 650 / max 1000 on the corpus.
+
+  **The limitation:** four negative controls carry an outline advisory the dimension reports on them.
+  Two are two-tone subjects with no drawn contour (`inkColours` is 1 on both), where `ink` reads the
+  dark half's outer edge as a contour and the verdict falls to `warn`. No threshold separates them
+  from `control/outline-ring-32`, a real closed 1px contour: 1000 against 327 and 416, the same side of
+  every band edge. Every code involved is under §5.3's 0.50 blocking line, so **nothing is refused** —
+  the cost is two warnings a reviewer learns to ignore, which is a weaker harm than a fifth dimension
+  that does not exist. The owner's call, and the fix if anyone wants it is a **synthetic contrast
+  pair** (one two-tone subject drawn with and without a third contour tone), not a gate.
+
+- **The duplication question this entry used to carry is answered: `outline` does not duplicate
+  `value`.** `curvedQ` lives in `value.ts` alone and §4.5 measures no curvature at all, so the old
+  "818 in both" reading was never possible — outline did not exist in the baseline when it was
+  written. A lesson worth keeping: that note was on this page for weeks and was checkable in one
+  grep the whole time.
 - **`motion`** — last dimension, weight 80. `single-frame` applicability already exists. It is the only
   dimension that can be calibrated cheaply, because frame-difference defects are objective.
 - **Per-asset-class weight profiles.** §7 item 8: an icon, a walk cycle, a tile and a 256² scene do not
@@ -59,9 +79,9 @@ section below.
 
 | | |
 | --- | --- |
-| **Recipes** | Format and the `platformer` recipe ship. Still to write: `topdown-rpg`, `dungeon-tileset`, `ui-icons`, `item-icons`, and a `describe_recipe` MCP tool with a `pixel://recipe/{id}` resource. |
+| **Recipes** | The format and five recipes ship — `platformer`, `topdown-rpg`, `dungeon-tileset`, `ui-icons`, `item-icons` — along with the `describe_recipe` tool, `pixel://recipes` and `pixel://recipe/{id}`. Still to write: recipes for the classes the asset contract actually needs next (8-direction character sets, hero props, effect frames), and nothing in the format has to change to add them. |
 | **8-direction characters** | Angle definitions and orientation anchors; a walk-cycle generator; direction-aware preview; atlas export with per-frame metadata. The strongest star magnet in the plan and the least built. |
-| **Asset contract** | `meta.json` and the generator ship. Still to write: Godot, Unity, Phaser and Excalidraw importers, and a naming-convention validator — all of which consume that one contract. |
+| **Asset contract** | `meta.json`, the generator, the validator, all four importers (Godot, Unity, Phaser, Excalidraw) and the naming-convention validator ship — see `docs/IMPORTERS.md`. Still to write: exposing the importers through `finalize_document` and the MCP tool surface, which is blocked on whether `meta.json` is written next to every export or is one more output the caller opts into; and importers for the contract classes `kind` does not model yet (tilesets, tilemaps). |
 | **SVG trace import** | Raster outline to cel. `.aseprite` native read is possible but needs reverse-engineering verification. |
 | **Stable programmatic API** | The npm package is a devDependency away from being pleasant. |
 | **Cookbook, GitHub Action, team palettes** | Not started. |
@@ -87,14 +107,19 @@ stabilisation pass, and the long-form writing about the lazy tool surface and th
 
 Small, and listed so nobody rediscovers them:
 
-- `docs/ASSET-CONTRACT-ZH.md` and the Chinese mirrors for `docs/EVALUATION.md` §4.4 / §7 and
-  `CHANGELOG.md`'s recent entries. D-3 requires them; the English landed first because the judgement
-  layer was the urgent one.
+- **Closed.** `docs/ASSET-CONTRACT-ZH.md`, `docs/EVALUATION-ZH.md` (§4.4 and §7 only — the
+  header says so, and the remaining sections are still unmirrored), and the missing
+  `CHANGELOG.md` entries in `CHANGELOG-ZH.md` now exist. D-3 asks for a mirror per English doc;
+  `docs/EVALUATION.md` §1–§3, §4.1–§4.3, §4.5, §4.6, §5, §6, §8 and appendix A are still English-only.
 - `scripts/mcp-call.mjs` and the docs carry tool counts as prose, and they drift. **Measure with
   `node scripts/mcp-call.mjs list` rather than copying a number out of a document** — including out of
   this one.
-- `quality.ts` re-derives §5.2's weighted total because `weightedTotalQ` is private to
-  `quality/index.ts`. The clean fix is to export it and delete the copy.
+- ~~`quality.ts` re-derives §5.2's weighted total because `weightedTotalQ` is private.~~ **Closed.**
+  The duplication was drift wearing a constraint as a disguise: the comment claiming it was "forced"
+  named a file whitelist as if it were architecture, and the file already imported from
+  `quality/index.ts` on the line above. The two implementations were compared token for token and
+  are identical, so `weightedTotalQ` is now exported from its one home and a test asserts that
+  exactly one definition exists in `packages/core/src`.
 - `applyCommandWithSummary` re-codes a `CommandError` raised inside `apply` to `command_failed`, while
   `applyCommandToDraft` preserves it. A command therefore cannot return `invalid_params` for a
   cross-field argument violation raised in `apply` — it tells an agent the *document* refused when its

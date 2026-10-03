@@ -310,7 +310,10 @@ Nothing about the surface below changes when recipes land. `API_VERSION` stays a
 - **`buildCharacter({brief, directions})`.** A recipe needs an LLM or a human to turn prose
   into ops, so it is async and it is a recipe (T-030+), not a library primitive. The seam it
   plugs into is `buildAnimation` + `exportAssets`.
-- **A recipe catalogue, or `describe_recipe`.** That is T-030/T-036.
+- **A recipe catalogue, or `describe_recipe`.** Both exist, and neither is here on purpose:
+  a recipe is prose an agent reads, so it is served by the MCP server's `describe_recipe`
+  tool and the `pixel://recipe/{id}` resource, and the npm bundle ships the `recipes/`
+  directory rather than a library function that returns them.
 - **Fusing several sprites into one atlas.** `exportAssets` takes one `Sprite`, because how
   tags and frame metadata should merge across documents is a T-043 decision, not a guess.
   Build one animation with `buildAnimation` and the sheet is already one file.

@@ -120,6 +120,15 @@ What it has:
   shading, highlights and dither bands stay inside the silhouette — or one part of it —
   instead of filling their bounding box. Clipping to a layer that renders *above* the one
   you paint hides the result, and the tool returns a `warning` when it detects that.
+- **Vector outlines in** — `trace_svg { svg }` reads a flat filled SVG and lands it on the
+  pixel grid. `scale` is SVG units per pixel (`16` puts a 512-unit icon in a 32px cel) and
+  `offset` is where SVG (0,0) goes. Each shape paints its own `fill` through the palette, so
+  `paletteLocked` snaps the whole trace to the document's swatches; pass `color` to flatten it
+  to one. Coverage is hard-edged — run `antialias` afterwards if you want a softer staircase.
+  `path` (all commands, arcs included), `rect`/`circle`/`ellipse`/`polygon`/`polyline` are
+  traced, holes included. Refused with a readable error rather than approximated: any
+  `transform`, an inherited `<g fill>`, and `fill: url(#gradient)`. Named in `skipped`:
+  `line`, `image`, `text`, `use`, and `fill: none` (strokes are never traced).
 - **Replace** — `draw_rect`, `draw_ellipse`, `draw_polygon` and `dither_fill` take
   `replace: true` to clear the pixels they cover before painting, so a re-drawn or
   re-stippled shape does not stack on the previous pass. It clears only the new shape's
@@ -255,8 +264,9 @@ and fail loudly when it is not there.
   `preview_animation`, `preview_tilemap`, `read_grid`, `get_pixels`, `histogram`, `get_selection`,
   `set_selection`, `evaluate`, `get_palette`, `get_history`, `undo`, `redo`, `apply_ops`, `export_png`,
   `export_sheet`, `export_tiled`, `export_gif`, `list_commands`, `describe_command`,
-  `find_workflow`, `read_skill`, and the scripting tools `run_script`, `load_plugin`, `list_plugins`.
-  The stdio server adds `get_connection_status` on top of that 36, so the agent can tell
+  `find_workflow`, `read_skill`, `describe_recipe`, and the scripting tools `run_script`,
+  `load_plugin`, `list_plugins`.
+  The stdio server adds `get_connection_status` on top of that 37, so the agent can tell
   whether it is editing the app or an in-memory store.
 
   The ~90 core commands (`draw_rect`, `autotile`, `create_tileset`, `add_palette_ramp`, …) are **not**
@@ -376,6 +386,9 @@ and fail loudly when it is not there.
   `pixel://guide/{command}` (a command's long-form manual — the detail behind a short tool
   description, pulled at the moment it is needed), `pixel://quality/{id}` (the quality report,
   byte-identical to the `evaluate` tool's answer, with `?tag=`, `?frame=N` and `?maxIssues=N`),
+  `pixel://recipes` (the recipe catalogue, one line per recipe) and `pixel://recipe/{id}` (one
+  art-direction recipe whole — the same bytes `describe_recipe` returns, and listed on
+  `resources/list` so a client can enumerate a catalogue that is just a directory),
   plus document, grid and preview templates. The preview is a real `image/png` blob, so
   multimodal models can *see* the art; it takes the same view options as `get_preview` as
   query parameters: `?frame=N`, `?frames=all`, `?scale=N`, `?layers=a,b`, `?onion=N`

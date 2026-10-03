@@ -304,7 +304,10 @@ export function buildPlatformerTileset({ tileSize = 16, seed = 1, columns = 8 } 
 - **`buildCharacter({brief, directions})`。** 配方需要一个大模型或一个人把散文
   变成 ops，所以它是异步的，而且它是配方（T-030+），不是库原语。它接入的
   接缝就是 `buildAnimation` + `exportAssets`。
-- **配方目录，或 `describe_recipe`。** 那是 T-030/T-036。
+- **配方目录，或 `describe_recipe`。** 两者都已存在，而且都不在这里，这是刻意的：配方是给
+  Agent 读的一段文字，所以它由 MCP 服务器的 `describe_recipe` 工具和
+  `pixel://recipe/{id}` 资源提供；npm 包附带的是 `recipes/` 目录，而不是一个返回它们的
+  库函数。
 - **把多个精灵融进同一张图集。** `exportAssets` 只接收一个 `Sprite`，因为标签
   和帧元数据该怎样跨文档合并是 T-043 的决策，不是可以猜的东西。用
   `buildAnimation` 构建一段动画，精灵图本身就已经是一个文件了。

@@ -102,7 +102,7 @@ reconnects if one appears later.
 On Windows that block needs `"command": "cmd"` with `"/c"` prepended to `args` — see
 [Connect an MCP client](#connect-an-mcp-client).
 
-`tools/list` returns **36 tools**. The 94 commands behind them — `draw_ellipse`,
+`tools/list` returns **37 tools**. The 94 commands behind them — `draw_ellipse`,
 `add_palette_ramp`, `outline`, `stroke_tilemap`, `autotile`, the rig, the tilemaps —
 are not in that list up front. An agent finds them the way any MCP client would,
 through `list_commands`, `describe_command`, `find_workflow` or `apply_ops`, and a
