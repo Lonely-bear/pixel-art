@@ -437,11 +437,21 @@ and fail loudly when it is not there.
    of digital 1px stipple.
 7. **`finalize_document` closes the production loop in one call.** It saves the editable
    `.pixel` source and renders a typed output plan: individual PNGs, all-frame PNGs,
-   spritesheet + Aseprite JSON, tag-aware GIF, pose renders, and timeline/playback contact
-   sheets. Every output is rendered before any file is written. An optional manifest records
+   spritesheet + Aseprite JSON, tag-aware GIF, pose renders, timeline/playback contact
+   sheets, and — opt-in — the asset contract and engine files below. Every output is
+   rendered before any file is written. An optional manifest records
    source version, frame durations, tags, actual output paths/sizes, and SHA-256 hashes;
    `incremental: true` reuses that manifest to skip unchanged source/output files. The legacy
    PNG-only `exports` array remains accepted.
+   **Asset outputs are opt-in, not automatic.** `{type: "meta", path}` writes the
+   engine-agnostic `meta.json` of [`ASSET-CONTRACT.md`](ASSET-CONTRACT.md), and
+   `{type: "engine", engine: "godot" | "unity" | "phaser" | "excalidraw", path}` writes that
+   contract *and* the engine files generated from it, under `<asset.name>/` beside the contract
+   unless `directory` says otherwise. Both take `sheet` (defaulting to the plan's `sheet`
+   output), `outputs[]`, `directions[]` and `direction` labels; the naming validator
+   ([`IMPORTERS.md`](IMPORTERS.md)) runs on the contract first and **refuses the write** on a
+   naming error, the way the quality gate refuses. See `docs/IMPORTERS.md` for why opt-in
+   rather than automatic.
 8. **`add_palette_ramp` builds hue-shifted material ramps.** Give it a dark and a light
    anchor plus a step count, and it generates the intermediate colours in HSL, pulling the
    dark end toward blue/violet and the light end toward amber by `hueShift` degrees
@@ -653,6 +663,13 @@ structure for terrain, walls and floors, and it is what an agent uses to build a
   `format: "gif"` to return an animated image for clients that support playback.
 - `finalize_document.outputs` can deliver a contact sheet beside source, sheet, frames and GIF;
   `manifest: {path, hashes}` produces an engine-facing bundle inventory.
+- `finalize_document.outputs` also takes `{type: "meta", path}` for the asset contract
+  (`meta.json`) and `{type: "engine", engine, path, directory?}` for one engine's files. Both
+  are opt-in, both pass through the quality gate and the naming gate, and both land in the
+  hashed manifest like every other output. `directions: ["S", "N"]` writes
+  `frames.directions`; omit it and no block is emitted at all, byte for byte as before the
+  field existed. `license` is not a parameter — add the block to the file, because the
+  document model has no licence field and this will not invent one.
 - `export_sheet` writes the raw timeline as a spritesheet PNG plus Aseprite-compatible JSON,
   with animation tags exported as `meta.frameTags`. `export_png` with `frames: "all"`
   writes one file per raw timeline frame. This keeps engine slicing deterministic; use the

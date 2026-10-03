@@ -5,11 +5,23 @@ the one contract in [`ASSET-CONTRACT.md`](ASSET-CONTRACT.md). That file says wha
 *means*; this one says what each engine *does with it*, and — more usefully — what each one
 loses.
 
-> **Status:** the importers are not wired into `finalize_document` or exposed as MCP tools. They
-> are library functions in `packages/core/src/asset/importers/`, called from code or from a
-> plugin. Exposing them is a later decision, for the reason `asset/index.ts` gives: whether
-> `meta.json` is written next to every export or is one more output the caller opts into is not
-> settled, and an importer surface answers that question by existing.
+> **Status:** the importers are reachable two ways. They remain library functions in
+> `packages/core/src/asset/importers/`, callable from code or a plugin; and they are
+> **opt-in outputs of `finalize_document`**, `{type: "engine", engine, path}`, alongside
+> `{type: "meta", path}` for the contract itself. There is deliberately no second export tool:
+> one `finalize_document` plan is the whole delivery path, and a separate tool would split it.
+>
+> **Why opt-in rather than automatic.** The target engine is the caller's choice and a tool
+> cannot know it — a Godot resource beside every PNG export would be a surprise to everyone
+> already using that path and would break the byte-identical expectations its existing outputs
+> carry. So a plan that asks for no asset output writes exactly the files it wrote before,
+> which `packages/mcp/test/asset-outputs.test.ts` holds as a regression guard.
+>
+> The naming validator runs on the contract **before** anything is written, and a naming
+> **error refuses the write** the way the quality gate refuses: a reserved device name, a
+> case-folded path collision or a path Windows rewrites produces files that fail later and
+> further from the cause. Warnings are style — a project convention — and are reported in the
+> result's `assets[].naming.diagnostics` without blocking.
 
 ## The shape every importer has
 
@@ -230,8 +242,15 @@ throw, so the boundary is stated rather than assumed.
 
 ## Known limitations
 
-- **Not exposed.** Library functions only. No MCP tool, no `finalize_document` integration, no CLI
-  surface — the export-path decision is not mine to make.
+- **The engine files are not read back from the sheet.** An importer can only describe the
+  contract it was handed; whether the PNG on disk is the PNG in `sheet.regions` is a question
+  only the filesystem can answer.
+- **`license` is not a `finalize_document` parameter.** The contract supports the block and the
+  generator never invents it, but the tool surface leaves it out (~600 bytes of every request in
+  every session) rather than advertise a declaration the document model cannot hold. Add the
+  block to the written file, or call `buildAssetMeta` directly.
+- **No CLI surface** for the importers — `finalize_document` is the MCP path, and the CLI has no
+  asset-output equivalent yet.
 - **Excalidraw does not embed pixels** (above).
 - **Unity is a script plus a JSON description**, not a native `.meta`/`.asset`. That is what works
   in Unity; a pipeline wanting committed binary Unity assets needs something this does not do.

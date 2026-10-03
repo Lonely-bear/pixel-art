@@ -311,6 +311,12 @@ export function buildPlatformerTileset({ tileSize = 16, seed = 1, columns = 8 } 
 - **把多个精灵融进同一张图集。** `exportAssets` 只接收一个 `Sprite`，因为标签
   和帧元数据该怎样跨文档合并是 T-043 的决策，不是可以猜的东西。用
   `buildAnimation` 构建一段动画，精灵图本身就已经是一个文件了。
+- **npm 接口上的 `meta.json` 与引擎导入器。** 资产契约（[`ASSET-CONTRACT.md`](ASSET-CONTRACT.md)）
+  和四个引擎导入器（[`IMPORTERS.md`](IMPORTERS.md)）在 `@pixel/core` 里，通过 MCP 服务器
+  `finalize_document` 的可选输出 `{type: "meta"}` 与 `{type: "engine"}` 使用；它们不在
+  `exportAssets` 的 plan 里，也还不在这个 npm 接口上：上面的 sheet JSON 已经为「自己切图的
+  构建脚本」提供了帧几何与时序，而契约是为「消费方是游戏引擎」这件事存在的——用哪个引擎，
+  该由调用方决定，而不是由一个库决定。
 - **写文件、目录、glob、watch 模式、缓存键、资产清单。** `exportAssets` 返回
   字节；字节去哪里是构建脚本的事，而且这些选择每一个都更适合交给项目本来就
   有的构建系统去做。

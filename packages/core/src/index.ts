@@ -59,6 +59,12 @@ export * from './quality/index.js';
 // schema nobody outside the package can import is a schema that cannot be held to.
 export * from './recipes.js';
 
+// The asset contract (`meta.json`), the four engine importers and the naming validator.
+// Public because `finalize_document` writes them as opt-in outputs: a client that cannot reach
+// `renderAssetMeta` cannot offer the contract, and a client that cannot reach `validateAssetNaming`
+// cannot check the files it is about to write against the names a Windows build machine accepts.
+export * from './asset/index.js';
+
 // The SVG tracer behind `trace_svg`. Public because the command is a thin wrapper over it and a
 // caller tracing outside the bus should get the same pixels the command gets, not a second path.
 export * from './svgtrace.js';

@@ -899,15 +899,21 @@ describe('the specification is the schema', () => {
  * The wiring that is deliberately absent
  * ================================================================== */
 
-describe('not wired into the export path yet', () => {
-  // The contract is not registered as a command, not re-exported from the package index and
-  // not written by `finalize_document`. A later task owns that decision, and it needs to be
-  // made once: whether `meta.json` is written next to every export or is one more output the
-  // caller opts into. Asserting the absence here means the decision is visible in the
-  // diff that makes it, rather than a fact somebody has to remember.
-  it('is not in the package entry point yet', () => {
+describe('wired into the export path, opt-in', () => {
+  // **This block used to assert the opposite, and the inversion is the point.** The test held the
+  // place of a decision that was deliberately deferred: whether `meta.json` is written next to
+  // every export, or is one more output the caller opts into. Asserting the absence made the
+  // decision visible in the diff that made it rather than a fact somebody had to remember, and it
+  // did its job — the decision landed, so the absence is now the thing that must stop.
+  //
+  // **Opt-in, not automatic.** The target engine is the caller's choice and a tool cannot know it,
+  // and writing engine files beside every export would surprise existing users and break the
+  // byte-identical expectations the other outputs already carry. `finalize_document` gained a `meta`
+  // and an `engine` output type rather than gaining them for everybody, and an ordinary export
+  // writes exactly the files it wrote before.
+  it('is in the package entry point', () => {
     const index = readFileSync(fileURLToPath(new URL('../src/index.ts', import.meta.url)), 'utf8');
-    expect(index).not.toContain("export * from './asset/index.js'");
+    expect(index).toContain("export * from './asset/index.js'");
   });
 
   it('writes every path it is given as a relative one', () => {

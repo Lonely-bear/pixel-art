@@ -10,6 +10,14 @@
 > manifest answers "what did this run write, where, and how big was it" - that is bookkeeping
 > about one execution. This file answers "what *is* this asset" and is meant to outlive the
 > run, the machine and the person who made it.
+>
+> **How it gets written.** `{type: "meta", path}` in `finalize_document`'s `outputs`, or
+> `{type: "engine", engine, path}` to write it together with one engine's files. Both are
+> **opt-in**: this file is not produced beside every export, because a target engine is the
+> caller's choice and a tool cannot know it, and because writing engine files into everyone's
+> existing bundles would break the byte-identical expectations those outputs already carry. See
+> `IMPORTERS.md`. `license` is the one block the tool surface does not carry — it is a
+> declaration the document model cannot hold, and it is never invented.
 
 A PNG dropped into a Godot project, a Unity package or a Phaser build is a file with no idea
 what frame it is. Every serious engine needs the same six facts - how big a frame is, how

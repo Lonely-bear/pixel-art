@@ -16,7 +16,7 @@
  */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, dirname, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult, ContentBlock, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
@@ -24,6 +24,13 @@ import { SKILL_FINGERPRINT } from './server.js';
 import {
   animationSequence,
   assertFinalizable,
+  buildAssetMeta,
+  importExcalidraw,
+  importGodot,
+  importPhaser,
+  importUnity,
+  serializeAssetMeta,
+  validateAssetNaming,
   blendInto,
   buildSpritesheet,
   compositeFrame,
@@ -70,6 +77,11 @@ import {
   tileCount,
   toAsepriteJson,
   toTiledJson,
+  type Atlas,
+  type AssetImportResult,
+  type AssetMetaOptions,
+  type AssetMetaOutput,
+  type AssetNamingDiagnostic,
   type Command,
   type Frame,
   type QualityGateDecision,
@@ -216,6 +228,45 @@ const pngExportSchema = z
   })
   .strict();
 
+/**
+ * The contract fields that are not the document: the sheet, the rest of the bundle and the
+ * per-frame facings. Shared by the `meta` and `engine` output shapes rather than written twice,
+ * because one copy of "what a caller may say about an asset" is the only way the two outputs
+ * cannot drift into describing different bundles.
+ *
+ * `license` is the one caller option the contract has that this shape does **not** carry. It
+ * costs ~600 bytes of every request in every session to advertise, and a caller who needs it can
+ * add the block to the written file — which is the honest place for a declaration that is not in
+ * the document model and must never be invented. See `docs/ASSET-CONTRACT.md` S11.
+ */
+const assetBundleShape = {
+  sheet: z
+    .string()
+    .optional()
+    .describe(
+      'Spritesheet PNG the contract describes, relative to `path`. Defaults to the `sheet` output in the same plan. Omit for a bundle of PNGs.',
+    ),
+  outputs: z
+    .array(
+      z
+        .object({
+          role: z
+            .enum(['source', 'frame', 'sheet-json', 'gif', 'contact-sheet'])
+            .describe('What the file is. `sheet` is reserved; the sheet is `sheet.image`.'),
+          path: z.string().describe('The file, relative to `path`, forward slashes.'),
+        })
+        .strict(),
+    )
+    .optional()
+    .describe('The rest of the bundle, relative to `path`.'),
+  directions: z
+    .array(z.string().nullable())
+    .optional()
+    .describe(
+      'Which way each frame faces, in timeline order: `N`, `NE`, `E`, `SE`, `S`, `SW`, `W`, `NW`, or null. One entry per frame. Omit it and the contract carries no `directions` block at all; an unrecognised label is an error, never a dropped frame.',
+    ),
+};
+
 const exportOutputSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('png'),
@@ -268,6 +319,23 @@ const exportOutputSchema = z.discriminatedUnion('type', [
     margin: z.number().int().min(0).optional(),
     scale: z.number().int().min(1).max(32).optional(),
     background: previewBackgroundSchema,
+  }).strict(),
+  // The two asset outputs, both opt-in. One call is still the whole delivery path: the skill
+  // tells an agent to finish with ONE `finalize_document` plan, and a second export tool would
+  // split that in two. The target engine is the caller's choice and a tool cannot know it, and
+  // writing `meta.json` beside every export would surprise everyone already using this and break
+  // the byte-identical expectations the existing outputs carry — so both are asked for by name.
+  z.object({
+    type: z.literal('meta'),
+    path: z.string().describe('Destination `meta.json` path; paths inside it are relative to this folder.'),
+    ...assetBundleShape,
+  }).strict(),
+  z.object({
+    type: z.literal('engine'),
+    engine: z.enum(['godot', 'unity', 'phaser', 'excalidraw']).describe('Which engine to write for. The contract is built first and this importer reads it.'),
+    path: z.string().describe('Destination `meta.json` path. Written too: the files are generated from it.'),
+    directory: z.string().optional().describe('Folder for the engine files, relative to `path`. Defaults to `<asset.name>/`.'),
+    ...assetBundleShape,
   }).strict(),
 ]);
 
@@ -409,7 +477,7 @@ const SESSION_TOOLS: Array<{ name: string; description: string }> = [
   { name: 'create_sprite_spec', description: 'Create sprite structure, animation tags, palette roles and an optional rig from one declarative spec.' },
   { name: 'open_document', description: 'Load a `.pixel` document.' },
   { name: 'save_document', description: 'Save to a `.pixel` file.' },
-  { name: 'finalize_document', description: 'Save the editable source and render PNG/frame/sheet/GIF/contact outputs plus an optional manifest.' },
+  { name: 'finalize_document', description: 'Save the editable source and render PNG/frame/sheet/GIF/contact outputs, an opt-in meta.json asset contract and opt-in engine files, plus an optional manifest.' },
   { name: 'import_image', description: 'Import a PNG or Aseprite file.' },
   { name: 'select_document', description: 'Make a document active.' },
   { name: 'close_document', description: 'Drop a document from the session.' },
@@ -1174,6 +1242,12 @@ interface RenderedExportFile {
   width?: number;
   height?: number;
   details?: Record<string, unknown>;
+  /**
+   * The packing result behind a `sheet` output, carried so the asset contract can describe the
+   * *actual* sheet this plan writes rather than re-deriving it with default options. A contract
+   * whose `sheet.regions` came from a differently-packed atlas would mis-slice every cell.
+   */
+  atlas?: Atlas;
 }
 
 function indexedOutputPath(path: string, index: number): string {
@@ -1193,6 +1267,10 @@ function renderExportOutputs(sprite: Sprite, outputs: ExportOutputSpec[]): Rende
   };
 
   for (const output of outputs) {
+    // `meta` and `engine` are text, not pixels, and are rendered by `renderAssetOutputs` — which
+    // has to run after this one, because a contract describes the sheet this loop writes.
+    if (output.type === 'meta' || output.type === 'engine') continue;
+
     if (output.type === 'png') {
       const frame = resolveFrame(sprite, output.frame ?? 0);
       let image = compositeFrame(sprite, frame.id, { background: output.background });
@@ -1232,6 +1310,7 @@ function renderExportOutputs(sprite: Sprite, outputs: ExportOutputSpec[]): Rende
       const fileName = output.path.split(/[\\/]/).pop() ?? 'sheet.png';
       const jsonPath = output.json ?? output.path.replace(/\.png$/i, '') + '.json';
       addPng(output.path, sheet.image, 'sheet', { columns: sheet.columns, rows: sheet.rows, tags: sheet.tags });
+      files[files.length - 1].atlas = sheet;
       files.push({
         path: jsonPath,
         bytes: Buffer.from(JSON.stringify(toAsepriteJson(sprite, sheet, fileName), null, 2), 'utf8'),
@@ -1304,6 +1383,12 @@ function renderExportOutputs(sprite: Sprite, outputs: ExportOutputSpec[]): Rende
       continue;
     }
 
+    // The last branch is now checked by name rather than being the fallthrough: the union grew
+    // `meta` and `engine`, and an implicit "whatever is left" here would silently type-check a
+    // text output as a contact sheet the first time somebody adds a branch.
+    if (output.type !== 'contact') {
+      throw new Error(`Unsupported export output type "${(output as { type: string }).type}".`);
+    }
     const contact = animationPreviewPayload(sprite, {
       tag: output.tag,
       frameOrder: output.frameOrder,
@@ -1322,6 +1407,157 @@ function renderExportOutputs(sprite: Sprite, outputs: ExportOutputSpec[]): Rende
     throw new Error(`Export plan would write ${files.length} files, above the 512-file safety limit.`);
   }
   return files;
+}
+
+/** The `meta` and `engine` branches of `exportOutputSchema`. */
+type AssetOutputSpec = Extract<ExportOutputSpec, { type: 'meta' | 'engine' }>;
+
+const ENGINE_IMPORTERS: Record<string, (input: unknown) => AssetImportResult> = {
+  godot: importGodot,
+  unity: importUnity,
+  phaser: importPhaser,
+  excalidraw: importExcalidraw,
+};
+
+/** What the result says about each contract written, so the warnings travel with the delivery. */
+interface RenderedAsset {
+  path: string;
+  bytes: number;
+  contentHash: string;
+  schemaVersion: number;
+  /** `ok: false` only reaches here on a refusal, so every delivered asset is `ok: true`. */
+  naming: { ok: boolean; diagnostics: readonly AssetNamingDiagnostic[] };
+  engine?: { engine: string; root: string; files: string[]; warnings: string[] };
+}
+
+/**
+ * Thrown when the bundle's own names cannot be committed.
+ *
+ * **An error here refuses the write, the way the quality gate refuses.** A reserved device name
+ * (`nul.png`) or two paths differing only in case produce files that work on the artist's Mac
+ * and fail on a Windows build machine, or two files on Linux and one on Windows — the symptom
+ * surfaces in CI, minutes away from the cause and naming nothing. A warning does not refuse: a
+ * camelCase asset name is a project convention, not a broken build, and a validator that blocks
+ * a build over style is a validator a project switches off.
+ */
+class AssetNamingRefusal extends Error {
+  readonly diagnostics: readonly AssetNamingDiagnostic[];
+
+  constructor(diagnostics: readonly AssetNamingDiagnostic[]) {
+    const errors = diagnostics.filter((d) => d.severity === 'error');
+    const codes = [...new Set(errors.map((d) => d.code))].join(', ');
+    super(
+      briefError(
+        `Asset naming refuses this bundle: ${errors.length} error(s) [${codes}]. ` +
+          `First: ${errors[0].path === '' ? 'the contract' : `"${errors[0].path}"`} - ${errors[0].message} ` +
+          'A reserved device name, a case-folded collision or a path Windows rewrites produces files that fail later and further from the cause.',
+      ),
+    );
+    this.name = 'AssetNamingRefusal';
+    this.diagnostics = diagnostics;
+  }
+}
+
+/** A path relative to the folder holding `meta.json`, forward slashes on every platform. */
+function bundleRelative(metaPath: string, target: string): string {
+  return relative(dirname(resolve(metaPath)), resolve(target)).split('\\').join('/');
+}
+
+/**
+ * The contract options for one asset output.
+ *
+ * The sheet is the only field derived from the rest of the plan, and it is derived from the
+ * `sheet` output this same plan already wrote: `sheet.regions` is authoritative in the contract
+ * precisely because the packer's padding and margin are not recorded, so re-packing the sprite
+ * with default options here would describe a sheet nobody is shipping.
+ */
+function assetMetaOptions(
+  sprite: Sprite,
+  request: AssetOutputSpec,
+  plan: RenderedExportFile[],
+): AssetMetaOptions {
+  const sheetOutput = plan.find((file) => file.type === 'sheet');
+  const sheetPath = request.sheet ?? (sheetOutput ? bundleRelative(request.path, sheetOutput.path) : undefined);
+  return {
+    ...(sheetPath
+      ? { sheet: { atlas: sheetOutput?.atlas ?? buildSpritesheet(sprite), image: sheetPath } }
+      : {}),
+    ...(request.outputs ? { outputs: request.outputs as readonly AssetMetaOutput[] } : {}),
+    ...(request.directions ? { directions: request.directions } : {}),
+  };
+}
+
+/**
+ * `meta.json`, and one engine importer's files, as ordinary rendered outputs.
+ *
+ * Rendered into the same list as the PNGs and the GIF, which is the whole point: everything
+ * downstream — the path-collision check, the hashed manifest, the incremental skip, the file
+ * list, the write loop — then covers these outputs without knowing they exist. An output type
+ * that did not join that list would be invisible to `incremental: true`, and the second run
+ * would rewrite every engine file for everyone.
+ */
+function renderAssetOutputs(
+  sprite: Sprite,
+  outputs: ExportOutputSpec[],
+  plan: RenderedExportFile[],
+): { files: RenderedExportFile[]; assets: RenderedAsset[] } {
+  const files: RenderedExportFile[] = [];
+  const assets: RenderedAsset[] = [];
+
+  for (const output of outputs) {
+    if (output.type !== 'meta' && output.type !== 'engine') continue;
+    const request = output as AssetOutputSpec;
+    const meta = buildAssetMeta(sprite, assetMetaOptions(sprite, request, plan));
+    // Naming runs on the contract *before* anything is written, and before the importer: an
+    // engine file named after a reserved device or a case-colliding path is a broken build, and
+    // the contract is where the bundle's file list lives.
+    const naming = validateAssetNaming(meta);
+    if (!naming.ok) throw new AssetNamingRefusal(naming.diagnostics);
+
+    // Serialised once and used twice: the bytes written and the bytes reported have to be the
+    // same bytes, and a second call is a second chance for them to differ.
+    const text = serializeAssetMeta(meta);
+    files.push({
+      path: request.path,
+      bytes: Buffer.from(text, 'utf8'),
+      type: 'meta',
+      details: { contentHash: meta.asset.contentHash, schemaVersion: meta.schemaVersion },
+    });
+    const asset: RenderedAsset = {
+      path: request.path,
+      bytes: Buffer.byteLength(text, 'utf8'),
+      contentHash: meta.asset.contentHash,
+      schemaVersion: meta.schemaVersion,
+      naming: { ok: naming.ok, diagnostics: naming.diagnostics },
+    };
+
+    if (request.type === 'engine') {
+      const importer = ENGINE_IMPORTERS[request.engine];
+      if (!importer) throw new Error(`Unknown engine "${request.engine}".`);
+      const result = importer(meta);
+      // `result.root` is the importer's suggested folder; a caller with a project layout takes
+      // it over with `directory`. Relative, forward-slashed paths from the importer are joined
+      // segment by segment so a Windows separator can never reach a contract path.
+      const root = request.directory ?? result.root;
+      for (const file of result.files) {
+        files.push({
+          path: join(dirname(request.path), root, ...file.path.split('/')),
+          bytes: Buffer.from(file.contents, 'utf8'),
+          type: 'engine',
+          details: { engine: request.engine, role: file.role },
+        });
+      }
+      asset.engine = {
+        engine: request.engine,
+        root,
+        files: result.files.map((file) => file.path),
+        warnings: [...result.warnings],
+      };
+    }
+    assets.push(asset);
+  }
+
+  return { files, assets };
 }
 
 interface RawOp {
@@ -1848,7 +2084,7 @@ export function registerTools(
     {
       title: 'Save and export an asset bundle',
       description:
-        'Save the editable `.pixel` source and render a validated multi-format export plan in one call. `outputs` supports PNG, all-frame PNGs, spritesheet+JSON, GIF, rig poses and animation contact sheets; every output is rendered before writing and an optional hashed manifest can drive incremental updates. The quality gate runs first and refuses the whole call on a named blocking defect, writing nothing - fix the artwork, or re-run with `bypass: true` and a `bypassReason`.',
+        'Save the editable `.pixel` source and render a validated multi-format export plan in one call. `outputs` supports PNG, all-frame PNGs, spritesheet+JSON, GIF, rig poses, contact sheets, `meta.json` and opt-in engine files; every output is rendered before writing, and a hashed manifest can drive incremental updates. The quality gate runs first and refuses the whole call on a named defect, writing nothing - fix the artwork, or re-run with `bypass: true` and a `bypassReason`.',
       inputSchema: z.object({
         document: documentRef,
         path: z.string().optional().describe('Destination `.pixel` path. Defaults to the document\'s current path.'),
@@ -1936,7 +2172,11 @@ export function registerTools(
       try {
         // Render and validate the complete plan before writing anything.
         const sourceBytes = serializeSprite(doc.editor.sprite);
-        const rendered = renderExportOutputs(doc.editor.sprite, outputs);
+        const pixelOutputs = renderExportOutputs(doc.editor.sprite, outputs);
+        // After the images, because the contract wants to describe the sheet this plan actually
+        // writes; before any write, because a naming refusal must leave nothing on disk.
+        const { files: assetFiles, assets } = renderAssetOutputs(doc.editor.sprite, outputs, pixelOutputs);
+        const rendered = [...pixelOutputs, ...assetFiles];
         const manifestPath = manifestSpec?.path;
         const allPaths = [path, ...rendered.map((output) => output.path)];
         if (manifestPath) allPaths.push(manifestPath);
@@ -2084,9 +2324,13 @@ export function registerTools(
             bytes: output.bytes.byteLength,
             details: output.details,
           })),
-          // Preserve the old response key for clients that only understand PNG exports.
+          // Only present when an asset output was asked for, so a plan without one carries the
+          // same shape it always did.
+          ...(assets.length > 0 ? { assets } : {}),
+          // Preserve the old response key for clients that only understand PNG exports. The
+          // asset outputs are text and are deliberately not in it: `exports` is the image list.
           exports: rendered
-            .filter((output) => output.type !== 'json')
+            .filter((output) => output.type !== 'json' && output.type !== 'meta' && output.type !== 'engine')
             .map((output) => ({ path: output.path, width: output.width, height: output.height, bytes: output.bytes.byteLength, ...output.details })),
           files,
           skippedFiles,
@@ -2095,6 +2339,19 @@ export function registerTools(
           document: store.summary(doc),
         });
       } catch (error) {
+        // The naming gate refuses the same way the quality gate does, and for the same reason:
+        // `finalize_document` is the one tool that writes, so a "here is a problem, files
+        // anyway" outcome is a bundle nobody can commit. `command_failed`, not
+        // `invalid_params` — the arguments parsed; the bundle's own names said no.
+        if (error instanceof AssetNamingRefusal) {
+          return fail(error.message, {
+            code: 'command_failed',
+            gate: 'asset-naming',
+            diagnostics: error.diagnostics,
+            remediation:
+              'Rename the offending path or the asset name, or drop the entry from `outputs`/`sheet`, then re-run. Naming warnings do not block an export.',
+          });
+        }
         return fail(`Could not finalize ${path}: ${(error as Error).message}`);
       }
     },

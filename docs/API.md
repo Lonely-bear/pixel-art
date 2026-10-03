@@ -317,6 +317,14 @@ Nothing about the surface below changes when recipes land. `API_VERSION` stays a
 - **Fusing several sprites into one atlas.** `exportAssets` takes one `Sprite`, because how
   tags and frame metadata should merge across documents is a T-043 decision, not a guess.
   Build one animation with `buildAnimation` and the sheet is already one file.
+- **`meta.json` and the engine importers on the npm surface.** The asset contract
+  ([`ASSET-CONTRACT.md`](ASSET-CONTRACT.md)) and the four engine importers
+  ([`IMPORTERS.md`](IMPORTERS.md)) live in `@pixel/core` and are reached from the MCP server's
+  `finalize_document` as the opt-in `{type: "meta"}` and `{type: "engine"}` outputs. They are
+  not in `exportAssets`'s plan and not in this npm surface yet: the sheet JSON above already
+  carries frame geometry and timing for a build script that slices it itself, and the contract
+  exists for the case where a *game engine* is the consumer and the answer to "which engine"
+  belongs to the caller, not to a library.
 - **Writes, directories, globs, watch mode, cache keys, asset manifests.** `exportAssets`
   returns bytes; where they go is the build script's business, and every one of those
   choices is better made by a build system the project already has.

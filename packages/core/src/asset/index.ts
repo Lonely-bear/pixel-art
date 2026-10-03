@@ -11,10 +11,13 @@
  *   hash.ts     the digest. Pure-TS SHA-256 and the length-prefixed preimage, because the
  *               document's own ids are clock-plus-entropy and cannot be an identity.
  *
- * Not wired into `finalize_document` yet. That is deliberate and belongs to a later task:
- * the export path is shared, and the first question whoever takes it has to answer is
- * whether `meta.json` is written next to every export or is one more output the caller
- * opts into. Answering it here would have put a decision in the contract.
+ * Wired into `finalize_document` as two **opt-in** outputs: `{type: "meta", path}` and
+ * `{type: "engine", engine, path}`, both in `packages/mcp/src/tools.ts`. The question this
+ * file used to leave open — written next to every export, or one more output the caller
+ * asks for — is settled: opt-in, because the target engine is the caller's choice and a
+ * tool cannot know it, and because writing engine files beside every export would surprise
+ * everyone already using that path and break the byte-identical expectations its existing
+ * outputs carry. The contract still decides nothing about who calls it.
  *
  * No `format`, no `.pixel` extension and no second source of truth. Every field is either a
  * projection of the document model or a caller-supplied option the document model has no
