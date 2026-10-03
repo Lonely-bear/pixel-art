@@ -28,10 +28,12 @@ constraints — are in `AGENTS.md`, which is where a change to them belongs.
 
 ## Where the judgement layer stands
 
-**5 of 6 dimensions are registered**: `silhouette`, `value`, `palette`, `noise`, `outline`. `motion`
-is specified and unwritten.
+**All 6 of 6 dimensions are written and registered**: `silhouette`, `value`, `palette`, `noise`,
+`outline`, `motion`. `not-implemented` is unreachable from this pipeline — every absence a report can
+carry names a reason about the **document** (`no-subject`, `no-outline`, `single-frame`,
+`no-motion-content`) rather than about the build.
 
-All five are reachable: the `evaluate` command, the `evaluate` MCP tool, and the
+All six are reachable: the `evaluate` command, the `evaluate` MCP tool, and the
 `pixel://quality/{doc}` resource. `finalize_document` refuses an asset that fails the gate, and a
 bypass is possible but leaves a notice in the result. `fix` turns issues into ops where a safe repair
 exists and says so in prose where one does not.
@@ -43,8 +45,13 @@ section below.
 
 ### Next in the layer
 
-- **`motion`** — the last dimension, weight 80. `single-frame` applicability already exists. It is the
-  only dimension that can be calibrated cheaply, because frame-difference defects are objective.
+- **`motion` is registered** (weight 80). It is the only dimension whose defects are objective, which
+  is why it could be calibrated cheaply. Its corpus evidence is the layer's weakest: **six of its seven
+  codes have no corpus case**, because the corpus holds three multi-frame drawings rather than nine,
+  and **there is no clean multi-frame control at all** — while §4.6's severity scale is the only one
+  that cannot be checked from a contact sheet, so the corpus is the only place a clean loop could be
+  proven quiet. That is the next piece of work in the layer, and it is fixtures rather than code.
+
 - **`outline` is registered and carries one known limitation, deliberately shipped.** Its predicate is
   topological (`encloses`: a contour wraps the subject, a cast shadow occupies one side), which
   repairs the two defects an earlier local-contrast test had, and `outline-missing` became a real
@@ -65,8 +72,6 @@ section below.
   "818 in both" reading was never possible — outline did not exist in the baseline when it was
   written. A lesson worth keeping: that note was on this page for weeks and was checkable in one
   grep the whole time.
-- **`motion`** — last dimension, weight 80. `single-frame` applicability already exists. It is the only
-  dimension that can be calibrated cheaply, because frame-difference defects are objective.
 - **Per-asset-class weight profiles.** §7 item 8: an icon, a walk cycle, a tile and a 256² scene do not
   share a definition of good, and one weight table cannot serve all four. This is probably worth more
   than a fifth dimension.
