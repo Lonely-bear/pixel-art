@@ -35,6 +35,10 @@ export * from './tilemap.js';
 export * from './transform.js';
 export * from './rig.js';
 export * from './render.js';
+// The 8-direction angle model and its orientation transforms. Public because a caller assembling
+// orientation anchors or checking which of the eight directions a pose resolves to needs the same
+// table the command uses, not a second copy of it.
+export * from './directions.js';
 export * from './png.js';
 export * from './grid.js';
 export * from './serialize.js';

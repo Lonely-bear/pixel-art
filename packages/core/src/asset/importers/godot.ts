@@ -81,6 +81,19 @@ export function importGodot(input: unknown): AssetImportResult {
     role: 'godot-scene',
     contents: sceneText(meta, animations),
   });
+  // The direction table, as its own resource. Godot's `SpriteFrames` has nowhere to put a
+  // per-frame label — the frame dict is `{duration, texture}` and nothing else — so the
+  // honest mapping is a separate `Resource` the game loads and reads by frame index. A
+  // facing is the one thing an 8-direction character sheet cannot afford to lose, so it
+  // gets a first-class file rather than a comment nobody's code can see.
+  const directions = meta.frames.directions;
+  if (directions && directions.length > 0) {
+    files.push({
+      path: `${meta.asset.name}.directions.res`,
+      role: 'godot-directions',
+      contents: directionsResource(meta),
+    });
+  }
 
   return { root: meta.asset.name, files, warnings: warnings.list(), meta };
 }
@@ -257,6 +270,42 @@ function sceneText(
 function isNonUniform(meta: AssetMeta, frameIndices: readonly number[]): boolean {
   const first = meta.frames.durationsMs[frameIndices[0]];
   return frameIndices.some((index) => meta.frames.durationsMs[index] !== first);
+}
+
+/**
+ * The per-frame direction table, as a Godot `Resource`.
+ *
+ * **`SpriteFrames` cannot carry it** — its frame entries are `{duration, texture}` and the
+ * resource has no user metadata slot a game can index — so this is a sibling `.res` holding
+ * a `PackedStringArray` of facings in timeline order plus the animation each frame belongs
+ * to. A game reads it as `res://<name>.directions.res` and indexes by frame number, which is
+ * the lookup a `CharacterBody2D` does when it picks a walk cycle from a velocity.
+ *
+ * Key order inside the dictionary is fixed by `toJsonFile`, and Godot's `Dictionary` literal
+ * preserves insertion order on save, so re-exporting the same contract rewrites the same
+ * bytes rather than reshuffling a committed resource.
+ */
+function directionsResource(meta: AssetMeta): string {
+  const rows = meta.frames.directions ?? [];
+  // Packed parallel arrays rather than an array of Dictionaries: GDScript indexes these with
+  // one `[]`, and a dictionary per frame costs an allocation on a character that changes
+  // facing every few frames.
+  const facings = rows.map((entry) => entry.facing);
+  const animationNames = rows.map((entry) => (entry.animations ?? []).join(','));
+  return [
+    '[gd_resource type="Resource" load_steps=1 format=3]',
+    '',
+    '[resource]',
+    // `metadata/<key>` is Godot's own per-resource key/value slot (`Object.set_meta`), which
+    // is exactly the thing `SpriteFrames` lacks for its frames and which survives a save.
+    // Read it from GDScript as `res.get_meta("dotloom_facings")`.
+    `metadata/dotloom_facings = PackedStringArray(${facings.map((f) => engineString(f)).join(', ')})`,
+    `metadata/dotloom_frame_animations = PackedStringArray(${animationNames
+      .map((a) => engineString(a))
+      .join(', ')})`,
+    `metadata/dotloom_content_hash = ${engineString(meta.asset.contentHash)}`,
+    '',
+  ].join('\n');
 }
 
 /** Convenience for a caller that wants the JSON half of a Godot bundle for its own tooling. */

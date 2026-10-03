@@ -2,6 +2,7 @@ import { blendInto } from './blend.js';
 import { PixelBuffer } from './buffer.js';
 import { parseColor } from './color.js';
 import { getFrame, type Layer, type Sprite } from './document.js';
+import type { AssetFacing } from './asset/schema.js';
 import { maskFromBuffer } from './raster.js';
 import type { Color, ColorInput, FrameId, LayerId } from './types.js';
 
@@ -12,6 +13,117 @@ export interface CompositeOptions {
   background?: ColorInput | null;
   /** Skip layers that are hidden. Defaults to true. */
   respectVisibility?: boolean;
+  /**
+   * Overlay a marker showing which way this frame faces.
+   *
+   * An **option on the existing composite path**, not a separate renderer, so every consumer
+   * of `compositeFrame` — the spritesheet builder, the GIF writer, the MCP `get_preview`
+   * tool, `renderThumbnail` — gets it by passing one field rather than by being rewritten.
+   * `null` or absent draws nothing, which keeps every existing call byte-identical.
+   */
+  facing?: string | null;
+  /** Colour for the facing marker. Defaults to a mid grey that reads on most art. */
+  facingColor?: ColorInput;
+}
+
+/**
+ * A facing marker: a 5x5 arrow pointing the way the sprite faces.
+ *
+ * **Hand-drawn bitmaps, not trigonometry**, and the reason is the determinism rule rather
+ * than taste. `Math.atan2`/`Math.sin` are implementation-approximated — a value one ULP
+ * either side of a rounding boundary puts the arrowhead on the wrong side of a cell on a
+ * different engine — and `test/determinism.test.ts` pins the exact set of files allowed to
+ * call them. Eight strings cannot drift that way. `NE` and `SW` share one diagonal glyph
+ * because they are the same diagonal with the arrowhead at the other end, which is exactly
+ * what they are.
+ */
+const FACING_ARROWS: Readonly<Record<AssetFacing, readonly string[]>> = {
+  N: ['..#..', '.###.', '#.#.#', '..#..', '..#..'],
+  NE: ['....#', '...##', '#.###', '##...', '#....'],
+  E: ['..#..', '..##.', '#####', '..##.', '..#..'],
+  SE: ['#....', '##...', '#.###', '...##', '....#'],
+  S: ['..#..', '..#..', '#.#.#', '.###.', '..#..'],
+  SW: ['#....', '##...', '###.#', '...##', '....#'],
+  W: ['..#..', '.##..', '#####', '.##..', '..#..'],
+  NW: ['....#', '...##', '###.#', '##...', '....#'],
+  none: ['.....', '.###.', '.###.', '.###.', '.....'],
+};
+
+/**
+ * Canonical label for each arrow, so callers can pass `'south'` or `'S'`.
+ *
+ * Typed as {@link AssetFacing} rather than `keyof typeof FACING_ARROWS` so the return type is
+ * the contract's closed enum. `AssetFacing` is a *type-only* import of an enum a zod schema
+ * produces, so this costs no runtime dependency on `asset/` and no cycle: `asset/schema.ts`
+ * imports nothing from `render.ts`.
+ */
+const FACING_LOOKUP: Readonly<Record<string, AssetFacing>> = {
+  n: 'N',
+  north: 'N',
+  ne: 'NE',
+  northeast: 'NE',
+  e: 'E',
+  east: 'E',
+  se: 'SE',
+  southeast: 'SE',
+  s: 'S',
+  south: 'S',
+  sw: 'SW',
+  southwest: 'SW',
+  w: 'W',
+  west: 'W',
+  nw: 'NW',
+  northwest: 'NW',
+  none: 'none',
+};
+
+/**
+ * The canonical label for a facing string, or `null` when it names no known direction.
+ *
+ * **The one implementation of this rule.** `asset/build.ts` re-exports it as
+ * `normalizeFacingLabel` rather than keeping a second copy: two tables that are supposed to
+ * agree are exactly the failure this repository keeps paying for, and a test asserting they
+ * agree is a test that fails after the damage rather than preventing it.
+ */
+export function normalizeFacing(facing: string): AssetFacing | null {
+  const key = facing.trim().toLowerCase().replace(/[\s_-]/g, '');
+  return Object.prototype.hasOwnProperty.call(FACING_LOOKUP, key) ? FACING_LOOKUP[key] : null;
+}
+
+/**
+ * Draw a facing marker into a buffer, top-left corner of the cell at `x, y`.
+ *
+ * Clipped rather than throwing on an out-of-bounds origin: a marker on a 2x2 thumbnail is
+ * the normal case at small scales, and the alternative is every preview caller guarding.
+ * An unknown label draws nothing — a preview must not invent a direction, which is the same
+ * rule the contract follows.
+ */
+export function drawFacingMarker(
+  target: PixelBuffer,
+  facing: string | null | undefined,
+  x = 0,
+  y = 0,
+  color: ColorInput = '#808080',
+): void {
+  if (facing == null) return;
+  const canonical = normalizeFacing(facing);
+  if (canonical === null) return;
+  const rows = FACING_ARROWS[canonical];
+  const ink = parseColor(color);
+  for (let row = 0; row < rows.length; row++) {
+    const line = rows[row];
+    for (let column = 0; column < line.length; column++) {
+      if (line[column] !== '#') continue;
+      const px = x + column;
+      const py = y + row;
+      if (!target.contains(px, py)) continue;
+      const i = target.index(px, py);
+      target.data[i] = ink.r;
+      target.data[i + 1] = ink.g;
+      target.data[i + 2] = ink.b;
+      target.data[i + 3] = 255;
+    }
+  }
 }
 
 /**
@@ -41,6 +153,7 @@ export function compositeFrame(
     if (!cel) continue;
     compositeLayer(out, cel, layer);
   }
+  if (opts.facing != null) drawFacingMarker(out, opts.facing, 0, 0, opts.facingColor ?? '#808080');
   return out;
 }
 
@@ -175,7 +288,12 @@ export function compositeWithOnion(
   if (opts.background != null) out.fill(opts.background);
 
   if ((before === 0 && after === 0) || current < 0) {
+    // `facing` is honoured here rather than dropped, because `OnionSkinOptions` extends
+    // `CompositeOptions` and an option that is inherited and then ignored is a caller who
+    // asked for a marker and got none without being told. Same code path, so it cannot
+    // diverge from `compositeFrame`'s.
     blendBuffer(out, compositeFrame(sprite, frameId, opts), 1, null);
+    if (opts.facing != null) drawFacingMarker(out, opts.facing, 0, 0, opts.facingColor ?? '#808080');
     return out;
   }
 
@@ -199,6 +317,7 @@ export function compositeWithOnion(
     layers: opts.layers,
     respectVisibility: opts.respectVisibility,
   }), 1, null);
+  if (opts.facing != null) drawFacingMarker(out, opts.facing, 0, 0, opts.facingColor ?? '#808080');
   return out;
 }
 

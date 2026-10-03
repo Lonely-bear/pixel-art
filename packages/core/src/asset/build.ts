@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { Atlas } from '../atlas.js';
 import { colorToHex } from '../color.js';
 import type { AnimationTag, Sprite } from '../document.js';
-import { compositeFrame } from '../render.js';
+import { compositeFrame, normalizeFacing } from '../render.js';
 import type { PixelBuffer } from '../buffer.js';
 import { AssetDigestWriter } from './hash.js';
 import {
@@ -11,6 +11,7 @@ import {
   ASSET_META_SCHEMA_VERSION,
   assetMetaSchema,
   unwrapSchema,
+  type AssetFacing,
   type AssetMeta,
   type AssetMetaLicense,
   type AssetMetaOutput,
@@ -57,6 +58,21 @@ export interface AssetMetaOptions {
    * them twice.
    */
   readonly composites?: readonly PixelBuffer[];
+  /**
+   * Which way each frame faces, in timeline order.
+   *
+   * **A caller option, never derived.** The document model has no field for it, and the one
+   * thing this repository will not do is guess: an angle model (or a naming convention like
+   * `walk_s` in a tag name) is a decision somebody makes, and a contract that invents `S` for
+   * a frame nobody labelled is a character that walks south on its own. `null` in the list is
+   * the honest per-frame answer and is written as `facing: "none"` rather than dropped, so the
+   * array keeps one entry per frame.
+   *
+   * Labels are normalised through {@link normalizeFacingLabel}, so `'south'`, `'South'` and
+   * `'S'` all arrive as `'S'`. Anything unrecognised **throws**: a silently-dropped facing is
+   * a character that faces the wrong way in the game and nobody can tell from the sheet.
+   */
+  readonly directions?: readonly (string | null)[];
 }
 
 /**
@@ -211,6 +227,10 @@ export function buildAssetMeta(sprite: Sprite, options: AssetMetaOptions = {}): 
     return frame.durationMs;
   });
   const totalMs = durationsMs.reduce((sum, ms) => sum + ms, 0);
+  // Computed here rather than inline in the literal, because the "omit the whole block when
+  // the caller said nothing" rule needs the value twice and a second call would be a second
+  // place for the two copies to disagree.
+  const directions = directionBlock(sprite, options.directions);
 
   const meta: AssetMeta = {
     format: ASSET_META_FORMAT,
@@ -226,6 +246,10 @@ export function buildAssetMeta(sprite: Sprite, options: AssetMetaOptions = {}): 
       durationsMs,
       totalMs,
       fps: nominalFps(durationsMs),
+      // Spread conditionally rather than always written, because an asset with no direction
+      // model must serialise to exactly the bytes it did before this field existed — see S10
+      // and the note on `directionBlock`.
+      ...(directions ? { directions } : {}),
     },
     ...(sprite.tags.length > 0 ? { animations: animationBlock(sprite) } : {}),
     ...(options.sheet ? { sheet: sheetBlock(sprite, options.sheet) } : {}),
@@ -239,6 +263,75 @@ export function buildAssetMeta(sprite: Sprite, options: AssetMetaOptions = {}): 
   // malformed report is a bug in the aggregator, not a verdict about the artwork.
   assetMetaSchema.parse(meta);
   return meta;
+}
+
+/**
+ * Canonicalise one facing label, or return `null` when it is not one of the eight.
+ *
+ * **A re-export of `render.ts`'s `normalizeFacing`, not a second copy of the table.** Two
+ * spellings tables that are supposed to agree are the failure mode this repository has paid
+ * for repeatedly: the contract records `'SW'` and the preview draws an `'SE'` arrow, and
+ * nothing catches it until someone reviews the art. One implementation, two names, because
+ * the contract's vocabulary (`AssetFacing`) and the renderer's (`string`) are deliberately
+ * not the same type — a preview accepts whatever a caller has, a contract does not.
+ *
+ * Returns `null` rather than throwing so callers can decide: {@link directionBlock} turns it
+ * into a refusal with the offending label named, and a preview renderer turns it into "draw no
+ * marker", which is the right answer for a frame nobody has labelled yet.
+ *
+ * Deliberately does **not** accept arbitrary text: `'sideways'`, `'front'` and `'up'` have no
+ * single mapping onto eight compass points, and picking one would be the generator inventing
+ * a decision. `none` is accepted, because "this frame has no stated facing" is a value a
+ * caller legitimately has.
+ */
+export const normalizeFacingLabel: (label: string) => AssetFacing | null = normalizeFacing;
+
+/**
+ * `frames.directions`, or `undefined` when the caller supplied no facings at all.
+ *
+ * Absent rather than empty when nothing was supplied, and that is the whole backward-
+ * compatibility story in one line: a file written for an asset with no direction model is
+ * byte-identical to what this repository produced before the field existed, so every
+ * committed contract and every importer cache key in the wild survives this change untouched.
+ *
+ * The per-frame animation list is **derived**, by inverting `expandTagFrames` for each tag —
+ * the same expanded order `animations.items[].frames` publishes, so a pingpong's repeated
+ * frame is listed once and the two blocks cannot disagree about which frames an animation
+ * shows. Order is `animations.items` order, which is document order, which is the determinism
+ * rule of S11.
+ */
+function directionBlock(
+  sprite: Sprite,
+  directions: readonly (string | null)[] | undefined,
+): NonNullable<AssetMeta['frames']['directions']> | undefined {
+  if (directions === undefined) return undefined;
+  if (directions.length !== sprite.frames.length) {
+    throw new RangeError(
+      `Got ${directions.length} facing label(s) for ${sprite.frames.length} frames; the contract writes one entry per frame so an importer can index by position.`,
+    );
+  }
+  const owners: string[][] = sprite.frames.map(() => []);
+  sprite.tags.forEach((tag) => {
+    // `expandTagFrames` returns the playback order, so a pingpong names its middle frame
+    // **twice**. Deduplicated, because `animations` here is the set of animations that show
+    // this frame, not a playback trace — a frame listed twice would also be a frame whose
+    // entry disagrees with itself.
+    for (const index of expandTagFrames(tag)) {
+      if (owners[index] && !owners[index].includes(tag.name)) owners[index].push(tag.name);
+    }
+  });
+  return directions.map((label, index) => {
+    if (label === null || label === undefined) {
+      return { index, facing: 'none', ...(owners[index].length > 0 ? { animations: owners[index] } : {}) };
+    }
+    const facing = normalizeFacingLabel(label);
+    if (facing === null) {
+      throw new RangeError(
+        `"${label}" is not one of N, NE, E, SE, S, SW, W, NW or none. The generator refuses an unrecognised facing rather than dropping it, because a silently-missing facing is a character that faces the wrong way in the engine with nothing to trace it to.`,
+      );
+    }
+    return { index, facing, ...(owners[index].length > 0 ? { animations: owners[index] } : {}) };
+  });
 }
 
 function animationBlock(sprite: Sprite): NonNullable<AssetMeta['animations']> {

@@ -187,6 +187,10 @@ function moduleSource(meta: AssetMeta, key: string, useAtlas: boolean): string {
     // loop is -1. Getting this wrong by one is the classic off-by-one that plays an attack
     // twice, so it is derived here rather than left to the caller.
     const repeat = animation.loop ? -1 : Math.max(0, animation.repeat - 1);
+    // The facing of each frame in playback order, not timeline order: a pingpong plays frame
+    // 2 twice and a caller reading this anim wants to know what they are looking at right
+    // now, which is exactly `frames[i]`.
+    const frameFacings = animation.frames.map((frame) => facingOf(meta, frame) ?? 'none');
     return (
       `  ${JSON.stringify(animation.name)}: {\n` +
       // Compact rather than `toJsonFile`'s two-space form: these are literals inside a generated
@@ -199,6 +203,12 @@ function moduleSource(meta: AssetMeta, key: string, useAtlas: boolean): string {
       `    frameDurationsMs: ${JSON.stringify(
         animation.frames.map((frame) => meta.frames.durationsMs[frame]),
       )},\n` +
+      // And the direction each of those frames looks, which Phaser has no concept of at all.
+      // This is how a game picks `walk_s` from a velocity without hard-coding frame numbers.
+      // Emitted only when the contract has a direction block at all: an asset with no
+      // directions must not acquire a per-anim list of `"none"`, which is a claim about the
+      // artwork that nobody made.
+      (meta.frames.directions ? `    frameFacings: ${JSON.stringify(frameFacings)},\n` : '') +
       '  }'
     );
   });
@@ -226,6 +236,17 @@ function moduleSource(meta: AssetMeta, key: string, useAtlas: boolean): string {
     `export const TEXTURE_KEY = ${JSON.stringify(key)};`,
     `export const FRAME_SIZE = { width: ${meta.frames.size.width}, height: ${meta.frames.size.height} };`,
     `export const DURATIONS_MS = ${JSON.stringify(meta.frames.durationsMs)};`,
+    // Facing per timeline frame, parallel to DURATIONS_MS, and `null` per frame where the
+    // contract states none. Emitted as JSON rather than a `PackedStringArray`-alike because
+    // this is JavaScript: `null` is the value that distinguishes "faces nowhere" from
+    // "faces south", which a bare string cannot.
+    ...(meta.frames.directions && meta.frames.directions.length > 0
+      ? [
+          `export const FRAME_FACINGS = ${JSON.stringify(
+            meta.frames.directions.map((entry) => (entry.facing === 'none' ? null : entry.facing)),
+          )};`,
+        ]
+      : []),
     // The pivot as Phaser wants it, for setOrigin at spawn time.
     `export const ORIGIN = { x: ${originX}, y: ${originY} };`,
     `export const DEFAULT_ANIMATION = ${
@@ -250,7 +271,9 @@ function moduleSource(meta: AssetMeta, key: string, useAtlas: boolean): string {
     'createAnimations.frames = [',
     ...meta.frames.durationsMs.map(
       (_duration, index) =>
-        `  { key: TEXTURE_KEY, frame: \`\${TEXTURE_KEY}_${index}\`, duration: ${meta.frames.durationsMs[index]} },`,
+        `  { key: TEXTURE_KEY, frame: \`\${TEXTURE_KEY}_${index}\`, duration: ${meta.frames.durationsMs[index]}${
+          facingOf(meta, index) === undefined ? '' : `, facing: ${JSON.stringify(facingOf(meta, index))}`
+        } },`,
     ),
     '];',
     '',
@@ -275,4 +298,19 @@ function round(value: number, places: number): number {
   const factor = 10 ** places;
   const rounded = Math.round(value * factor) / factor;
   return Object.is(rounded, -0) ? 0 : rounded;
+}
+
+/**
+ * One frame's facing, or `undefined` when the contract states none for it.
+ *
+ * `undefined` rather than `'none'` so a caller can tell "this contract has no direction model"
+ * from "this frame faces nowhere", and so the emitted literal is omitted entirely in the
+ * first case — a module that exports `FRAME_FACINGS` full of nulls is a different file from
+ * one that does not export the constant at all, and only the second is honest about an asset
+ * with no directions.
+ */
+function facingOf(meta: AssetMeta, index: number): string | undefined {
+  const entry = meta.frames.directions?.[index];
+  if (!entry || entry.facing === 'none') return undefined;
+  return entry.facing;
 }

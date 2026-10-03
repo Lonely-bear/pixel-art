@@ -235,6 +235,11 @@ required.** See S7.
 | `frames.durationsMs` | integer[] | yes | milliseconds | - | How long each frame is held, in timeline order (index 0 first). **The field no engine can infer from a PNG, and the reason this file exists.** Positional rather than an array of objects, so a four-frame sprite costs four numbers instead of four JSON objects. |
 | `frames.totalMs` | integer | yes | milliseconds | - | Sum of `durationsMs`. Derived: precomputed so a player needs no loop to find the cycle length. |
 | `frames.fps` | number | yes | frames/second | - | `1000 * count / totalMs`, rounded to three decimals. Derived: a convenience for engines that take one number; `durationsMs` is authoritative, because 100/100/200 ms has no single true fps and this is the least-bad one. |
+| `frames.directions` | object[] | no | - | - | Which way each frame faces, and which animations show it. One entry per frame, in timeline order. **Optional, and additive within `schemaVersion 1`** per S3: a file written before this field existed still validates, and a reader that does not know it ignores it. Absent means the asset carries no per-frame direction, which is a legitimate state for a prop, an effect or a tile; it never means "faces south". |
+| `frames.directions[]` | object | yes | - | - | One frame's facing. Listed for completeness; it is the element shape of the array above. |
+| `frames.directions[].index` | integer | yes | frame index | - | Derived: which timeline frame this entry describes. Always equal to its own position in the array. |
+| `frames.directions[].facing` | enum | yes | - | `none` | `N`, `NE`, `E`, `SE`, `S`, `SW`, `W`, `NW` or `none`. A **closed** enum for the reason `kind` is: a direction a reader does not recognise is a document it cannot serve. `none` means *this frame* has no stated facing (a prop, a still), which is different from the block being absent. Compass abbreviations rather than degrees because every engine wants a cardinal direction: Unity's `flipX` plus a Y sign, Godot's node flip and Phaser's `setFlipX` all take a direction, and none of them takes radians. |
+| `frames.directions[].animations` | string[] | no | - | - | Names of the animations that show this frame, in `animations.items` order. Derived from `animations.items[].frames`, and emitted so an importer never has to **invert** the animation lists to answer "which way is frame 12 looking" — the one question an 8-direction character sheet exists to answer. Omitted when no animation shows the frame. |
 | `animations` | object | no | - | - | Playback. Absent for a single-frame still, which is not a failure: a still has no animation, and saying so differs from saying it has an empty one. |
 | `animations.default` | string | yes | - | first item's name | The animation a player should play when nothing is asked for. Required inside `animations` because an engine that guesses picks the first one, and "the first one" is not a decision anyone made. |
 | `animations.items` | object[] | yes | - | - | Every animation, in document order. At least one. |
@@ -339,9 +344,10 @@ artwork the moment someone hand-edits a file. So:
   waiting to happen.
 - **Derived** fields are still emitted and still verified. The complete list is
   `frames.totalMs`, `frames.fps`, `animations.items[].durationMs`,
-  `animations.items[].fps`, `sheet.scale` and the per-cell identity of `sheet.regions[]`
-  (`index`, `width`, `height`): every one of them is recomputable from the rest of the file,
-  so the validator recomputes each and refuses on a disagreement, with
+  `animations.items[].fps`, `sheet.scale`, the per-cell identity of `sheet.regions[]`
+  (`index`, `width`, `height`), and the per-frame identity of `frames.directions[]`
+  (`index`) together with its `animations` list: every one of them is recomputable from the
+  rest of the file, so the validator recomputes each and refuses on a disagreement, with
   `frame-total-mismatch`, `fps-mismatch`, `animation-duration-mismatch`,
   `sheet-region-count-mismatch` and `sheet-region-size-mismatch`.
 
@@ -428,6 +434,27 @@ locale-sensitive collation, so two runs over one file produce the same list.
 Lossy mappings, stated up front, because an importer that discovers them halfway through is
 an importer that ships a subtly wrong animation.
 
+### 9.0 Direction, and what each engine does with `frames.directions`
+
+A per-frame facing is the one fact that has **no native representation in any of the four
+engines**. None of them stores "this sprite looks south" anywhere; they all store a flip, and
+the flip is a rendering decision rather than a property of the artwork. So the mapping is not
+"export the direction" but "carry it somewhere the game's own code can read it", and each
+importer picks the place its engine actually has:
+
+| Engine | Where it goes | Why there |
+| --- | --- | --- |
+| Godot | `<name>.directions.res`, a `Resource` with `metadata/dotloom_facings` | `SpriteFrames`' frame entries are `{duration, texture}` and nothing else — there is no slot to put a label. A sibling resource read by `res.get_meta("dotloom_facings")` is the only place it fits. |
+| Unity | `frameFacings[]` on the description, and `facings[]` per clip | `JsonUtility` reads it, so the C# side can branch on it; Unity itself stores no direction. |
+| Phaser | `FRAME_FACINGS` at module scope, `frameFacings[]` per anim, `facing` per frame entry | Plain JavaScript, so it is directly readable by the game that picks a walk cycle from a velocity. |
+| Excalidraw | `customData.dotloom.facing` | The only place a third-party fact can live in an Excalidraw scene. |
+
+None of these is a **lossy** mapping in the S9 sense — nothing is dropped, and nothing has
+to be recomputed by the consumer — so none of them emits a warning. What they all share is
+that a game has to *ask* for the direction rather than read it off the sprite. That is a
+property of the engines, not of this contract, and it is the one line in this document a
+reader of any of the four should know before planning an 8-direction character.
+
 ### 9.1 Godot
 
 - `SpriteSheet` takes a cell size and a per-animation `SpriteFrames` with **one** fps and a
@@ -473,6 +500,9 @@ an importer that ships a subtly wrong animation.
   `frames.size` to place it on the canvas at 1:1.
 - `pivot` is not representable; a character sprite belongs on a layer whose name is the pivot
   convention, which is T-055's business, not this contract's.
+- `frames.directions` goes in `customData`, per element. It is the one field an Excalidraw
+  consumer can genuinely use, because the scene is already one frame per element in timeline
+  order — the element the artist has selected is the frame whose facing they want.
 
 ---
 
@@ -491,6 +521,8 @@ field missing has to be able to tell "not modelled yet" from "not needed".
 | A generated-by block with a version | It would change on every release, making every committed `meta.json` a diff on upgrade. The contract's own `schemaVersion` is the only version a reader needs. |
 | A timestamp | A generated file must be byte-identical for the same document. See S11. |
 | The `sheet` role in `outputs` | It would duplicate `sheet.image`. |
+| A `facing` **inside** `animations.items[]` | An animation is a range of frames, and a range of frames does not have one direction — a `walk` tag spanning a south-facing row and a north-facing row is the normal shape of an 8-direction sheet. The direction belongs to the frame; the animation inherits it by listing frames. Writing it on the animation would be a field that is either wrong or meaningless for most assets. |
+| Degrees, radians, or an angle model | Compass abbreviations, because that is what every target engine stores (S9.0). Converting an authoring angle into one of eight directions is the caller's decision, made once, where the artwork was drawn — not something this file re-derives from a number whose origin it cannot see. |
 
 ---
 
@@ -518,7 +550,10 @@ duration would make the contract disagree with the document it claims to describ
 throw.
 
 **Never invent what the document does not know.** `license` and `outputs` are caller
-options. `pivot` falls back to a value that says so. Nothing else in the contract is guessed.
+options. `pivot` falls back to a value that says so. `frames.directions` is a caller option
+too, and a label the generator does not recognise is an error rather than a dropped entry:
+a silently-missing facing is a character facing the wrong way in the engine with nothing to
+trace it back to. Nothing else in the contract is guessed.
 
 ---
 
@@ -541,5 +576,6 @@ consumer the first time the spec grows.
 | Version | Change |
 | --- | --- |
 | `1` | First version. Sprite assets: canvas, timeline, tags, sheet, pivot, palette, licence, outputs. |
+| `1` (additive) | `frames.directions[]`: optional per-frame facing and owning animations, for 8-direction character sheets. **No version bump**, because S3 rule 2 says adding a field is additive: a file written before this change still validates unchanged, a reader that does not know the field ignores it, and the digest preimage in S4.3 is untouched, so no asset identity moved. |
 
 Raising `schemaVersion` requires a dated row here and a reason, in the same change.

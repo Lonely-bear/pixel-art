@@ -539,6 +539,63 @@ clock+entropy based on purpose. Reordering layers renumbers the cel paths — th
 means "the nth layer of the document", and the manifest is what maps a number back to an
 id. See `ids.ts` for which id factory to install and why.
 
+### Eight directions and generated walk cycles
+
+An 8-direction character set must not be eight hand-drawn sheets. It is **three drawings**
+plus two exact transforms, and that is what this pair of commands exists to express.
+
+- `get_directions` is **read-only**. It returns all eight directions with the facing vector,
+  the quarter turns and mirror that produce each one, whether that is `exact`, which drawing
+  it reuses, and the resolved canvas matrix about a chosen anchor. It needs no rig.
+- `generate_walk_cycle` writes `frames` frames after the rig rest frame, each with
+  `frameDurationMs`, plus one looping animation tag (`walk_<direction>`, `repeat: 0`),
+  all in **one undo step**.
+
+| direction | transform | exact | drawing it reuses |
+| --- | --- | --- | --- |
+| `E` | identity | yes | the base |
+| `W` | horizontal mirror | yes | the base |
+| `S` | one quarter turn clockwise | yes | the base |
+| `N` | three quarter turns | yes | the base |
+| `SE` | as `S` | **no - draw it** | one SE diagonal |
+| `SW` | mirror of the SE drawing | **no - draw it** | the same SE diagonal |
+| `NE` | as `N`, mirrored | **no - draw it** | one NE diagonal |
+| `NW` | mirror of the NE drawing | **no - draw it** | the same NE diagonal |
+
+- **The base pose is drawn facing E.** Every cardinal is a whole-figure rotation about the
+  orientation anchor or its mirror, and **five of the eight need no new artwork at all**. A
+  mirror is exact because it is a reflection, and a quarter turn is exact because a signed
+  axis permutation is lossless on a pixel grid; the whole-cel transform preserves the opaque
+  pixel count.
+- **Orientation anchors.** A direction change turns about a named anchor and never moves it.
+  `ground` (bottom centre, the default) is the contact point under the feet, so a character
+  turns on the spot; `facing` (top centre) is a head marker; `origin` is the canvas centre.
+  `ground` and `facing` share the vertical axis `x = (w-1)/2`, which is what makes `W` an
+  exact mirror of `E` rather than an approximation of one. Pass `pivot` to override.
+- **The diagonals are not transformable, and the spec says so.** A diagonal is a different
+  *drawing*, not a rotated copy, and there is no 45-degree pixel transform that survives a
+  pixel grid — the engine will not emit one, and `determinism.test.ts` bans the `cos(45)` it
+  would need. Each diagonal therefore carries the transform of the cardinal it leans toward
+  (45 degrees off, reported as `resolvedFrom`) and `exact: false`. `generate_walk_cycle`
+  still bakes them and reports `exact: false`, so an approximate direction is a statement
+  about artwork, not a refusal.
+- **Use a square canvas.** A quarter turn is mapped into the *same* canvas rather than a
+  swapped one, so a non-square canvas clips the figure at an odd quarter turn. This is a
+  documented limit rather than a resize, because resizing would desynchronise the document's
+  dimensions from every frame's cels.
+- **The loop closes with no seam.** The gait is driven by integer triangle waves of period
+  `2 * frames` sampled at `index mod frames`, so frame `frames` is the *same pose* as frame
+  `0` — never a second copy of it, which §4.6's `motion` dimension scores as a seam.
+  `phaseOffset` staggers a loop by whole frames without changing it.
+- **Two contacts per cycle.** Legs are maximally split at the contacts and coincident at the
+  passing frames; the body bobs low on the contacts and high between them. Legs, arms and the
+  bobbing body are chosen by part name (`leg`/`foot`/`thigh`/`shin`, `arm`/`hand`/`forearm`,
+  `body`/`torso`/`hips`/`chest`/`root`/`spine`); pass `legs`/`arms`/`body` to override. A rig
+  where nothing matches falls back to the parentless parts, and the summary reports it.
+- Walk poses are **transient**: they are not pushed into the rig, so a document never
+  accumulates one pose per frame per direction. Use `save_pose` for a stance to keep.
+  `generate_walk_cycle` refuses to write the rig rest frame, as every pose bake does.
+
 ### Tilemaps and auto-tiling
 
 A tilemap is a grid of tile indices, kept alongside the pixel layers. It is the right

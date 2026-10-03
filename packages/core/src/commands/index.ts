@@ -11,6 +11,7 @@ export * from './generative.js';
 export * from './structure.js';
 export * from './transform.js';
 export * from './rig.js';
+export * from './directions.js';
 export * from './map.js';
 export * from './quality.js';
 export * from './tilemap.js';
@@ -79,6 +80,7 @@ import {
 import { mapCommands } from './map.js';
 import { qualityCommands } from './quality.js';
 import { rigCommands } from './rig.js';
+import { directionCommands } from './directions.js';
 import { tilemapCommands } from './tilemap.js';
 import { traceSvgCommand } from './svgtrace.js';
 
@@ -155,6 +157,8 @@ export const allCommands: Command[] = [
   ...qualityCommands,
   // Character rigs, poses, anchors and tween baking
   ...rigCommands,
+  // Eight-direction orientation and generated walk cycles
+  ...directionCommands,
   // Tilemaps, gameplay metadata and auto-tiling
   ...tilemapCommands,
   ...mapCommands,

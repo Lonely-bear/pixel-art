@@ -158,6 +158,40 @@ properly means reading the PNGs, which is a different input than "one `meta.json
 
 ---
 
+## Per-frame direction (`frames.directions`)
+
+An optional contract block added within `schemaVersion 1`: one entry per frame saying which
+way it faces (`N`/`NE`/`E`/`SE`/`S`/`SW`/`W`/`NW`, or `none`) and which animations show it. It
+is the block an 8-direction character sheet exists to produce, and it is **optional** — a file
+that has never heard of it validates unchanged, and an asset with no direction model produces
+byte-identical output to one written before the block existed.
+
+**The honest headline: no engine stores a facing.** Unity's `SpriteRenderer`, Godot's
+`SpriteFrames` and Phaser's `Sprite` all store a *flip*, which is a rendering decision rather
+than a property of the artwork. So there is nothing to map the direction onto, and the four
+importers each put it where their engine actually has somewhere to put it:
+
+| Engine | Where the direction goes | How a game reads it |
+| --- | --- | --- |
+| **Godot** | `<name>.directions.res`, a `Resource` | `res.get_meta("dotloom_facings")` — a `PackedStringArray` in timeline order, indexed by frame number. A **separate file** because `SpriteFrames`' frame entries are `{duration, texture}` and there is nowhere else in that resource to put a label. |
+| **Unity** | `frameFacings[]` on the description JSON, `facings[]` per clip | Read by the C# side. The `Description` and `Clip` classes declare both fields, because `JsonUtility` silently drops a key the class does not declare. |
+| **Phaser** | `FRAME_FACINGS` at module scope, `frameFacings[]` per anim, `facing` on each `createAnimations.frames` entry | Plain JavaScript, so a game picks `walk_s` from a velocity with one array read. `frameFacings` is in **playback** order, matching the anim's `frames`. |
+| **Excalidraw** | `customData.dotloom.facing` and `.animations` | The one place a third-party fact can live in an Excalidraw scene, and genuinely useful: the scene is already one frame per element in timeline order. |
+
+**None of these emits a warning**, which is the distinction from the other four losses in this
+document. Nothing is dropped and nothing has to be recomputed by the consumer. What they share
+is that a game has to *ask* for the direction rather than read it off the sprite — a property
+of the engines, not of the contract, and stated in S9.0 of `ASSET-CONTRACT.md`.
+
+**Omitted entirely when the contract has no directions.** Not `null`-filled: a module
+exporting `FRAME_FACINGS = [null, null, ...]` is a file claiming to know something nobody
+recorded, and the absence is a cleaner signal than an array of nothing.
+
+*Tests:* `test/asset-directions.test.ts` — the round trip into all four importers, plus the
+paired negative that a no-direction contract produces output mentioning no direction at all.
+
+---
+
 ## Naming validator (T-055)
 
 `validateAssetNaming(meta, convention?)` → `{ok, diagnostics}`. Same `unknown` input and same
@@ -208,3 +242,8 @@ throw, so the boundary is stated rather than assumed.
 - **Nothing reads the sheet PNG.** An importer that wanted to verify the sheet actually matches
   `sheet.regions` could not: `packages/core` has no filesystem, and re-deriving the image would
   mean re-implementing the packer.
+- **Direction is data, not behaviour.** `frames.directions` reaches all four importers, but no
+  engine *acts* on it: no importer flips a sprite, and none of them can. Turning a facing into a
+  `flipX`, a node flip or a `setFlipX` is the game's decision, because which way "east" looks on
+  screen depends on the camera. An importer that guessed would be wrong in a way nobody could
+  trace, which is the same reason `license` is never invented.

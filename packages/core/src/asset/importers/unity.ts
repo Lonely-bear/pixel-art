@@ -140,8 +140,32 @@ function description(
       // The keyframe schedule, which is the part Unity can express and the others cannot.
       keyframes: keyframes(meta, animation),
       frameRate: animation.fps,
+      // One facing per keyframe, in the same playback order as `keyframes`. Unity has no
+      // concept of a direction on a sprite, so this is carried for the game to read: it is
+      // what lets a `CharacterController` pick `walk_s` from a velocity without the project
+      // hard-coding frame numbers, which is the failure mode an 8-direction sheet invites.
+      facings: animation.frames.map((frame) => facingOf(meta, frame)),
     })),
+    // Parallel to the timeline, alongside `frameSize`, so a tool can ask "what is frame 12"
+    // without joining against the animation list.
+    frameFacings:
+      meta.frames.directions && meta.frames.directions.length > 0
+        ? meta.frames.directions.map((entry) => (entry.facing === 'none' ? null : entry.facing))
+        : null,
   };
+}
+
+/**
+ * One frame's facing, or `null` when the contract states none.
+ *
+ * `null` rather than `'none'` in the Unity output because that JSON is read by C# and by
+ * tools that will branch on it: `null` is what C#'s `string` gives when there is nothing,
+ * and a literal `"none"` is a value a reader has to know the meaning of.
+ */
+function facingOf(meta: AssetMeta, index: number): string | null {
+  const entry = meta.frames.directions?.[index];
+  if (!entry || entry.facing === 'none') return null;
+  return entry.facing;
 }
 
 /** `pivot / size`, to four decimals — enough for any pivot on a sub-pixel canvas. */
@@ -239,6 +263,10 @@ public static class DotloomSpriteImporter
         public Pivot pivot;
         public Sheet sheet;
         public List<Clip> animations = new List<Clip>();
+        // JsonUtility drops any key the class does not declare, so a field the emitter
+        // writes but the class omits is a field that silently does not exist. Null when the
+        // contract carries no per-frame direction.
+        public string[] frameFacings;
     }
 
     private sealed class Pivot { public Vector2 normalized; public Vector2 pixels; public string source; }
@@ -268,6 +296,10 @@ public static class DotloomSpriteImporter
         public bool isDefault;
         public List<Keyframe> keyframes = new List<Keyframe>();
         public float frameRate;
+        // One facing per keyframe, parallel to "keyframes". Unity stores no direction on a
+        // sprite, so this is read by the game rather than applied here; declared so
+        // JsonUtility keeps it.
+        public string[] facings;
     }
 
     private sealed class Keyframe { public int frame; public float timeSeconds; }

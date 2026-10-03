@@ -78,6 +78,33 @@ export const assetKindSchema = z.enum(['sprite']);
 /** Playback order for an animation, matching `AnimationTag['direction']` in the document. */
 export const assetDirectionSchema = z.enum(['forward', 'reverse', 'pingpong']);
 
+/**
+ * Which way a frame faces.
+ *
+ * **Eight compass abbreviations plus `none`, closed on purpose**, for the same reason `kind`
+ * is: a direction a reader does not recognise is a document it cannot serve, and the whole
+ * value of the field is that an importer can branch on it without parsing prose. `none` is a
+ * member rather than an absent field because the array has one entry per frame, and "this
+ * frame has no stated facing" has to be sayable without leaving a hole in the positional
+ * ordering the rest of `frames` relies on.
+ *
+ * Upper-case abbreviations because that is what every engine already speaks: Unity's
+ * `SpriteRenderer.flipX` plus a Y sign, Godot's `AnimatedSprite2D` plus a node flip, and
+ * Phaser's `setFlipX` all want a cardinal direction, not a degree. Converting an authoring
+ * angle model into one of these eight is the *caller's* job (`normalizeFacingLabel`), not
+ * something the contract guesses.
+ */
+export const assetFacingSchema = z.enum(['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW', 'none']);
+
+/**
+ * The eight real facings, without the `none` marker.
+ *
+ * Published rather than derived so a caller iterating the enum can tell "the sprite faces
+ * somewhere" from "the sprite has no stated facing", which is the one distinction `none`
+ * exists to make and the one a `filter(Boolean)` would throw away.
+ */
+export const ASSET_FACINGS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'] as const;
+
 /** What an entry in `outputs` is, so an importer can find the sheet without parsing names. */
 export const assetOutputRoleSchema = z.enum([
   'source',
@@ -178,6 +205,33 @@ export const assetMetaSchema = z
           .min(0)
           .describe(
             'Derived: mean frame rate over the whole timeline, `1000 * count / totalMs` rounded to three decimals. A CONVENIENCE for engines that take one number; `durationsMs` is authoritative, because a timeline of 100/100/200 ms has no single true fps and this is the least-bad one.',
+          ),
+        directions: z
+          .array(
+            z
+              .object({
+                index: z
+                  .number()
+                  .int()
+                  .min(0)
+                  .describe(
+                    'Derived: which timeline frame this entry describes. Always equal to its own position in the array, and stated for the same reason `sheet.regions[].index` is — so a reader can address an entry without counting and a hand-edited file can be caught.',
+                  ),
+                facing: assetFacingSchema.describe(
+                  'Which way the sprite faces in this frame. `none` means the document states no facing for this frame, which is a real state (a prop, an effect, a still) and NOT the same as the block being absent: absent means the asset has no direction model at all.',
+                ),
+                animations: z
+                  .array(z.string().min(1))
+                  .optional()
+                  .describe(
+                    'Names of the animations that show this frame, in `animations.items` order. Derived from `animations.items[].frames`, and emitted so an importer never has to invert the animation lists to answer "which way is frame 12 looking" — the one question an 8-direction character sheet exists to answer. Omitted when no animation shows the frame.',
+                  ),
+              })
+              .strict(),
+          )
+          .optional()
+          .describe(
+            'One entry per frame, in timeline order: which way that frame faces, and which animations show it. OPTIONAL as a whole block, and additive within schemaVersion 1 per S3: a file written before this field existed still validates, and a reader that does not know the field ignores it. Absent means the asset carries no per-frame direction, which is a legitimate state for a prop or a tile; it never means "faces south".',
           ),
       })
       .strict()
@@ -384,8 +438,13 @@ export const assetMetaSchema = z
  */
 export type AssetMeta = z.infer<typeof assetMetaSchema>;
 
+/** One of the eight compass facings, or the `none` marker. See {@link assetFacingSchema}. */
+export type AssetFacing = z.infer<typeof assetFacingSchema>;
+
 /** Per-object TypeScript aliases, so an importer can type one node of the contract. */
 export type AssetMetaFrames = AssetMeta['frames'];
+/** One per-frame entry of `frames.directions`, so an importer can type one node of it. */
+export type AssetMetaFrameDirection = NonNullable<AssetMeta['frames']['directions']>[number];
 export type AssetMetaAnimation = NonNullable<AssetMeta['animations']>['items'][number];
 export type AssetMetaSheet = NonNullable<AssetMeta['sheet']>;
 export type AssetMetaRegion = AssetMetaSheet['regions'][number];

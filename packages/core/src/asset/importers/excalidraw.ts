@@ -165,6 +165,13 @@ function elementFor(
         contentHash: meta.asset.contentHash,
         frame: index,
         durationMs: meta.frames.durationsMs[index],
+        // Which way this frame looks, or null when the contract states none. Excalidraw has
+        // no animation and no direction, so `customData` is the only place this can live —
+        // and it is genuinely useful here rather than merely dutiful: the scene is one frame
+        // per element laid out in timeline order, so the element an artist selects is the
+        // frame they need the facing of.
+        facing: meta.frames.directions?.[index]?.facing ?? null,
+        animations: meta.frames.directions?.[index]?.animations ?? null,
         frameSize: meta.frames.size,
         // The sheet cell this frame occupies, when there is one. Carried because Excalidraw
         // cannot hold an atlas and the artist needs to know which cell to crop.
