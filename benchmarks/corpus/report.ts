@@ -37,8 +37,9 @@
  *      them; T-022 and T-026 own the decision, and a threshold is a product decision.
  */
 
-import { aggregatorIssues, evaluate, motionApplicability, requiresReadableSubject, type ExcludedReason, type QualityReport } from '../../packages/core/src/quality/index.js';
+import { aggregatorIssues, evaluate, motionApplicability, outlineApplicability, requiresReadableSubject, type ExcludedReason, type QualityReport } from '../../packages/core/src/quality/index.js';
 import { createQualityContext } from '../../packages/core/src/quality/context.js';
+import { outlinePrecondition as coreOutlinePrecondition } from '../../packages/core/src/quality/index.js';
 import { measureSilhouette, type SilhouetteFrame } from '../../packages/core/src/quality/silhouette.js';
 import {
   QUALITY_DIMENSIONS,
@@ -74,8 +75,42 @@ import { buildCorpus } from './build.js';
  * fired today is a fact about the build, and the report shows both so the difference is visible
  * instead of inferred.
  */
+/**
+ * `outline`'s applicability, which is **two** predicates and not one.
+ *
+ * `requiresReadableSubject` first: a full-bleed document has no shape to read a contour *around*, and
+ * `no-subject` is a stronger and different claim than `no-outline`, so it has to win. A scene that
+ * both runs off the frame and carries no contour is a scene, not a style choice, and a report that
+ * said the latter would be grading a framing problem as a stylistic one.
+ *
+ * **The composition is duplicated here, in `DEFAULT_DIMENSIONS`, and in the corpus test's
+ * `DIMENSIONS_WITH_OUTLINE`, and that is a real cost.** It cannot live in `outline.ts` because
+ * `requiresReadableSubject` is in `quality/index.ts`, which already imports `outline.ts` — a
+ * back-import would be a cycle for the sake of one `??`. It is written out three times rather than
+ * shared because `index.ts` is the file that owns applicability, and this harness's job is to call
+ * *the aggregator's* predicates; if the registration ever drops the composition, this table
+ * disagrees with it and every full-bleed row in the corpus goes red, which is the check worth having.
+ * `index.ts` is asked to export this as a single named `outlinePrecondition` so the three copies
+ * become two.
+ */
+function outlinePrecondition(context: QualityContext): CorpusExcludedReason | null {
+  // The composition lives in core and is imported, not restated. Two copies of a precedence rule
+  // are two chances to disagree, and this one is load-bearing: `no-subject` must beat `no-outline`,
+  // or every full-bleed scene in `artwork/` is graded as a stylistic decision about contours.
+  // `CorpusExcludedReason` is a structurally identical copy of core's enum (format.ts duplicates it
+  // to keep this file free of a runtime dependency), so the widening below is safe and total.
+  return coreOutlinePrecondition(context) as CorpusExcludedReason | null;
+}
+
 const PRECONDITIONS: Readonly<Record<string, (context: QualityContext) => CorpusExcludedReason | null>> = {
   silhouette: requiresReadableSubject as (context: QualityContext) => CorpusExcludedReason | null,
+  // **`outline` is here because its absence is the finding this corpus exists to make checkable.**
+  // Until `'no-outline'` existed there was no vocabulary for "this artwork declares no contour", so
+  // a dimension that had nothing to say about 55 of the corpus's cases had to say *something*, and
+  // what it said was `outline-missing` — a defect code on clean art. The predicate is called
+  // directly here for the same reason the other two are: so a case can declare its abstention and
+  // the guard can catch a gate that stops firing in either direction.
+  outline: outlinePrecondition,
   motion: motionApplicability as (context: QualityContext) => CorpusExcludedReason | null,
 };
 
@@ -1229,9 +1264,9 @@ export function renderMarkdown(spec: CorpusSpec, scores: CorpusScores, rows: rea
   out.push('');
   out.push(
     '`evaluate` records `not-implemented` for every dimension that has no analyzer, so the ' +
-      "aggregator's own predicates are called directly as well. The middle two columns are what the " +
-      'precondition says; the right-hand one is only the reasons that are *not* `not-implemented`, ' +
-      'because those five are the same on every row and would bury the two that are not.',
+      "aggregator's own predicates are called directly as well. The middle three columns are what the " +
+      'preconditions say; the right-hand one is only the reasons that are *not* `not-implemented`, ' +
+      'because those are the same on every row and would bury the three that are not.',
   );
   out.push('');
   out.push(
@@ -1239,6 +1274,7 @@ export function renderMarkdown(spec: CorpusSpec, scores: CorpusScores, rows: rea
       [
         'case',
         'requiresReadableSubject',
+        'outlineApplicability',
         'motionApplicability',
         'exclusions with a reason',
         'unmeasured sub-scores',
@@ -1251,6 +1287,9 @@ export function renderMarkdown(spec: CorpusSpec, scores: CorpusScores, rows: rea
           row.preconditions.silhouette === null || row.preconditions.silhouette === undefined
             ? 'applicable'
             : String(row.preconditions.silhouette),
+          row.preconditions.outline === null || row.preconditions.outline === undefined
+            ? 'applicable'
+            : String(row.preconditions.outline),
           row.preconditions.motion === null || row.preconditions.motion === undefined
             ? 'applicable'
             : String(row.preconditions.motion),
@@ -1267,6 +1306,18 @@ export function renderMarkdown(spec: CorpusSpec, scores: CorpusScores, rows: rea
     ),
   );
   out.push('');
+  out.push(
+    'The `outlineApplicability` column reads `no-outline` where §4.5\'s `outlineShare` gate ' +
+      'declines the document: a readable subject that carries no contour anywhere. It is a ' +
+      '**dimension-level abstention** — the dimension contributes no score and its weight drops ' +
+      'out of the denominator \u2014 and it replaced a neutral 700 plus an `outline-missing` issue ' +
+      'code, which was a defect report on a subject that had made no claim to be graded. A sprite ' +
+      'with no outline is a legitimate style, so it is now graded on the dimensions that do have ' +
+      'something to say about it rather than handed a mark for silence. The rows reading ' +
+      '`applicable` are the documents that do declare a contour, and they are where §4.5\'s ' +
+      'four structural rows are load-bearing.',
+    '',
+  );
   out.push(
     'The `unmeasured sub-scores` column is the one T-099 added. `value` applies to a full-bleed ' +
       'scene and its tone half is measured there, so it is not in `excluded` — but §4.2\'s form ' +

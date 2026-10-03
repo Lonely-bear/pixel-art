@@ -2,6 +2,7 @@ import { buildSolidMask, silhouetteAnalyzer } from './silhouette.js';
 import { valueAnalyzer } from './value.js';
 import { paletteAnalyzer } from './palette.js';
 import { noiseAnalyzer } from './noise.js';
+import { outlineAnalyzer, outlineApplicability } from './outline.js';
 import { edgeGapOf, SUBJECT_REQUIRED_MARGIN } from './measure.js';
 import {
   assertReportInvariants,
@@ -255,6 +256,22 @@ export function motionApplicability(context: QualityContext): ExcludedReason | n
   return null;
 }
 
+/**
+ * `outline`'s precondition: §3.3's `no-subject` first, then §4.5's `no-outline`.
+ *
+ * The composition lives here rather than being written out at the registration, because it is
+ * needed in two more places — `benchmarks/corpus/report.ts`'s `PRECONDITIONS` table and the
+ * outline dimension's own tests — and three copies of a precedence rule are three chances to
+ * disagree. If the registration ever drops the composition, the corpus table stops agreeing
+ * with the pipeline and every full-bleed row goes red, which is the check worth having.
+ */
+export function outlinePrecondition(context: QualityContext): ExcludedReason | null {
+  // Order is load-bearing. A full-bleed document has no shape to read a contour AROUND, and
+  // `no-subject` is a stronger and different claim than `no-outline` — grading a scene's framing
+  // as a stylistic decision is exactly the T-099 mistake this repository has already made once.
+  return requiresReadableSubject(context) ?? outlineApplicability(context);
+}
+
 /* ------------------------------------------------------------------ *
  * The registry
  * ------------------------------------------------------------------ */
@@ -300,14 +317,15 @@ export interface QualityDimensionRegistration {
  * is a lookup rather than a sequence — but a reader scanning it for "how much is this worth"
  * should get §5.1's answer without opening `types.ts`.
  *
- * **Of the four, exactly one abstains.** `value`, `palette` and `noise` register with no
- * `applies` at all, and that is a finding rather than an omission — each of them asks a question a
- * full-bleed landscape answers perfectly well, and §3.6's `excluded` map exists so the question
- * ("is there a shape to read?") does not get answered for them by a predicate written for a
- * different dimension. See the per-registration comments below for the argument in each case.
+ * **Of the five, two abstain.** `value`, `palette` and `noise` register with no `applies` at all,
+ * and that is a finding rather than an omission — each of them asks a question a full-bleed
+ * landscape answers perfectly well, and §3.6's `excluded` map exists so the question ("is there a
+ * shape to read?") does not get answered for them by a predicate written for a different
+ * dimension. `outline` is the other side of the same coin: it registers *with*
+ * {@link requiresReadableSubject}, which §3.3's `no-subject` member already named it for. See the
+ * per-registration comments below for the argument in each case.
  *
- * Each new dimension is one line, plus a `guide` in the spec:
- * `outline` (T-016, with {@link requiresReadableSubject}), `motion` (T-017, with
+ * The sixth dimension is still to come, and it is the last: `motion` (T-017, with
  * {@link motionApplicability}).
  *
  * **`value` registers with no `applies` at all**, and that is a decision rather than an omission.
@@ -345,8 +363,43 @@ export const DEFAULT_DIMENSIONS: readonly QualityDimensionRegistration[] = [
   // no subject to read a shape out of, but it is exactly the document where a snapping fill or a
   // leaked pixel is most likely, because it is made of thousands of individual marks.
   { id: 'noise', analyze: noiseAnalyzer },
+  // `outline` registers with BOTH preconditions, and the order is load-bearing. `requiresReadableSubject`
+  // first: a full-bleed document has no shape to read a contour AROUND, and `no-subject` is a stronger and
+  // different claim than `no-outline` — grading a scene's framing as a stylistic decision is the T-099
+  // mistake. `outlineApplicability` second: §4.5's "no outline is a legitimate style, scored neutral, not
+  // bad" is now TRUE rather than aspirational, because a document that declares no contour is EXCLUDED
+  // with a reason instead of scored 700 with a code.
+  { id: 'outline', analyze: outlineAnalyzer, applies: outlinePrecondition },
+  // REGISTERED, carrying a known limitation that is recorded rather than hidden. The owner chose to
+  // ship this dimension rather than hold it for an open research question, so two negative controls
+  // now carry the advisories this predicate produces on a two-tone subject. Both severities are
+  // below §5.3's 0.50 blocking line, so neither refuses a document — the cost is two warnings on
+  // declared-clean work, which is a weaker harm than a fifth dimension that does not exist.
+  //
+  // The four cases that read this way, measured 2026-10-03:
+  //   control/clean-figure-20  [outline-gap, outline-inconsistent-weight]  share 327  scoreQ 350
+  //   control/clean-union-16   [outline-gap, outline-inconsistent-weight]  share 416  scoreQ 500
+  //   connectivity/background-diagonal-leak-9  [outline-gap]  share 294
+  //   value/level-set-32       [outline-gap]  share 862
+  //
+  // Both controls are TWO-TONE SUBJECTS WITH NO DRAWN CONTOUR (`inkColours` is 1 on both): the outer
+  // edge of a dark half of the body satisfies the local-contrast predicate by 48 `Lq`, so the dark
+  // half IS the contour as far as `ink` is concerned. `encloses` cannot save it — that gate
+  // separated a cast shadow from a contour because the shadow sat on one side of a LIGHTER body,
+  // and here the dark pixels ARE the subject, so there is nothing to be on one side of.
+  // 
+  // No threshold separates them, measured: `control/outline-ring-32` (a real closed 1px contour)
+  // reads `outlineShare 1000` and the controls read 327 and 416 — the same side of every band
+  // edge — and the spread that fires is 2 on both controls against 0 on the ring, so a
+  // discriminator there would have to run the WRONG WAY. §4.5 records a per-tone boundary-share
+  // candidate that does separate, by 97 per-mille with nothing in the corpus designed to sit in
+  // between: that is a guess, and it would rescue exactly two rows while adding a new §3.3
+  // quantity that four of six measured subjects do not need. Not shipped.
+  // 
+  // The corpus is ARMED, not blind: 76 cases now declare `expect.preconditions.outline` and
+  // `baseline.md` carries the column, so the next person to register this meets those 6 failures
+  // immediately instead of discovering them by eye.
 ];
-
 /**
  * The default analyzers as bare callables, derived rather than listed.
  *
@@ -470,7 +523,7 @@ export function evaluate(
  * reader sees "0.00, nothing measured" rather than "0.00, bad art". Whether a gate should
  * refuse such a document is T-024's call, not this file's.
  */
-function weightedTotalQ(dimensions: QualityReport['dimensions']): number {
+export function weightedTotalQ(dimensions: QualityReport['dimensions']): number {
   let sum = 0;
   let denominator = 0;
   for (const id of QUALITY_DIMENSIONS) {
@@ -595,3 +648,4 @@ export * from './types.js';
 export * from './value.js';
 export * from './palette.js';
 export * from './noise.js';
+export * from './outline.js';

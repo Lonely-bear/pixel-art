@@ -137,6 +137,8 @@ const ABSENCE_NOTES: Record<ExcludedReason, string> = {
     'every evaluated frame is byte-identical, so there is nothing to measure. The `frames-identical` issue says whether that was probably a mistake.',
   'no-subject':
     'the ink reaches all four canvas edges, so there is no subject reading against a background and no shape to measure. `value` and `palette`/`noise` still apply to a scene.',
+  'no-outline':
+    'the artwork declares no contour, so there is no outline to judge, and the dimension is abstained rather than scored. This is a style choice, not a defect: plenty of good sprites have no outline, so no number is claimed for it and its weight leaves the average. The other dimensions still apply.',
   'no-judgeable-plane':
     'no tone-plane boundary met its preconditions, so this sub-score declines to judge. The artwork did nothing wrong.',
   'line-sprite':

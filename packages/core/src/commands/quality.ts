@@ -3,7 +3,11 @@ import { CommandError } from '../bus.js';
 import type { Sprite } from '../document.js';
 import { animationSequence, findTag } from '../gif.js';
 import { createQualityContext } from '../quality/context.js';
-import { aggregatorIssues, evaluate as aggregateQualityReport } from '../quality/index.js';
+import {
+  aggregatorIssues,
+  evaluate as aggregateQualityReport,
+  weightedTotalQ,
+} from '../quality/index.js';
 import {
   DEFAULT_QUALITY_WEIGHTS,
   FLOOR_FAIL,
@@ -441,6 +445,14 @@ interface CodeAdvice {
  * would delete the distinction the quantity was added to make. So the table says what a human has
  * to do, and `fix` returns no op. A fix command that guesses is worse than one that declines.
  *
+ * **§4.5's four codes all decline, and `outline-gap` declines for a stronger reason than the rest.**
+ * None of them has an unambiguous repair, and `outline-gap` should not want one: §4.5 reports it at
+ * severity 0.25 as an *advisory* precisely because selective outlining is recommended craft, so a
+ * command that closed the contour would be undoing the technique the code exists to make visible.
+ * `outline-inconsistent-weight` and `outline-colour-split` each reduce to "which side / which colour
+ * survives", and `outline-heavy` reduces to erasing opaque pixels, which is the one operation this
+ * repository has no command for and no safe default for.
+ *
  * **Unknown codes get a default, not a crash.** §8.3 makes `code` an open string: a minor version
  * may add codes, and an agent must tolerate one it does not recognise. The fallback declines and
  * points at the issue message rather than throwing.
@@ -578,6 +590,28 @@ export const QUALITY_FIX_ADVICE: Readonly<Record<string, CodeAdvice>> = {
       'The issue compares whole frames, so it names no region.',
     guidance:
       'Every frame is byte-identical. If you meant to animate this, one of them was never drawn; if you meant a hold, this is fine and the advisory can be ignored.',
+  },
+  'outline-gap': {
+    noRegion:
+      'The issue names no region: the contour stops and resumes in several places around the whole silhouette, so the gaps are scattered by construction and bounding them all would be a box around the sprite.',
+    guidance:
+      '**No op, and here that is the point rather than a shortfall: this code is advisory by design.** §4.5 reports a gap *so it can be seen*, and the same specification says selective outlining is a good technique the craft guide recommends — dropping the contour where the light hits is the intended look, not damage. Painting the contour closed would answer a question nobody asked and would remove the choice that produced the picture. Read the numbers first (N of M boundary pixels, and the per-mille share): if the gaps track a light source they are craft and this advisory can be ignored; if they are scattered they are damage, and closing them means painting a run of ink along the silhouette yourself, which is `outline`/`draw_outline` or a `fill_rect` band, not a single op a command could name for you. The second row of this code (`outlineShare >= 600` with coverage under 30/1000) is different in kind: there the subject is barely outlined at all against a busy background, and that is worth drawing — but where the contour belongs is still your call, not the report\'s.',
+  },
+  'outline-inconsistent-weight': {
+    guidance:
+      'No op. The measurement has found contour pixels at the deepest depth and the rect names them, but *which* side should be thinned is a decision about the sprite: bring the thick quadrant down to the thin one and you have to know which is right, and the two are not equally defensible — a heavier head reads as deliberate and a heavier base reads as weight. Erase one pixel of the inner contour ring by hand, or repaint the thick side, then re-run `evaluate`: thinning a contour changes `minInkDepth`, `maxInkDepth` and the four `quadrantDepth` entries at once, so one pass can trade this code for `outline-heavy`.',
+  },
+  'outline-colour-split': {
+    noRegion:
+      'The issue is about the whole contour changing colour rather than a place on the canvas, so it names no region and none was invented.',
+    guidance:
+      'No op. `replace_colors {from, to}` would do the merge once you had decided it, and the decision is the whole content: which of the contour\'s colours survives, and whether the second tone was a lighting step you meant to keep. §4.5\'s trigger is `inkColours >= 4` with the fourth holding at least 5% of the ink, so read the issue\'s own count first — a contour that is dark at the top and dark-but-warmer at the bottom may be one ramp read two ways, and collapsing it would cost you that. Decide the surviving colour, then `replace_colors` followed by `prune_palette` if the loser is declared.',
+  },
+  'outline-heavy': {
+    noRegion:
+      'The issue is a count over the whole subject rather than a place on the canvas — §4.5\'s coverage row names no region — so none was invented. (The depth row of this same code does carry a rect around the deepest contour pixels, and the plan will name it.)',
+    guidance:
+      'No op, and the arithmetic is what says so. Both rows of this code fire on *coverage*: §4.5 measures the contour at `minInkDepth >= 3` or at `outlineCoverage >= 450/1000` of the subject. Thinning a contour means **erasing** opaque pixels, and an erased pixel is a hole — there is no `unpaint` that leaves the body colour behind, because the body colour under a contour pixel is exactly the thing that is not recorded anywhere. So the repair is a judgement about which of the dark pixels is contour and which is interior shading, painted by hand, and `replace_color` needs a `layer`, a `frame` and a `from`/`to` pair this issue does not carry. If the contour is genuinely a second material rather than a border, that is a legitimate picture and §4.5 has no opinion about it.',
   },
 };
 
@@ -770,34 +804,6 @@ export interface QualityGateDecision {
 }
 
 /**
- * §5.2's formula, verbatim, because the gate needs the integer and `QualityReport` only
- * carries the serialised float.
- *
- * §3.6 warns against re-deriving `totalQ` from `score`, and it is right to: multiplying a
- * rounded wire value by 1000 is exactly the float arithmetic the per-mille discipline exists to
- * avoid, and a validator built on it cries wolf on a legitimately rounded report. This is not
- * that — it recomputes the documented arithmetic from the documented weights, and the two
- * agree by construction rather than by luck. The duplication is forced: `weightedTotalQ` is
- * private to `quality/index.ts`, which is not this change's to edit, and the gate must be able
- * to name a threshold it measured against. `quality-evaluate.test.ts` pins the two together —
- * the re-derived total has to reproduce `report.verdict` through `verdictFor` on every fixture,
- * so this copy cannot drift away from the aggregator without a test failing.
- */
-function weightedTotalQ(dimensions: QualityReport['dimensions']): number {
-  let sum = 0;
-  let denominator = 0;
-  for (const id of QUALITY_DIMENSIONS) {
-    const dimension = dimensions[id];
-    if (dimension === undefined) continue;
-    const weight = DEFAULT_QUALITY_WEIGHTS[id];
-    sum += weight * dimension.scoreQ;
-    denominator += weight;
-  }
-  if (denominator === 0) return 0;
-  return Math.floor((sum + denominator / 2) / denominator);
-}
-
-/**
  * The gate itself: report in, decision out. Pure, so `finalize_document` can call it before it
  * writes anything and so a test can hand it a hand-built report.
  *
@@ -866,6 +872,12 @@ export function qualityGate(
     });
   }
 
+  // §5.2's formula, from its one home. The gate needs the *integer*, because
+  // `QualityReport` carries only the serialised float and a refusal has to name the number it
+  // measured against. §3.6 warns against re-deriving `totalQ` from `score`, and this is not
+  // that — multiplying a rounded wire value by 1000 is exactly the float arithmetic the
+  // per-mille discipline exists to avoid. Calling the aggregator's own function rather than
+  // keeping a copy is what makes the agreement structural instead of a test's job.
   const totalQ = weightedTotalQ(report.dimensions);
   if (isBelow(totalQ, totalFloorQ)) {
     refusals.push({

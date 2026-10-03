@@ -367,6 +367,64 @@ describe('a code with no safe repair says what a person has to do', () => {
     }
   });
 
+  it('declines on all four of §4.5\'s codes, and `outline-gap` declines *because* it is advisory', () => {
+    // **Every code the outline dimension can emit is prose, and none of them for the same reason.**
+    //
+    // Two of the four are reachable from the corpus and are asserted end to end, through `fix` on a
+    // real report: `control/clean-figure-20` is one of the two declared negative-control exceptions in
+    // `quality-corpus.test.ts`, and it measures `outlineShare 327` over 52 boundary pixels with 7
+    // gaps and a quadrant depth spread of 2 (TL 4px, TR 4px, BL 2px, BR 3px) — so `outline-gap` at
+    // severity 0.25 and `outline-inconsistent-weight` at 0.45 both arrive, both advisory, neither
+    // blocking.
+    const summary = fix(corpus('control/clean-figure-20'));
+    for (const code of ['outline-gap', 'outline-inconsistent-weight']) {
+      expect(codesOf(summary), `the corpus case no longer emits ${code}`).toContain(code);
+      const plan = summary.plans.find((entry) => entry.code === code)!;
+      expect(plan.dimension, code).toBe('outline');
+      expect(plan.fix, `${code} guessed an op`).toBe('manual');
+      expect(plan.ops, `${code} invented an op`).toEqual([]);
+      expect(plan.guidance.length, code).toBeGreaterThan(80);
+    }
+    // And the union `apply_ops` would receive is empty of outline work, which is the claim that
+    // matters: nothing in this plan mutates the document on this case.
+    expect(summary.ops.filter((op) => op.command.includes('outline'))).toEqual([]);
+
+    // **`outline-gap` is the one with a positive reason to have no op, and the guidance says so.**
+    // §4.5 emits it at severity 0.25 and its own issue message calls it "advisory, not a defect:
+    // selective outlining is a good technique". A command that closed the contour would be undoing
+    // the craft the code exists to make visible, so declining is the repair.
+    const gap = summary.plans.find((entry) => entry.code === 'outline-gap')!;
+    expect(gap.rect).toBeNull();
+    expect(gap.guidance).toContain('names no region');
+    expect(gap.guidance).toMatch(/advisory by design/);
+    expect(gap.guidance).toMatch(/selective outlining/i);
+
+    // The other two cannot be produced by the corpus today — no case in it draws a 4-colour contour
+    // or a contour thick enough to trip either heavy row — so they are exercised against the plan
+    // builder directly, which is the path a future corpus case would take anyway.
+    for (const code of ['outline-colour-split', 'outline-heavy']) {
+      const plan = planQualityFix(issue({ code, severity: 0.5 }), 'outline');
+      expect(plan.fix, `${code} guessed an op`).toBe('manual');
+      expect(plan.ops, `${code} invented an op`).toEqual([]);
+      expect(plan.guidance.length, code).toBeGreaterThan(80);
+    }
+    // `outline-heavy` is the one whose repair is arithmetically impossible rather than merely a
+    // judgement: thinning a contour means erasing opaque pixels, and the body colour underneath is
+    // not recorded anywhere. The guidance has to name that, because "no op" without the reason
+    // reads as an oversight.
+    const heavy = planQualityFix(issue({ code: 'outline-heavy', severity: 0.7 }), 'outline');
+    expect(heavy.guidance).toMatch(/erasing/);
+    expect(heavy.guidance).toMatch(/names no region/);
+    // The depth row of the same code does carry a rect, so a plan built from it points at one.
+    const deep = planQualityFix(
+      issue({ code: 'outline-heavy', severity: 0.5, rect: { x: 3, y: 4, w: 2, h: 5 } }),
+      'outline',
+    );
+    expect(deep.rect).toEqual({ x: 3, y: 4, w: 2, h: 5 });
+    expect(deep.guidance).toContain('2x5 at (3, 4)');
+    expect(deep.guidance).not.toContain('names no region');
+  });
+
   it('declines on a declared colour it is unhappy about, because nothing can snap it', () => {
     // **`palette` splits its six codes by one question: is the offending colour declared?**
     //

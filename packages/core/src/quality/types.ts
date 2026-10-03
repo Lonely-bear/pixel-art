@@ -163,17 +163,18 @@ export interface QualityDimension {
  * Every member answers the same question: *why is there no number for this dimension?*
  * They are ordered by what they describe, and the two kinds are not the same claim:
  *
- *   - `'single-frame'`, `'no-motion-content'`, `'no-subject'` describe **the document**:
- *     there is nothing there to measure, so the dimension cannot apply to it. Produced by
- *     the aggregator from the target itself, never by the analyzer — the analyzer's honest
- *     measurement of a degenerate input is its *best* possible score, and handing out a
- *     perfect mark for an absence is the failure this mechanism exists to prevent.
+ *   - `'single-frame'`, `'no-motion-content'`, `'no-subject'`, `'no-outline'` describe **the
+ *     document**: there is nothing there to measure, so the dimension cannot apply to it.
+ *     Produced by the aggregator from the target itself, never by the analyzer — the
+ *     analyzer's honest measurement of a degenerate input is its *best* possible score,
+ *     and handing out a perfect mark for an absence is the failure this mechanism exists
+ *     to prevent.
  *   - `'not-implemented'` describes **this build**: the dimension has no analyzer yet, so
- *     no number exists and none is claimed. It is the honest reason for the five
- *     dimensions that do not exist while they do not, and it is transitional by
+ *     no number exists and none is claimed. It is the honest reason for the dimensions
+ *     that do not exist while they do not, and it is transitional by
  *     construction — the dimension's own producer replaces it the moment the analyzer
  *     lands, because a dimension with an analyzer can only be excluded for one of the
- *     three reasons above.
+ *     four reasons above.
  *
  * The per-dimension preconditions are the aggregator's, in `quality/index.ts`, which is
  * also the only module that writes an entry here. `evaluate` owns applicability because it
@@ -196,6 +197,29 @@ export type ExcludedReason =
    * off the subject's outline and a full-bleed subject has none.
    */
   | 'no-subject'
+  /**
+   * The document has a readable subject and **declares no contour**, so there is no outline
+   * discipline to judge: §4.5's `outlineShare < 15/100` on every inked frame. Plenty of
+   * excellent top-down and RPG sprites have no outline at all, which is a *style*, and a style
+   * is not something a measurement can call bad.
+   *
+   * `outline` only. This is not the same claim as `'no-subject'` — that one says there is no
+   * shape to read a contour *around*, and `silhouette`, `outline` and §4.2's form term all
+   * abstain on it; this one says the subject is perfectly readable and has simply chosen not to
+   * carry a contour, so `silhouette`, `value`, `palette` and `noise` are all unaffected and
+   * measure the document normally.
+   *
+   * **The word that matters is "declares".** This is an absence of a claim, not a defect: the
+   * reading is that nothing was asserted, so nothing is graded. §4.5 previously scored it a
+   * neutral **700** *and* emitted `outline-missing` at severity 0.20, which is the contradiction
+   * this member exists to settle — §3.5 says an issue is "one thing that is wrong with the
+   * artwork", and an abstention that hands out a code is not an abstention. The 700 is gone with
+   * the code: an excluded dimension has no score at all, and `QualityWeights` renormalises the
+   * denominator around its absence, so a subject that chose no outline is scored on the five
+   * dimensions that *do* have something to say about it rather than being handed a mark for
+   * silence.
+   */
+  | 'no-outline'
   /**
    * A sub-score of a dimension that *is* otherwise measured, and could not be: §4.2's form term
    * found no tone-plane boundary meeting its preconditions, so it has no opinion on whether the

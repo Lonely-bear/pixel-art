@@ -1,5 +1,9 @@
 # Pixel-art quality evaluation — the scoring specification
 
+<p align="center">
+  <a href="EVALUATION.md">English</a> · <a href="EVALUATION-ZH.md">中文</a>
+</p>
+
 > This document is the contract for `evaluate`. It is written for two readers at once: an
 > engineer implementing one of the six analyzers, who needs to know exactly what to measure
 > and how to band it, and a human pixel artist rating the benchmark corpus, who needs to know
@@ -1716,33 +1720,237 @@ edgePixels      §3.3, the count of edge pixels. NOT the transition `perimeter`:
                 is drawn ON pixels, so a pixel count is the right measure here and a length
                 would double-count every staircase corner.
 localMean(p)    mean Lq over the solid pixels in the 5x5 Chebyshev window, integer division
-ink(p)          localMean(p) - Lq(p) >= 20
-inkCount        ink pixels among the edge pixels
+dark(p)         localMean(p) - Lq(p) >= 20            <- tone only; NOT ink
+ink(p)          dark(p), within dist 3 of the boundary, and 4-connected to one
+inkCount        ink pixels among the edge pixels  (the contour)
+inkTotal        every ink pixel, edge and interior alike
 outlineShare    inkCount / edgePixels                          <- primary ratio
-outlineCoverage inkCount / N
-inkDepth        dist(p) for ink pixels, using the shared §3.3 field
-minInkDepth     min, maxInkDepth  max
-quadrantDepth   max ink depth in each of the four quadrants of `bounds`
-inkColours      distinct packed colours among ink pixels
-inkGaps         edge pixels with no ink 4-neighbour
+outlineCoverage inkTotal / N
+inkRun(p)       longest SAME-COLOUR radial run inward, over the whole solid mask:
+                  1 + max { run(q) : q 4-adjacent, dist(q) = dist(p)+1, colour(q)=colour(p) }
+inkDepth        inkRun(p) - 1, read on the ink pixels ON the boundary
+minInkDepth     min, maxInkDepth  max  <- of `inkDepth` over the contour
+quadrantDepth   max ink depth in each of the four quadrants of `bounds`; -1 = no ink
+inkColours      distinct packed colours among the ink pixels on the boundary
+inkGaps         edge pixels with no ink, standing next to ink that is (8-neighbour)
 ```
 
 `localMean` includes `p` itself, so it is always defined, and it is a *local* mean rather
-than a sprite-wide one so a light outline on a dark body is still detected. The depth is
-`dist` from §3.3, not a private BFS: this dimension, `value`'s form term and `noise`'s
-thin-sprite test all need the distance-to-boundary field, and three BFS runs that agree are a
+than a sprite-wide one so a light outline on a dark body is still detected. The band and the run
+are built on `dist` from §3.3, not on a private BFS: this dimension, `value`'s form term and
+`noise`'s thin-sprite test all need the distance-to-boundary field, and three BFS runs that
+agree are a
 fact while three that disagree by a pixel are a bug report nobody can reproduce. `dist` is
 also the same number for the body and the ink, which is what makes `maxInkDepth` a thickness
 measurement rather than a distance-from-the-edge measurement.
 
-There is one deliberate exception. If `outlineShare < 15/100`, the dimension does **not** run
-the band table. It reports `scoreQ: 700`, emits `outline-missing` at severity 0.20, and says so
-in the verdict. A sprite with no outline is a legitimate style — plenty of excellent top-down
-and RPG sprites have none — so it is scored *neutral*, not *bad*. 0.70 is the "nothing
-asserted either way" value, and §7 flags it as one of the numbers most likely to draw
-disagreement.
+#### The `ink` predicate as shipped
+`dark` is a statement about **tone** and **shape**, and `ink` is a statement about **the contour**.
+They are four clauses, and each answers a measured disproof rather than a preference:
 
-**Scoring** (only reached when `outlineShare >= 15/100`):
+```
+CONTOUR_BAND      3          ink is only claimed within `dist 3` of the exterior boundary
+REFERENCE_RADIUS  2          the 5x5 Chebyshev window of the *local* reference
+BODY_REFERENCE_RADIUS
+                    4          the 9x9 Chebyshev window of the *body* reference, band excluded
+INK_MIN_DROP      20         in §3.4 integer luminance
+
+local(p) = floor(mean Lq over the solid pixels in the 5x5 window) - Lq(p) >= 20
+body(p)  = bodyMean(p) >= 0  and  bodyMean(p) - Lq(p) >= 20,  over the 9x9 window,
+           counting only solid pixels with dist > CONTOUR_BAND;  -1 when there are none
+encloses(C) = no pixel of (mask \ C) is reachable, 8-connected, from the transparent
+           pixels on the canvas edge without crossing C
+
+dark(p)  = local(p)  or  ( body(p)  and  encloses(the 4-connected body-dark component p is in) )
+ink(p)   = dark(p)  and  dist(p) <= CONTOUR_BAND  and  p is 4-connected to an ink pixel
+           standing on the boundary (dist 0)
+```
+
+**`dark` is a union, and the second term is the one finding 1 needed.** `local` is a
+local-contrast test and it is the one that reads a 1px contour, rim shading and any small dark
+feature. `body` is measured against the subject's interior rather than against its own
+neighbourhood, and it is the only instrument that can see a contour thicker than its own
+window. It is not sufficient on its own — see the price below — so it is admitted only where the
+dark set **encloses**.
+
+- **The band.** A contour is a band adjacent to the exterior boundary. Read over the whole mask
+  the predicate admits the shading inside a lit sprite: measured, that is `maxInkDepth 6` on
+  `artwork/verify/lantern-keeper.pixel`, six steps inside a 32px silhouette. The band is not a
+  number of its own — it is written as `HEAVY_DEPTH`, the depth the heavy row tolerates, because
+  a band shallower than that bound makes the depth row arithmetically dead on every input that
+  reaches it. That is the defect `ditherMask` shipped with in a different quantity, and it is
+  reproduced by picking a band at random.
+- **The connection.** A dark pixel that nothing on the boundary leads to is a pupil, a buckle or
+  the shadow under a chin. Interior shading is *area*; a contour is *thin*; the flood fill is what
+  says which, and an interior blob contributes to nothing this dimension reports. The fill is
+  4-connected because §3.3's subject is 4-connected, and each component is flooded twice — once
+  to decide whether it reaches the boundary, once to mark it — because a component cannot be
+  marked until it has been decided on.
+- **The window.** `localMean` averages every *solid* pixel in the window, including `p` and
+  including the other pixels of the contour itself, and excludes transparent ones rather than
+  counting them as black: the background is exactly what an outline is drawn *against*. It is
+  local rather than sprite-wide for the reason this section gives. Measured, the global version is
+  worse than useless here — the mean `Lq` over `dist >= 4` on `lantern-keeper.pixel` is **77**,
+  because the cloak is most of the subject, so a global reference calls every pixel below `Lq 97`
+  ink and reads `outlineShare` **703**.
+
+#### Two references, and the topological clause that joins them
+
+§4.5's original `localMean` averaged *every* solid pixel in the window, including `p` and the
+other pixels of the contour itself. That is a local-contrast test, and it has one measured
+consequence that matters: **a uniform ring three or more rings thick has no local contrast
+left**, so `outlineShare` collapses to `0` and the dimension reports the heaviest contour in
+its own vocabulary as *having no outline*. Finding 1 below.
+
+The obvious repair — take the reference over the body *beneath* the contour, excluding the band,
+so a contour of any thickness is measured against the body rather than against itself — was built
+and measured and **is not sufficient on its own**. At `BODY_REFERENCE_RADIUS` 4 it does exactly
+what it says on finding 1's case, and in exchange it reads **every lit subject's boundary
+shadow as a 4px contour**, because on a block whose left half is a dark tone that dark half
+genuinely *is* a four-pixel dark band on half of its boundary. Measured with the body reference
+alone over the whole corpus, `outline-heavy` at severity 0.50 fires on **2 frames, one of them a
+declared negative control** — `control/colour-budget-at-limit-32`, which drops from `scoreQ 700`
+to **300** against a `FLOOR_FAIL` of 300, alongside `defect/colour-budget-32`. (These figures are
+this file's own, measured on this file's own union formulation; they are not the same as the
+eight-cases-three-controls figure recorded in an earlier revision of this section, which was a
+replacement rather than a union and a different `dark`.)
+
+**Finding 1 and that regression are the same fact, and the same fact is what dissolves them.**
+The pixels of a four-pixel uniform contour and the pixels of a four-pixel-deep shadow that
+reaches the boundary are the same set of pixels — so no threshold and no tone-and-distance
+predicate separates them. That statement is **correct, and it is correct about pixels**. It does
+not follow that no predicate separates the two *drawings*, because it was never a claim about
+drawings: the comparison that decides was made one pixel at a time, and the property that
+differs between the two pictures is a property of the **set**.
+
+A contour **wraps the subject**. A cast shadow **occupies one side of it**. Those are different
+shapes, and the difference is invisible on any single pixel of either — which is precisely why a
+per-pixel repair cannot find it. The clause that finds it is topological:
+
+```
+encloses(C) = no pixel of (mask \ C) is reachable, 8-connected, from the transparent pixels
+              on the canvas edge without crossing C
+```
+
+and `dark` takes the body reference **only where the body-dark component encloses**. Measured on
+`quality-outline.test.ts`'s own fixtures, all three columns produced by the same drawing set:
+
+```
+                       local only    body, ungated    body + encloses   <- ships
+4px uniform contour       share 0      share 1000       share 1000
+4px staircase contour     share 0      share 1000       share 1000
+3px staircase contour     share 367    share 1000       share 1000
+one-sided dark half       share 67     share 133        share 67
+```
+
+The middle column is the rejected repair: it fixes the contour and **doubles the shadow's
+contour**, which is the trade §3.5 names as the failure worse than a miss. The right-hand column
+fixes the contour and leaves the shadow's reading **identical to what the local reference alone
+produced** — a shadow does not enclose, so the body reference is never consulted on it. That
+equality is the load-bearing measurement, and it is why the answer is a gate and not a
+threshold: a threshold would have had to sit between 67 and 1000.
+
+Four properties make the clause safe, and each answers a measured failure rather than a
+preference:
+
+- **It is 8-connected, deliberately.** §3.3's background is 8-connected and its subject is
+  4-connected, and this flood is a *background* flood — it asks what the outside can reach. A
+  4-connected flood squeezes through the diagonal of a 45-degree staircase contour and reports
+  every staircase contour in this repository's style as failing to enclose, which is finding 3
+  arriving through a second door.
+- **It is seeded only on *transparent* edge pixels.** A solid pixel on the canvas edge is a
+  *subject* pixel that happens to be at the edge. The first version of this function seeded solid
+  edge pixels too and `control/outline-ring-32` — which draws a closed contour — read
+  `encloses false`. Recorded because it is the same class of error as the five shipped
+  measurements: a predicate whose first version is wrong in the direction that looks safe.
+- **It is decided per component, not globally.** A sprite carrying a real contour *and* a
+  one-sided shadow is judged on each part separately; a global test over the union throws the
+  enclosing part away with the other.
+- **It is total.** Every `C` either separates the subject from the outside or it does not.
+  There is no count that can be 0 and no arithmetic that can return `NaN`.
+
+**Two costs, both measured and neither hidden.** A contour drawn with a deliberate nick does not
+enclose, so its body reference is never consulted and it is read by the local reference alone —
+which is the shipped behaviour, unchanged, because selective outlining is recommended craft that
+§4.5 must not punish. And `twoWeightContour(3, 1)` now reads `outline-heavy` at 0.70: its seam
+row is painted ink across the subject's full width, it genuinely *is* a four-pixel dark band,
+`outlineCoverage` moves from 297 to 469 against the 450 limit, and a row that could not see that
+band now can.
+
+mask** (not only over ink pixels: read over ink pixels only, every run starts on the boundary and
+the depth reading is a structural constant no input can move), and it walks one `dist` layer at a
+time. The dependency runs the *opposite* way from the BFS that produced `dist`, so the walk is
+**innermost layer first**; a version that guarded the neighbour scan with `if (d > 0)` read
+`maxInkDepth` **0 on every input** including a four-ring uniform contour, and the depth row was
+unreachable while every test on it stayed green. One layer past the band is computed because a run
+starting on the boundary has to be able to reach the band's outermost layer. A run of *one colour*
+is what an outline is: a band of a single tone hugging the boundary, and two nested dark tones are
+a contour plus shading, which is exactly the `Lq 50` rim band inside `lantern-keeper.pixel`'s
+`Lq 36` contour that the old `dist`-based depth called a 4px outline.
+
+**`inkGaps` asks where the contour stops.** A boundary pixel with no ink, standing next to ink that
+is, under **8-connectivity** — the background is 8-connected and the subject 4-connected, and the
+diagonal run of a 45-degree staircase is a statement about *attachment*, not about the contour. A
+closed contour of any shape has no such pixel, so the near-miss is **exact** rather than
+approximate. Finding 3 below carries what that costs.
+
+#### The absent-contour case is an abstention, and not a score
+
+If `outlineShare < 15/100` the dimension has nothing to grade. **This is now an
+`ExcludedReason` — `'no-outline'` — and not a measurement of any kind.** The key
+absent from `dimensions`, its weight (100) out of the §5.2 denominator, and no
+`scoreQ`, no severity and no Δ anywhere. A sprite with no outline is a legitimate
+style — plenty of excellent top-down and RPG sprites have none — so it is not *bad*,
+and the way to say "nothing was asserted" is to assert nothing.
+
+**The revision, and why it was necessary.** This section previously scored the case
+`700` — "nothing asserted either way" — *and* emitted `outline-missing` at severity
+0.20. Those are two claims and they contradict each other. §3.5 defines an issue as
+"one thing that is wrong with the artwork"; a subject with no outline has not done
+anything wrong. An abstention that emits a code is not an abstention, it is a defect
+report that has agreed to score itself 0.70 instead of 0.00, and it had two further costs that
+made it worse rather than merely redundant:
+
+- **The 700 was a mark, and marks move.** §5.3 turns a dimension reading 700 into a `warn`
+  wherever the total drops, and a *passing* mark handed out for having said nothing is
+  indistinguishable at the gate from a measurement that was taken and came out well. §3.7's
+  arithmetic shows it directly: with `outline` at 700 the weighted mean of a clean still sprite
+  is dragged **down** by the dimension that has no opinion, because 700 is below every
+  other dimension's reading on the same artwork. A subject that chose no outline was
+  penalised for the choice, by exactly the amount the scorer was supposed to be neutral by.
+- **The code was a false positive on clean work, and measured.** §3.5 names an analyzer that
+  fires on clean art as worse than one that misses a defect. Registered against the corpus,
+  `outline-missing` landed on 55 of its 79 cases, including 8 of the declared `control/*`
+  negative controls — none of which draws an outline at all.
+
+**What replaced it, exactly.** The gate moved up to the aggregator as
+`outlineApplicability`, beside `requiresReadableSubject` and `motionApplicability`, because
+applicability is `evaluate`'s to decide: a dimension that declared its own unfitness would be
+the analyzer deciding whether its own answer counts. It declines when **every inked frame** reads
+below 150, which is `hasReadableSubject`'s unanimity rule unchanged — one frame at or above the
+bound is enough for the dimension to apply, and it takes every frame below it to abstain, so a
+two-frame sheet cannot lose its one readable frame to an empty one. A frame with no ink is not
+counted either way.
+
+**What it costs, stated.** Three things.
+
+1. **A frame-level reading survives below the gate.** `measureFrame` still computes a
+   `baseQ` for a frame that reads under 150, and it is §4.5's own "otherwise" row — 550.
+   That row is now reachable only inside a multi-frame document whose other frames do declare a
+   contour, where it says what it means: *this frame dropped its outline*. The four Δ rows stay
+   behind the same bound, because `outline-heavy` and `outline-gap` ask questions about a contour
+   that exists — on `control/clean-figure-20` and `control/clean-union-16` they read as though a
+   contour did, and the rows would fire on a subject with none.
+2. **The dimension is no longer free on unoutlined artwork.** The precondition costs the same
+   measurement the analyzer would have cost. It is the only precondition in the pipeline that is
+   not cheap, and it is cheap in the wrong direction: the case it exists for is the case where the
+   analyzer then does not run at all.
+3. **The 700 is gone rather than moved.** Nothing inherits it. An excluded dimension contributes
+   no term, so there is no number to tune and no "neutral" value for a reader to disagree with —
+   which was §7's standing objection to it.
+
+**Scoring** (reached whenever the dimension applies at all, which by the gate above means
+`outlineShare >= 15/100` on at least one inked frame):
 
 | `outlineShare` | base |
 | --- | --- |
@@ -1753,22 +1961,524 @@ disagreement.
 
 | Condition | Δ | code |
 | --- | --- | --- |
-| `maxInkDepth >= 3` | −150 | `outline-heavy` |
+| `minInkDepth >= 3` | −150 | `outline-heavy` |
 | `quadrantDepth` spread `>= 2` | −150 | `outline-inconsistent-weight` |
 | `inkColours >= 4` and the 4th colour holds `>= 5%` of ink | −50 | `outline-colour-split` (0.25) |
 | `inkGaps / edgePixels >= 5/100` | −50 | `outline-gap` (0.25) |
 | `outlineCoverage >= 45/100` | −200 | `outline-heavy` (0.70) |
 | `outlineShare >= 60/100` and `outlineCoverage < 3/100` | −100 | `outline-gap` (0.35) |
 
-**Issue codes.**
+#### What `fix` does with these four codes, and why none of them is an op
+
+`fix` turns an issue into executable ops where a safe repair exists and into prose where one does
+not (§8.1 item 5). **All four of §4.5's codes are prose, and `outline-gap` declines for a reason
+the other three do not have: it is advisory by design.** §4.5 emits it at severity 0.25 and says so
+in its own message — "selective outlining is a good technique and this is advisory, not a defect:
+the craft guide recommends dropping the contour where the light hits". A command that closed the
+contour would be undoing the craft the code exists to make visible, so the absence of an op here is
+the repair, not a gap in the table. The guidance says so in those words, and says how to tell the
+two cases apart: gaps that track a light source are craft and the advisory can be ignored; gaps that
+are scattered are damage.
+
+The other three are ordinary judgement calls, and `QUALITY_FIX_ADVICE` records the reasoning for
+each:
+
+- `outline-inconsistent-weight` — the rect names the pixels at the deepest quadrant depth, but
+  *which* side should be thinned is a decision about the sprite, and the two sides are not
+  equally defensible (a heavier head reads as deliberate, a heavier base reads as weight). The
+  guidance also warns that one thinning pass can trade this code for `outline-heavy`, because both
+  read `minInkDepth`.
+- `outline-colour-split` — `replace_colors {from, to}` does the merge once you have decided which
+  contour colour survives, and whether the second tone was a lighting step is the content of the
+  decision. §4.5's trigger (`inkColours >= 4`, fourth colour `>= 5%`) is stated so the reader can
+  check first.
+- `outline-heavy` — the only one whose repair is arithmetically impossible rather than merely a
+  judgement. Both rows fire on *coverage*: `minInkDepth >= 3` or `outlineCoverage >= 450/1000`.
+  Thinning a contour means **erasing** opaque pixels, and an erased pixel is a hole, because the
+  body colour underneath a contour pixel is not recorded anywhere in the document. So the repair is
+  "which of these dark pixels is contour and which is interior shading", painted by hand.
+
+Two of the four are reachable from the corpus today and are asserted end to end in
+`quality-fix.test.ts`; `outline-colour-split` and `outline-heavy` are not, because no corpus case
+draws a four-colour contour or a contour thick enough to trip either heavy row, and those two are
+exercised against the plan builder directly rather than by moving a fixture.
+
+#### What registering the dimension moved, measured
+
+Registering `outline` moved two reports in the test suite and neither of them is the artwork
+changing:
+
+```
+control/clean-figure-20   0.905 pass  ->  0.845 warn   outline 350, share 327/52, 7 gaps,
+                                                            quadrant spread 2 (TL 4, TR 4, BL 2, BR 3)
+artwork/.../lantern-keeper 0.824 pass  ->  0.805 pass   outline 650, share 495/101, 20 gaps
+```
+
+The first is T-015's finding five again, with the sign that matters: the case was a declared
+negative control and it is now `warn`. It does not block — both of its outline codes sit at 0.25
+and 0.45 against §5.3's 0.50 line, so `decision.passed` is still `true` and `decision.refusals`
+is empty — but `verdict` moved, and a delivery path that showed only `passed` would hide that.
+The second is the sprite getting a second real defect it did not have measured to it: the
+repository's only human-rated sprite has a contour that stops and resumes 20 times along its
+boundary, which nothing could say before §4.5 shipped.
+
+#### What the implementation measured, and what it did not fix
+
+T-016 implemented this section. Four findings came out of it, and the shape of them is the one
+this document keeps meeting: **a specified predicate that reads something other than the thing
+it names.** None of the four is a threshold that wanted tuning.
+
+**Findings 1, 2, 3 and 7 are repaired, and their disproofs are kept in full, with the shipped
+readings beside the old ones. Finding 4 is a finding about a row's reach, not a defect, and it is
+not repaired.** A disproof somebody else did not have to re-derive is worth more than a quiet
+correction, so the numbers that produced each one are all still here — including the two fixtures
+whose readings look like failures and are not.
+
+A reader who wants the short version: **the predicate was rewritten because no threshold could
+fix it.** `ink` is now a band on `dist` plus a flood fill to the boundary, depth is a same-colour
+radial run rather than a distance, the depth row reads the minimum rather than the maximum, and
+`inkGaps` asks where the contour stops rather than how each pixel is attached. Six corpus negative
+controls went from `fail` to silent, and the repository's only human-rated sprite went from 300
+to 650 with one advisory left. Three new findings came out of the rewrite and are recorded below
+as findings 5, 6 and 7.
+
+**Finding 1 was then repaired separately, and its repair is the one that needed a new kind of
+question rather than a new threshold.** Its disproof said a 4px uniform contour and a 4px
+boundary-reaching shadow are *the same pixels*. That is true, and it is true per pixel — so no
+tone-and-distance predicate could ever have separated them, and none was needed. The repair asks
+about the **set**: `encloses`, a flood from the canvas's transparent edge into the subject that is
+blocked by the dark band. A contour wraps the subject; a shadow occupies one side of it. Measured
+over the whole corpus, that gate admits the thick contours and refuses the shadows, and **all nine
+declared negative controls read byte-identically** while `lantern-keeper` holds at 650. Finding 7
+follows: with the depth row reachable, its `minInkDepth >= 3` construction is the case this
+section previously recorded as undrawable.
+
+**1. `ink` is a local-contrast test, so a contour three pixels or more thick stops being ink.
+**REPAIRED — see the two-references subsection above.**
+
+`localMean` over a 5x5 window is the right instrument for the reason this section gives — a
+sprite-wide mean would make the measure a statement about the key rather than about the contour.
+It has a cost the original text did not state: a *uniform* ring three rings or more thick has no
+local contrast left, so its pixels stop satisfying `local(p)`, `outlineShare` collapsed to **0**
+and the dimension reported the heaviest contour in its own vocabulary as **having no outline**.
+Measured over uniform rings on a 16x16 block:
+
+```
+                    local reference only                 as shipped
+rings 1 -> outlineShare 1000, maxInkDepth 0      1000, inkCount  60, maxInkDepth 0
+rings 2 -> outlineShare 1000, maxInkDepth 1      1000, inkCount  60, maxInkDepth 1
+rings 3 -> outlineShare    0, maxInkDepth -1        1000, inkCount  60, maxInkDepth 2
+rings 4 -> outlineShare    0, maxInkDepth -1        1000, inkCount  60, maxInkDepth 3
+```
+
+**The share column is no longer 0 and `outline-missing` is no longer what a thick contour reads.**
+Rings 3 and 4 read `outlineShare 1000` with `inkCount 60` of 60 boundary pixels, and both are
+reported `outline-heavy` at severity 0.70 on **coverage** — 609 and 750 per mille against §4.5's
+450 limit. That is the right verdict for the right reason: a 4px contour covering three quarters of
+a 16x16 sprite is not holding the edge, it is replacing the sprite.
+
+The disproof that this section carried is **kept**, because it is what produced the repair and it
+is what a reader would otherwise re-derive: the pixels of a four-pixel uniform contour and the
+pixels of a four-pixel-deep shadow that reaches the boundary are the same set of pixels, so no
+threshold and no tone-and-distance predicate separates them. The repair does not contradict that.
+It declines the frame: the two are the same *pixels* and not the same *set*, and the property that
+separates them — `encloses` — is a property of the set.
+
+**The `minInkDepth >= 3` row, which this finding also called unreachable, is reachable now.** See
+finding 7, which was its own.
+
+**The curve is monotone through the defect where it used to be monotone-then-flat:** it rises
+with the thing it is measuring, one ring at a time.
+
+**The corners still lie about the minimum, and that is finding 5, not this one.** `minInkDepth`
+reads **0** on a uniformly 4px contour over a *block* while `maxInkDepth` and all four
+`quadrantDepth` entries read 3, because `inkRun` is 4-connected and a rectilinear corner steps
+inward diagonally. The "uniformly heavy but consistent" case — the obvious fixture for separating
+§4.5's two heavy faults — is therefore only drawable on a shape without corners, and finding 7
+draws it on the 22-row disc.
+
+**2. `ink` is not restricted to the contour, so it reads interior shading as a deep contour.**
+
+This one has no satisfying reading. The table says `inkCount` is "ink pixels **among the edge
+pixels**", and `inkDepth` is `dist(p)` "for ink pixels" — so the predicate must be evaluated over
+the whole solid mask, or every ink pixel is an `edgePixel`, `dist` is `0` there, and
+`maxInkDepth` becomes a structural constant no input can move (the defect `ditherMask` shipped
+with, in a different quantity). On that necessary reading, a pixel anywhere in the subject that is
+20 `Lq` darker than its 5x5 neighbourhood is ink, and **an internally lit sprite is full of them**.
+
+Measured on `artwork/verify/lantern-keeper.pixel` — this repository's only human-rated sprite, and
+§7's own "both have an outline" — at 32x32, `N` 432, `edgePixels` 101:
+
+```
+                first measured                            as shipped
+outlineShare    495                                       495
+inkColours        6                                          2
+maxInkDepth        6                                          1
+inkGaps           12                                         20
+quadrantDepth  [0, 5, 3, 6]                              [0, 0, 0, 1]
+outlineCoverage    —                                        188
+scoreQ           300                                        650
+codes: outline-heavy@0.50, outline-inconsistent-weight@0.45,
+       outline-colour-split@0.25, outline-gap@0.25
+  ->  codes: outline-gap@0.25                              (one advisory)
+```
+
+**Read the two columns together: this is the finding, and it is the reason the `ink` predicate
+was rewritten rather than re-thresholded.** `inkColours 6 -> 2` and `quadrantDepth [0, 5, 3, 6]
+-> [0, 0, 0, 1]` are the band and the connection doing their work — the sprite's own tonal ramp
+is no longer read as contour ink. `maxInkDepth 6 -> 1` is the run measure doing its work — the
+`Lq 50` rim band inside the `Lq 36` contour is a second tone, so the run stops at one pixel.
+`scoreQ 300 -> 650` is the consequence, and **the sprite still carries one advisory**:
+`outline-gap` at severity 0.25, 20 gap events over 101 boundary pixels. That is finding 6 below,
+and it is not hidden by the improvement.
+
+`maxInkDepth 6` is six steps *inside* a 32px silhouette: that is the cloak's shading and the
+boots, not a contour. `inkColours 6` is the sprite's own tonal ramp. The dimension scores the
+one sprite in this repository that a person has looked at **300 of 1000**, against a
+`FLOOR_FAIL` of 300, and fires four advisories on it.
+
+**Measured on the corpus's own negative controls, every one of them fails.** This is the number
+that decides the argument above, and it is the reason §3.5 says an analyzer that fires on clean
+work is worse than one that misses a defect. Running the corpus with this dimension registered,
+all six declared `control/*` cases flip their verdict from `pass` to `fail`:
+
+```
+control/clean-blob-16              pass -> fail   outline-missing
+control/clean-figure-20            pass -> fail   outline-heavy, outline-inconsistent-weight
+control/clean-union-16             pass -> fail   outline-heavy, outline-inconsistent-weight
+control/clean-banner-64x24         pass -> fail   outline-missing
+control/colour-budget-at-limit-32  pass -> fail   outline-missing
+control/partial-alpha-glow-28x24   pass -> fail   outline-missing
+control/six-hue-families-32        pass -> fail   outline-missing
+control/washed-one-hue-32          pass -> fail   outline-missing
+control/outline-ring-32            pass -> fail   outline-gap, outline-heavy, outline-inconsistent-weight
+```
+
+**Six of those nine rows no longer fail, and the reason is not a fix — it is the abstention.**
+Every `outline-missing` row above is a control that draws no contour at all, so under the current
+predicate each of them is excluded as `no-outline` and contributes nothing. That is the correct
+outcome and it is **not** evidence that the predicate improved: it is the predicate declining to
+have an opinion, which is what `outline-missing` was supposed to mean and did not. The three rows
+that survive are the interesting ones, and they are `outline-heavy` and
+`outline-inconsistent-weight` on controls that have **no contour** — measured in full under
+"the two controls the abstention does not reach" below.
+
+**`control/outline-ring-32` is the case that decides it.** It exists *to be a correct 1px
+outline* — it is §7's named negative control for §4.4's `colourOrphans` — and it draws one,
+closed, in one colour. It receives all three of the dimension's structural codes. A case that
+was committed to prove a predicate does not fire on a good contour is now evidence that it
+does.
+
+The two halves of that are the two findings above, and **neither half has been repaired.** The
+`outline-missing` half has been *withdrawn* rather than fixed — it was the abstention path
+behaving exactly as §4.5 specified, which is what makes it a specification defect rather than an
+implementation one, and §3.6's verdict is why: a dimension reading a "neutral" 700 becomes a
+`fail` wherever the total drops, so the neutral value was not neutral at the gate. See the
+absent-contour subsection above.
+
+The three codes on `outline-ring-32` and the two on `clean-figure-20` are the **wide `ink`
+reading** of finding 2 and they are **still with us**. A ring drawn in one colour, closed, one
+pixel thick, is read as deep and multi-coloured; and — worse, and the reason §4.5 is not
+registerable today — so is a subject with **no contour at all**, which is measured in full
+immediately below.
+
+**None of this is a threshold that wanted moving**, which is the point. Raising `INK_MIN_DROP`
+trades one false positive for another and still leaves the predicate reading shading; lowering the
+share gate makes `outline-missing` fire on less and does not touch `outline-heavy`. The predicate
+is what is wrong.
+**Neither reading is safe and the specification does not choose between them.** The narrow one
+(`ink` only on `edgePixel`s) keeps `lantern-keeper` quiet and makes the depth row
+arithmetically dead; the wide one reaches the depth row and reports lit artwork as a 6px
+contour. Finding 1 is what makes the choice sharp: on a uniform contour the wide reading
+abstains, and on a lit subject it fires. What §4.5 needs is a predicate that says *this pixel is
+the contour* — a band on `dist`, or a comparison against the subject's tone rather than its
+neighbourhood — and both are new §3.3 quantities rather than a parameter.
+
+**3. `inkGaps` counts the 45-degree staircase, and cannot tell a closed contour from a nicked
+one.** This is §7's already-recorded §4.4 `colourOrphans` defect on `control/outline-ring-32`,
+reproduced on a different quantity: every pixel on the diagonal run of a 1px staircase contour
+reaches the rest of the run only diagonally, so the 4-neighbour predicate counts the staircase
+itself. Measured on the 22-row disc, 60 boundary pixels:
+
+```
+closed 1px contour        -> 22 gaps (367 per-mille)
+the same, 3px nick removed -> 22 gaps (367 per-mille)   <- identical
+rectilinear closed ring    ->  0 gaps (  0 per-mille)
+```
+
+```
+                                          as shipped
+closed 1px contour        (60 px)  ->  0 gaps (  0 per-mille)   <- the near-miss, exact
+one 3px nick removed                  ->  2 gaps ( 33 per-mille)   <- gate at 50 does NOT fire
+one 9px nick removed                  ->  2 gaps ( 33 per-mille)   <- identical
+two 3px nicks removed                ->  4 gaps ( 67 per-mille)   <- gate fires
+rectilinear closed ring    (60 px)  ->  0 gaps (  0 per-mille)
+```
+
+So the gate at `5/100` fires on **every** correctly drawn 1px staircase contour in this
+repository's style, and the reading is identical on a perfect contour and a damaged one — a
+measure that cannot tell them apart is not measuring the thing its code names. The 8-neighbour
+replacement was measured rather than assumed and reads **0 on all three**, so it discards the
+staircase without recovering the nick. What the measure needs is a predicate about *where the
+contour stops*, not about how each pixel is attached.
+
+**4. The sparse-outline row is far narrower than it reads.** `outlineShare >= 60/100` **and**
+`outlineCoverage < 3/100` requires `N > 20 * edgePixels`, since `edgePixels <= N` makes
+`outlineShare >= outlineCoverage`. §3.3's own `dist` argument gives the same number from the
+other side — a disc of radius `r` has `N / edgePixels` about `r / 2`, so the row needs `r > 40`.
+It is a finding about subjects 80px across and cannot reach a character sprite at all, which is
+not visible from the row as written. (The first implementation of this test asserted the row was
+*unreachable*, with the inequality the other way round. The test is the only reason that was
+caught before it reached a report, which is the argument for having written it.)
+
+**What did get fixed**, because both were arithmetic in the implementation rather than decisions
+in this section. §3.7 gives `inkCount * 100 >= 80 * edgePixels`, so the denominator is the count
+itself; a first version used `denominator + 1` and read `outlineShare` **984** on a subject with a
+contour on every boundary pixel, which cannot describe a whole boundary as inked in a number an
+agent reads. And the band table above is written descending; the first implementation stored it
+ascending and returned the **first** matching row, which is the same class of defect in the same
+place, and scored that same perfect contour **700** instead of 950. The lookup now keeps the
+*last* matching row walking upward, so a ratio of 0 meets no row and reaches the "otherwise" row.
+
+#### The two controls the abstention does not reach
+
+`control/clean-figure-20` and `control/clean-union-16` are **declared negative controls**, they
+draw **no contour at all**, and the abstention does not reach either of them: `outlineShare` reads
+**327** and **416** against the gate of 150, so both are measured, and both come back carrying
+`outline-inconsistent-weight` at 0.45 and `outline-gap` at 0.25, scoring **350** and **500**.
+§3.5 calls a dimension that fires on clean work worse than one that misses a defect, so this is
+the more expensive direction and it is measured here rather than deferred.
+
+| quantity | `clean-figure-20` | `clean-union-16` |
+| --- | --- | --- |
+| `N` / `edgePixels` | 120 / 52 | 252 / 77 |
+| `inkCount`, `outlineShare` | 17, **327** | 32, **416** |
+| `outlineCoverage` | 317 | 369 |
+| `minInkDepth` / `maxInkDepth` | 0 / 3 | 0 / 4 |
+| `quadrantDepth` | `[3, 3, 1, 2]` | `[2, 3, 2, 4]` |
+| spread (fires at `>= 2`) | **2** | **2** |
+| `inkGaps` / `edgePixels` | 7 / 52 = **134** (fires at 50) | 13 / 77 = **168** |
+| band base, Δ, `scoreQ` | 550, −200, **350** | 700, −200, **500** |
+| dimension verdict | `warn` | `warn` |
+
+**What these two drawings actually are, and why the dimension reads a contour on them.** Both are
+**two-tone subjects with no third tone and no drawn contour at all.** The recipes are a dark
+`#3a2f2a` body plus a lighter `#e8d9a0` half laid over part of it — `clean-figure-20` is a torso
+and two legs where each limb's outer half is light, `clean-union-16` is six overlapping rectangles
+with a light left half. Measured over the whole mask, each subject has **exactly two tones** and
+they split it almost evenly: `clean-figure-20` is 60 px of `#e8d9a0` and 60 px of `#3a2f2a`
+(`Lq` 215 and 48), `clean-union-16` is 118 and 134.
+
+The predicate that produces the false positive is §4.5's **local** reference, and it needs no
+mistake to fire: `dark(p) = localMean(p) - Lq(p) >= 20` asks *is this pixel darker than its
+neighbours*, and on the boundary between the dark half and the transparent outside, it is — by 48
+`Lq` against a neighbourhood that is mostly background-free dark. So the outer edge of the dark
+half satisfies `dark`, is inside `CONTOUR_BAND`, and is 4-connected to the boundary. **The dark
+half of the body *is* the contour as far as this predicate is concerned, and it is not:** it is
+shading. §4.5's `encloses` clause was built for exactly this class of mistake — a dark region that
+is on one side of the subject rather than around it — and it does **not** help here, because
+`clean-figure-20`'s dark pixels are not a band beside the subject, they are *the subject*: there
+is no lighter region for them to enclose, and a cast shadow's topology and a lit body's own dark
+half have the same shape with respect to the flood.
+
+That is the disproof for the repair that was already rejected once, restated on the corpus's own
+controls: the 4px boundary shadow of finding 2's history and this two-tone shading **are the same
+pixels**, and `encloses` separated them because the shadow occupied one side of a *lighter* body.
+Here there is no lighter body, so there is nothing to be on one side of.
+
+**Is the reading arguably correct, or a false positive?** It is a false positive, and the
+fixture's expectation is not stale. The case note says "Nothing injected", the recipe draws no
+third tone, and `inkColours` is **1** on both — the dimension itself reports that there is exactly
+one colour on what it has decided is the contour, which is a subject with no contour and a
+measurement that has invented one. A subject whose only two tones are its own body and its own
+shading has declared nothing about its edge.
+
+**Two readings of the numbers, both stated.**
+
+- *If the reading were correct* — that is, if a two-tone figure should be told its contour is
+  3–4px deep on one side and absent on the other — then `control/outline-ring-32`, a closed 1px
+  contour in one colour, would be the false positive instead. It reads `outlineShare` **1000**,
+  `quadrantDepth` `[0,0,0,0]`, `maxInkDepth` **0**, no codes, **950**. So the dimension is
+  simultaneously right about the one drawing that has a contour and wrong about the two that do
+  not. There is no threshold that separates them: the ring's share is 1000 and these are 327 and
+  416, all on the same side of every band edge in §4.5's table, and the spread that fires is **2 on
+  both controls and 0 on the ring** — the discriminator would have to run the wrong way.
+- *What a repair would have to do.* The quantity that separates a drawn contour from a body tone
+  is **the share of that tone's pixels that lie on the boundary**: a contour exists to be the
+  boundary, so essentially all of it is there; a shading tone is a large minority of the mask and
+  only its rim reaches the edge. Measured over the whole mask, per tone, on the fixtures this
+  section turns on:
+
+  ```
+                          the tone read as contour          a body tone
+  outline-ring-32         1c1c1d  48px, 1000/1000 on boundary   c9a227  160px, 0
+  lantern-keeper.pixel    1e2533  79px,  898/1000 on boundary   7a4445  66px, 0
+  value/level-set-32      17903f  98px,  530/1000 on boundary   0f5a43  66px, 0
+  clean-figure-20         3a2f2a  60px,  433/1000 on boundary   (both tones read 433)
+  clean-union-16          3a2f2a 134px,  305/1000 on boundary   (both tones read 305)
+  ```
+
+  **The disproof, stated as §3.3 requires it: this separates the three controls from the three
+  genuine contours, and the margin is 97 per-mille — 433 against 530 — with nothing in the corpus
+  designed to sit between them.** A threshold there is a guess, not a measurement, and §7's
+  standing rule is that a threshold is a product decision taken against a designed contrast. The
+  other two controls this same reading covers, `control/clean-blob-16` at 400 and
+  `control/six-hue-families-32` at 388, are *already* abstained by the 150 gate, so the reading
+  buys nothing the gate has not already bought — it exists to rescue exactly two rows, and it costs
+  a new §3.3 quantity that four of the six measured subjects do not need.
+
+**Recommendation, with its cost.** Do not ship the boundary-share discriminator, and do not raise a
+threshold or move a fixture. The honest position is that **§4.5 cannot be registered until `ink`
+distinguishes a drawn contour from a body tone, and no threshold available today does it.** The
+cheapest next step is not a gate at all: it is a synthetic control that draws a two-tone subject
+**with and without** a third contour tone — the contrast pair §6.2 asks for and this corpus does
+not have — so the next attempt at the predicate is measured against a pair designed to separate
+rather than against two controls that happen to disagree. **Cost of leaving it as it is:** with
+`outline` registered, `control/clean-figure-20` and `control/clean-union-16` carry two advisory
+codes each and score 350 and 500 against a `FLOOR_WARN` of 600, so both verdicts are `warn` on
+work declared clean. **Neither blocks** — the severities are 0.45 and 0.25, both under §5.3's 0.50 —
+so the cost is two warnings a reviewer learns to ignore, which is the cost §3.5 warns about but not
+a cost §5.5's gate can refuse to finalise over. That is a decision about whether to register
+`outline`, and it is recorded here as the reason the dimension is held back rather than as a
+finding against the artwork.
+
+**The abstention path has since been rewritten, and this paragraph recorded why it was wrong.**
+It shipped as specified: `scoreQ: 700`, an `outline-missing` code, and a sentence in the verdict
+saying the band table had not run. The reason it was wrong is the same reason
+`silhouette` and `value` are applicability rather than measurements — a dimension that has nothing
+to say must contribute **nothing**, and 700 plus a code is a number and a defect report where the
+correct answer is neither. See the absent-contour subsection above for what replaced it.
+
+**Measured over the ten committed scenes**, all ten read `outlineShare` 0..135 and **all ten are
+`no-subject` under `requiresReadableSubject`** — which is this dimension's reason for existing as
+an exclusion rather than as a measurement, and it is the reason that fires first. Under
+`outlineApplicability` alone all ten would read `no-outline`; the aggregator reports `no-subject`,
+because "there is no shape to read a contour around" is a stronger and different claim than "this
+subject chose no contour", and a scene's framing is not a stylistic decision. `app/icon.png`
+reads `inkCount` **0** and `inkColours` **0**: it is a soft-edged render with no pixel anywhere on
+its boundary 20 `Lq` darker than its neighbourhood, so it reports no contour rather than a
+spurious one. (`docs/ROADMAP.md` predicted that `outline` would read `curvedQ max` 818 on the icon
+as `value` does. **It does not compute a curvature at all**, and 818 is `value`'s own reading.
+#### Three further findings, all measured against the shipped predicate
+
+The four findings above are T-016's. The rewrite of `ink` that answering them forced produced
+three more, and they are recorded here with the same discipline: a number, a construction, and a
+statement of what would have to change to make the reading better.
+
+**5. The depth reading is one pixel shallow at every rectilinear corner, and `minInkDepth` and
+`quadrantDepth` disagree because of it.** `inkRun` is 4-connected (§3.3's subject is
+4-connected and `connectivity/diagonal-bridge-16` declares a diagonal-only contact a defect), and
+on a rectilinear corner the step inward is the *diagonal* pixel: from `(8,8)` on a 16x16 block the
+first neighbour at `dist + 1` is `(9,9)`, which the recurrence cannot reach. So a corner always
+reads one pixel shallower than the contour around it, whatever the contour's real thickness.
+
+```
+uniform 2px contour on a 16x16 block:
+  minInkDepth   0        <- the four corners, and only the four corners
+  maxInkDepth   1
+  quadrantDepth [1, 1, 1, 1]      <- per-quadrant MAX, so it hides the corners
+```
+
+Exactly four contour pixels are affected, `(8,8) (23,8) (8,23) (23,23)`. This matters because
+the depth row reads `minInkDepth`: **the minimum over a rectilinear contour is a reading of its
+corners, not of its weight.** §4.5's two heavy rows collide here — a contour that is 4px thick
+everywhere reads `minInkDepth 0` and is not heavy; a contour that is 1px thick at one corner and
+4px everywhere else also reads `minInkDepth 0`. The reading is honest about what it can see and
+the reading that would fix it (an 8-connected run, or excluding the four corner pixels) trades
+§4.5's stated 4-connectivity for a diagonal-only contact it has already declared a defect. The
+numbers are pinned in `quality-outline.test.ts` on both sides, and `quadrantDepth` is the reading
+an agent should use for "is the weight the same all the way round", because it is a max.
+
+**6. The gap gate counts *events*, not missing length, and a single large nick is invisible to
+it.** Finding 3 above measures the shipped predicate: a closed contour reads 0 events whatever its
+shape, which is exact, and one nick reads 2 events whatever its length, which is exact too — and
+between them they mean the gate at `5/100` is a gate on **how many times the contour stops**,
+not on **how much of it is missing**. Measured over nick lengths of 3, 4, 5, 6 and 9 rows on the
+22-row disc: **2 events every time**, 33 per-mille, under the 50 gate. Two three-row nicks read 4
+events, 67 per-mille, and the gate fires. A third of a flank missing goes unreported; two small
+nicks go reported. Both directions are asserted as a MUST FIRE and a NEAR MISS on the same gate,
+because a one-sided threshold is not a threshold.
+
+Across the whole corpus the row fires on **five frames**, and **two of them are declared negative
+controls**:
+
+```
+artwork/verify/lantern-keeper.pixel   20/101   (198 per-mille)
+control/clean-figure-20                7/52   (135 per-mille)   <- negative control
+control/clean-union-16                13/77   (169 per-mille)   <- negative control
+value/level-set-32                     4/58   ( 69 per-mille)
+connectivity/background-diagonal-leak-9  7/17  (412 per-mille)
+```
+
+Severity 0.25 and advisory, so this costs 50 per-mille on two clean controls and fails nothing —
+and §4.5 states plainly that a gap **must not** punish selective outlining, which is recommended
+craft. The honest reading is that this row is a prompt for a human eye, not a defect count, and
+the corpus numbers above are the evidence for leaving it advisory. A reader who wants it to
+measure missing length has the construction: count boundary pixels with no ink, rather than
+runs of them — which is the old predicate, and which reads 22 on a perfect contour.
+
+**7. The depth row did not fire anywhere in the corpus. REPAIRED — it fires now, on a
+construction.**
+
+This was the seventh measurement in this repository that could not fail, and it was arithmetic
+rather than a bad threshold. Measured over all 79 corpus cases and every frame under the shipped
+predicate:
+
+```
+outline-heavy fired on                     0 frames
+frames reaching minInkDepth >= 3          23 frames
+  ... of which abstained at share < 150    23 frames   <- all of them
+```
+
+Every frame that read a contour three or more pixels deep also read `outlineShare` below the
+15/100 gate, so the band table never ran. The argument for why was a Lipschitz one and it was
+sound: `dist` is 1-Lipschitz, so every solid pixel within Chebyshev radius 2 of a `dist 0`
+contour pixel is at `dist <= 2` — exactly the reference window. If that contour pixel's inward run
+reaches `dist 2` in one colour, its entire window is its own colour, the drop is 0, and it is not
+`dark`.
+
+**Every premise of that argument was a premise about the *local* reference, and the repair replaces
+it with one that has no window of its own to be filled with.** With the body reference and the
+enclosure gate, the row fires on a real construction — the case §4.5 said could not be drawn at
+all, a **uniformly heavy but consistent contour**:
+
+```
+4px uniform contour on the 22-row staircase disc:
+  outlineShare 1000, inkCount 60/60
+  minInkDepth 3, maxInkDepth 3, quadrantDepth [3, 3, 3, 3]
+  -> outline-heavy@0.50 (the depth row) AND outline-heavy@0.70 (the coverage row)
+  -> scoreQ 600
+
+near miss, one ring less, same construction, same gate:
+  3 rings -> minInkDepth 2, no 0.50 row, scoreQ 950
+  2 rings -> minInkDepth 1, no 0.50 row, scoreQ 950
+  1 ring  -> minInkDepth 0, no 0.50 row, scoreQ 950
+```
+
+**The staircase is not a stylistic choice, it is the only shape that can witness this row.**
+Over a *block*, every ring count reads `minInkDepth 0` at the four corners (finding 5), so a block
+cannot witness either side of the `>= 3` gate — the near miss and the must fire would be
+indistinguishable. A 45-degree staircase has no corners and every contour pixel on it reads its
+true depth, so the row has a bound it can be measured against.
+
+**What the row costs, stated rather than argued away.** Over the corpus the repaired predicate
+still fires `outline-heavy` at 0.50 on **0 frames** — there is no uniform thick contour in the
+corpus, which is a fact about the corpus and not about the row. Nine of the 23 frames still
+read below `share < 150`, and `encloses` is why they are not contours: a full-bleed scene and a
+one-sided shadow are refused by the topology rather than by the accident that they had no local
+contrast. **Those frames are no longer *scored* at all.** Since the absent-contour case became an
+`ExcludedReason`, a document whose every inked frame is below 150 has no `outline` dimension in
+its report, and the deep readings those frames produce are no longer visible anywhere a report can
+be read. That is a real loss of information and it is the price of the abstention; §4.5's table
+above cannot report a measurement of a dimension that has declined to measure.
+
 
 | code | fires when | severity | blocking |
 | --- | --- | --- | --- |
-| `outline-missing` | `outlineShare < 15/100` | 0.20 | no |
 | `outline-gap` | `inkGaps / edgePixels >= 5/100`, or a sparse outline | 0.25 / 0.35 | no |
 | `outline-inconsistent-weight` | quadrant depth spread `>= 2` | 0.45 | no |
 | `outline-colour-split` | `>= 4` ink colours, none dominant | 0.25 | no |
-| `outline-heavy` | `maxInkDepth >= 3` or `coverage >= 0.45` | 0.50 / 0.70 | **yes** at 0.70 |
+| `outline-heavy` | `minInkDepth >= 3` or `coverage >= 0.45` | 0.50 / 0.70 | **yes** at 0.70 |
 
 `outline-gap` is an advisory on purpose. **Selective outlining is a good technique**, not a
 defect — the craft guide recommends dropping the contour where the light hits, and this
@@ -1784,7 +2494,7 @@ inkCount              139
 outlineShare          139/168 = 0.8274       >= 0.80          -> base 950
 outlineCoverage       139/612 = 0.2271       in range        -> no
 quadrantDepth         TL 3, TR 3, BL 1, BR 1  spread 2        -> -150
-maxInkDepth           3                                          -> -150
+minInkDepth           3                                          -> -150   (was maxInkDepth)
 inkColours            2                                          -> no
 inkGaps / edgePixels  11/168 = 0.0655          >= 0.05          ->  -50
 adjustment            -350
@@ -1795,6 +2505,22 @@ Verdict: *"contour on 83% of the boundary, 3px deep at the top and 1px at the bo
 colours, 11 gaps."* That is a real and very common fault — a head that has been outlined too
 hard — and the issue's `rect` points at the top half of the bounding box, so the fix is a
 `clear_region` on one rect.
+
+**This worked example is illustrative, not measured**, and one row of it has changed. It reads
+`minInkDepth` where it read `maxInkDepth`, because the depth row does: §4.5 has **two** weight
+faults with their own rows — a contour that is too thick (`outline-heavy`) and a contour whose
+weight varies (`outline-inconsistent-weight`) — and a `max` over the contour reports the first on
+the strength of a single deep patch, which is the second row's job, so one mistake was charged
+twice and the second row's reading was corroborated by a number that does not mean it. Measured
+on the two declared negative controls this replaced: `control/clean-figure-20` reads `minInkDepth
+0, maxInkDepth 3` and `control/clean-union-16` reads `minInkDepth 0, maxInkDepth 4`. Both are
+**partially** rimmed subjects — a dark tone along part of the boundary and body tone along the
+rest — and both genuinely have a four-pixel dark column; `min` reports that as what it is, one
+inconsistent-weight row, where `max` reported it as a heavy contour and blocked both documents.
+**The cost, stated rather than argued away:** a 4px contour on the head with a 1px contour on the
+body now takes **one** Δ (−150, `outline-inconsistent-weight`) where it took two (−300, both rows).
+That is a real defect being scored half as heavily, and it is a product decision rather than an
+arithmetic one; a reader who disagrees should know exactly what to change.
 
 **How a human rates this by eye** (1–5):
 
@@ -2458,7 +3184,7 @@ default that a good artist will dispute:
 | Punched holes are defects | §4.1 | Anyone drawing rings, handles, arches, chain-link, staves. |
 | A 1px outline is the target | §4.5 | Anyone in a no-outline or heavy-outline tradition. |
 | Colour budgets by canvas area | §4.3 | Scene artists, who use hundreds of colours and are right to. |
-| An absent outline scores 700, not a penalty | §4.5 | Anyone for whom an outline is optional. This is the number most likely to draw fire. |
+| An absent outline is not graded at all | §4.5 | Nobody — this row used to say "an absent outline scores 700, not a penalty", which is the number §4.5 itself named as most likely to draw fire. It is now an `ExcludedReason`: the dimension contributes no score and no code, so there is nothing here to dispute. The dispute moved to §4.5's absent-contour subsection, where it is a claim about where the gate lives rather than about a number. |
 | 3–5px dither seams | §4.4 | Pointillists, and anyone whose texture is meant to be busy. |
 | A tone plane must nest around the form | §4.2 | Hard-surface artists, whose straight face splits on straight edges are correct. The curvature gate is the concession and it is a blunt one. |
 | The worst plane, not the average one | §4.2 | Anyone who thinks a single bad terminator is a fair price for four good ones. |
@@ -2842,7 +3568,7 @@ thresholds per code. See §8.3 for what may and may not change about a row in th
 | `stray-colour` | `noise` | 0.35 | no |
 | `single-pixel-spur` | `noise` | 0.30 | no |
 | `near-duplicate-colours` | `noise` | 0.35 | no |
-| `outline-missing` | `outline` | 0.20 | no |
+
 | `outline-gap` | `outline` | 0.25 / 0.35 | no |
 | `outline-inconsistent-weight` | `outline` | 0.45 | no |
 | `outline-colour-split` | `outline` | 0.25 | no |

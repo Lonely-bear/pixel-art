@@ -25,6 +25,7 @@ import { silhouetteAnalyzer } from '../src/quality/silhouette.js';
 import { valueAnalyzer } from '../src/quality/value.js';
 import { paletteAnalyzer } from '../src/quality/palette.js';
 import { noiseAnalyzer } from '../src/quality/noise.js';
+import { outlineAnalyzer } from '../src/quality/outline.js';
 import {
   assertReportInvariants,
   DEFAULT_QUALITY_WEIGHTS,
@@ -147,6 +148,46 @@ function fullBleed(width = 32, height = 32, frames = 1): Sprite {
 /** The same ink inset by `margin` pixels on all four sides. */
 function insetBy(margin: number, width = 32, height = 32, frames = 1): Sprite {
   return blockWhere(width, height, () => ({ x: margin, y: margin, w: width - margin * 2, h: height - margin * 2 }), frames);
+}
+
+/** The contour ink: dark enough to clear §4.5's 20-per-mille local-contrast drop against the body. */
+const FIXTURE_CONTOUR = { r: 8, g: 10, b: 16, a: 255 };
+
+/**
+ * {@link insetBy}'s block with a closed 1px dark contour painted round it.
+ *
+ * The pair is the point: `insetBy` alone is what makes `outlineApplicability` answer `no-outline`,
+ * and adding the ring is what makes it answer `null`. One fixture apart, so a report can say the
+ * two abstentions — "declines to score a build" and "declines to score a picture" — are different
+ * facts about different things rather than one fact reached twice.
+ */
+function ringedBlock(margin = 4, width = 32, height = 32): Sprite {
+  const sprite = insetBy(margin, width, height);
+  sprite.palette.colors = [FIXTURE_INK, FIXTURE_CONTOUR, ...sprite.palette.colors.slice(2)];
+  const cel = sprite.frames[0].cels.get(sprite.layers[0].id) as PixelBuffer;
+  const x0 = margin;
+  const y0 = margin;
+  const x1 = width - margin - 1;
+  const y1 = height - margin - 1;
+  for (let x = x0; x <= x1; x++) {
+    for (const y of [y0, y1]) {
+      const i = cel.index(x, y);
+      cel.data[i] = FIXTURE_CONTOUR.r;
+      cel.data[i + 1] = FIXTURE_CONTOUR.g;
+      cel.data[i + 2] = FIXTURE_CONTOUR.b;
+      cel.data[i + 3] = 255;
+    }
+  }
+  for (let y = y0 + 1; y < y1; y++) {
+    for (const x of [x0, x1]) {
+      const i = cel.index(x, y);
+      cel.data[i] = FIXTURE_CONTOUR.r;
+      cel.data[i + 1] = FIXTURE_CONTOUR.g;
+      cel.data[i + 2] = FIXTURE_CONTOUR.b;
+      cel.data[i + 3] = 255;
+    }
+  }
+  return sprite;
 }
 
 /** An analyzer that returns a fixed score, for testing the aggregator with no dimension in it. */
@@ -412,18 +453,34 @@ describe('motion applicability is the aggregator\'s, and stays the contract\'s t
 });
 
 describe('a dimension with no analyzer is reported as unmeasured, not as perfect', () => {
-  it('accounts for every id exactly once while two of six do not exist', () => {
-    // **Was "five of six", then "four of six", then "three of six"**, and each rename is the point rather than a chore:
-    // `value` landed with an analyzer and a registration, then `noise` did, and now `palette` has.
-    // The invariant
-    // underneath is unchanged and is the reason this test exists — no id is in neither map, which
-    // is the silent hole a `Record` would have had no way to express.
+  it('accounts for every id exactly once while one of six does not exist', () => {
+    // **Was "five of six", then "four of six", then "three of six", then "two of six"**, and each rename is the
+    // point rather than a chore: `value` landed with an analyzer and a registration, then `noise` did,
+    // then `palette`, then `outline`.
+    // The invariant underneath is unchanged and is the reason this test exists — no id is in neither
+    // map, which is the silent hole a `Record` would have had no way to express.
+    //
+    // **`outline` is in `excluded` and its reason is `no-outline`, not `not-implemented`, and that is
+    // §4.5's own revision measured on this fixture.** `insetBy(2)` is a plain flat block with no
+    // contour drawn on it, so `outlineApplicability` declines the whole document and says *why*:
+    // "the artwork declares no contour" is a claim about the picture, while `not-implemented` is a
+    // claim about the build. Both are exclusions — the key leaves `dimensions` and its weight leaves
+    // the §5.2 denominator either way — but only one of them is honest about what was not read. So
+    // the two absent ids now abstain for **different reasons**, and asserting the pair is the point:
+    // a registry that reported both as `not-implemented` would be reporting a build fact about a
+    // dimension that is very much implemented and running.
     const report = evaluate(firstContext(insetBy(2)));
     expect(Object.keys(report.dimensions)).toEqual(['silhouette', 'value', 'palette', 'noise']);
     expect(report.excluded).toEqual({
-      outline: 'not-implemented',
+      outline: 'no-outline',
       motion: 'not-implemented',
     });
+    // And the two reasons are not interchangeable: on a document that *does* declare a contour,
+    // `outline` is measured and `motion` still is not.
+    const contoured = evaluate(firstContext(ringedBlock()));
+    expect(contoured.dimensions.outline).toBeDefined();
+    expect(contoured.excluded.outline).toBeUndefined();
+    expect(contoured.excluded.motion).toBe('not-implemented');
     expect(reportInvariantViolations(report)).toEqual([]);
   });
 
@@ -608,8 +665,16 @@ describe('the blocking list is assembled from present dimensions and the aggrega
  * ------------------------------------------------------------------ */
 
 describe('the registry is partial on purpose and works that way', () => {
-  it('registers silhouette, value, palette and noise today, and DEFAULT_ANALYZERS is a projection of it', () => {
-    // **Was "registers silhouette today"**, and the renames are the finding rather than a chore:
+  it('registers five of six today, and DEFAULT_ANALYZERS is a projection of the registry', () => {
+    // **Was "registers silhouette, value, palette and noise today"** — four of six, with two ids
+    // reading `analyzerFor() === undefined`. `outline` is the fifth and the assertion is the same
+    // shape with one fewer hole in it: `analyzerFor('outline')` now returns the analyzer,
+    // `DEFAULT_ANALYZERS` still contains exactly one entry per registration, and `motion` is the
+    // **only** id left with no analyzer. The test is deliberately written so that the *last* line is
+    // a one-element loop rather than a two-element one, so the sixth dimension cannot land without
+    // this file noticing.
+    //
+    // The renames are the finding rather than a chore:
     // `value` registered with **no `applies` at all**, which is the decision the whole aggregator
     // exists to make expressible — a full-bleed scene has no silhouette and does have value
     // structure — and `noise` then registered the same way, for the same reason and one step
@@ -617,8 +682,13 @@ describe('the registry is partial on purpose and works that way', () => {
     // pixel is most likely, because it is the one with thousands of individual marks in it. **`palette`
     // is the third to abstain on nothing**, for the same reason again and one step further still: a
     // full-bleed landscape is exactly where an off-palette colour is most likely, because every one
-    // of those thousands of marks could have picked an arbitrary hex. **Three of the four measured
-    // dimensions therefore abstain on nothing**, and that is the mechanism behind T-015's finding five
+    // of those thousands of marks could have picked an arbitrary hex. **`outline` is the first
+    // measured dimension that abstains on something** — `requiresReadableSubject` then
+    // `outlineApplicability` — which is §3.3's `no-subject` and §4.5's `no-outline` reached from the
+    // registry rather than from inside the analyzer. That is the correct place for it: a dimension
+    // that declared its own unfitness would be the analyzer deciding whether its own answer counts.
+    // **Three of the five measured dimensions therefore abstain on nothing**, and that is the
+    // mechanism behind T-015's finding five
     // in the other direction: a dimension that abstains is offset by a dimension that abstains
     // nowhere. The assertion below is that the projection is a projection and not a second list.
     expect(DEFAULT_DIMENSIONS.map((dimension) => dimension.id)).toEqual([
@@ -626,17 +696,29 @@ describe('the registry is partial on purpose and works that way', () => {
       'value',
       'palette',
       'noise',
+      'outline',
     ]);
-    expect(DEFAULT_ANALYZERS).toEqual([silhouetteAnalyzer, valueAnalyzer, paletteAnalyzer, noiseAnalyzer]);
+    expect(DEFAULT_ANALYZERS).toEqual([
+      silhouetteAnalyzer,
+      valueAnalyzer,
+      paletteAnalyzer,
+      noiseAnalyzer,
+      outlineAnalyzer,
+    ]);
     expect(analyzerFor('silhouette')).toBe(silhouetteAnalyzer);
     expect(analyzerFor('value')).toBe(valueAnalyzer);
     expect(analyzerFor('palette')).toBe(paletteAnalyzer);
     expect(analyzerFor('noise')).toBe(noiseAnalyzer);
-    // Two dimensions have no analyzer, which is a fact about the build rather than about
-    // any document, and is reported as such.
-    for (const id of ['outline', 'motion'] as const) {
+    expect(analyzerFor('outline')).toBe(outlineAnalyzer);
+    // **One** dimension has no analyzer, which is a fact about the build rather than about any
+    // document, and is reported as such. This was a two-element list until `outline` registered.
+    for (const id of ['motion'] as const) {
       expect(analyzerFor(id)).toBeUndefined();
     }
+    // The projection really is a projection: one entry per registration, in registry order, with no
+    // second list to keep in step. Asserted as a length rather than only as an equality so a
+    // registration added *and* an entry added elsewhere cannot satisfy both by coincidence.
+    expect(DEFAULT_ANALYZERS).toHaveLength(DEFAULT_DIMENSIONS.length);
   });
 
   it('rejects two registrations for one dimension rather than averaging them silently', () => {
@@ -846,15 +928,27 @@ describe('the repository\'s own artwork, measured through evaluate', () => {
     // An advisory, not a gate: the sprite is a subject, it reads, and the report says so
     // without pretending the measurement is settled.
     expect(report.blocking).toEqual([]);
-    // **The total is 824 over the active set, and it was 849 before `palette` registered and 823 before
-    // `noise` did — the direction of that move is the finding, not a repair.** The arithmetic is
+    // **The total is 805 over the active set, and it was 824 before `outline` registered, 849 before
+    // `palette` did and 823 before `noise` did — the direction of those moves is the finding, not a
+    // repair.** The arithmetic is
     // written out because "the score moved and nothing
     // about the art did" is exactly the kind of diff a reviewer should not have to reconstruct:
     //
     //   before: (300*800 + 260*850) / 560                      = 461000 / 560 = 823.2  -> 823
     //   noise:  (300*800 + 260*850 + 120*970) / 680            = 577400 / 680 = 849.1  -> 849
     //   palette:(300*800 + 260*850 + 120*970 + 140*700) / 820 = 675400 / 820 = 823.7  -> 824
+    //   outline:(300*800 + 260*850 + 120*970 + 140*700 + 100*650) / 920
+    //                                                    = 740400 / 920 = 804.8 -> 805
     //
+    // **`outline` moves this report the way `noise` did and for the opposite reason to `palette`.**
+    // It registers at weight 100, the smallest of the five, and reads **650** on this sprite — the
+    // corpus's median and the only human-rated sprite's reading. 650 is §4.5's own band table: the
+    // sprite has a real contour, `outlineShare 495` over 101 boundary pixels, 2px deep at its
+    // thickest, 2 ink colours, and **20 gaps**, which is `outline-gap` at severity 0.25 and one
+    // advisory. So it is not a shrug and not a free pass either: the mean falls because the sprite
+    // genuinely has a broken contour along one flank, which is the sprite's second real defect
+    // after `thin-profile` and which nothing measured until now. That is the opposite of `noise`'s
+    // 970, which moved the report *away* from the defect it already knew about.
     // `noise` registers at weight 120, it registers with **no applicability precondition** (§4.4 lists
     // none, and a still sprite is not a reason to skip a speck detector), and it reads **970** on
     // this sprite — higher than either dimension it joins. 970 is not a free pass and is not derived
@@ -886,13 +980,31 @@ describe('the repository\'s own artwork, measured through evaluate', () => {
     // fragments, not a cross-section, so there is nothing here to fail" is an answer. The subject is
     // not full-bleed, so the form term is measured and `unmeasured` is empty — which is the half of
     // T-099 that is about the ten full-bleed scenes and explicitly not about this one, and which
-    // `noise`'s arrival does not disturb.
+    // neither `noise`'s nor `outline`'s arrival disturbs.
     expect(report.dimensions.silhouette?.scoreQ).toBe(800);
     expect(report.dimensions.value?.scoreQ).toBe(850);
     expect(report.dimensions.value?.unmeasured).toEqual({});
     expect(report.dimensions.noise?.scoreQ).toBe(970);
     expect(report.dimensions.noise?.unmeasured).toEqual({});
-    expect(report.score).toBe(0.824);
+    // **And `outline` is 650 with one advisory, which is the sprite's second real defect.** The
+    // numbers are §4.5's own: `outlineShare 495` over 101 boundary pixels, `outlineCoverage` such
+    // that the sprite is not `outline-heavy`, 2px deep at its thickest, 2 ink colours, and 20 gaps —
+    // 198/1000 of the boundary, over the 50/1000 gate, so `outline-gap` at severity 0.25. Advisory,
+    // non-blocking, and `unmeasured` is empty: the sprite has a readable subject and a real contour,
+    // so nothing was gated away. `lantern-keeper` is the corpus median for `outline` and the only
+    // human-rated sprite in the repository, so this is the one reading of §4.5 that somebody actually
+    // drew rather than constructed.
+    const outline = report.dimensions.outline;
+    expect(outline?.scoreQ).toBe(650);
+    expect(outline?.unmeasured).toEqual({});
+    expect(codes(outline!.issues)).toEqual(['outline-gap']);
+    expect(outline!.issues[0].severity).toBe(0.25);
+    // 650 is §4.5's own `>= 35/100` band, less the `outline-gap` row's −50: 700 − 50 = 650. Both
+    // ends are written out because a band table read in its written order is a defect this
+    // repository has shipped in three different quantities.
+    expect(outline!.verdict).toMatch(/495\/1000 of 101 boundary pixels/);
+    expect(outline!.verdict).toMatch(/20 gaps/);
+    expect(report.score).toBe(0.805);
     expect(report.verdict).toBe('pass');
   });
 

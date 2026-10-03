@@ -777,8 +777,29 @@ export const DECLARED_QUANTITIES: readonly QuantityDeclaration[] = [
   },
 ];
 
-/** `ExcludedReason` duplicated rather than imported, so this file has no runtime dependency. */
-export type ExcludedReason = 'single-frame' | 'no-motion-content' | 'no-subject' | 'not-implemented';
+/**
+ * `ExcludedReason` duplicated rather than imported, so this file has no runtime dependency.
+ *
+ * **Deliberately a copy, and the copy has to be kept in step by hand.** It is a copy because
+ * `format.ts` is the vocabulary of the *files on disk* — it validates `cases.json` before anything
+ * has been built — and importing the pipeline's enum would make a `types.ts` addition arrive here
+ * for free, which is exactly the drift this duplication exists to catch. It is a copy because
+ * this loader must be able to reject a file naming a reason the build does not have.
+ *
+ * **It is narrower than the pipeline's enum on purpose, in one direction.** It lists only the
+ * members a *corpus case* can legitimately declare. `no-judgeable-plane` and `line-sprite` are
+ * §4.2's and §4.4's **sub-score** absences: they appear in a report's `unmeasured` map, which a
+ * case records through a measured quantity rather than through `expect.preconditions`, so
+ * accepting them as dimension-level reasons would let a case claim a dimension was excluded for a
+ * reason that only ever names half of one. `'no-outline'` is in the list because it is
+ * dimension-level and is exactly the shape `expect.preconditions.outline` asserts.
+ */
+export type ExcludedReason =
+  | 'single-frame'
+  | 'no-motion-content'
+  | 'no-subject'
+  | 'no-outline'
+  | 'not-implemented';
 
 /** Raised by every problem the loader finds, with the JSON pointer that caused it. */
 export class CorpusFormatError extends Error {
@@ -902,12 +923,29 @@ const MEASURED_QUANTITIES: readonly MeasuredQuantity[] = [
   'scoreQ',
 ];
 
-const PRECONDITION_IDS: readonly string[] = ['silhouette', 'motion'];
+/**
+ * The dimensions whose applicability a case may declare, and the reasons it may declare for them.
+ *
+ * **`outline` is in the first list and `'no-outline'` is in the second, and that pairing is the
+ * point of the change.** The abstention had no name before, so a corpus case had no way to say
+ * "this document declares no contour and nothing is being graded" — which meant a dimension that had
+ * nothing to say about most of the corpus had to emit a *defect code* instead, on clean artwork.
+ * The loader's closed list is what makes the vocabulary real: a reason nobody can declare is a
+ * reason nothing can be held to.
+ *
+ * `'no-outline'` is listed once, for all dimensions. The loader does not police which reason belongs
+ * to which dimension — `expect.preconditions.outline: 'single-frame'` is nonsense and this file
+ * does not stop it — because the *runner* compares each declaration against the predicate that
+ * actually answers for that id, and a mismatch there is a failing case rather than a silent one. A
+ * per-dimension reason table would be one more thing to keep in step with `quality/index.ts`.
+ */
+const PRECONDITION_IDS: readonly string[] = ['silhouette', 'outline', 'motion'];
 const PRECONDITION_REASONS: readonly (ExcludedReason | null)[] = [
   null,
   'single-frame',
   'no-motion-content',
   'no-subject',
+  'no-outline',
 ];
 
 const RECIPE_OPS: readonly string[] = [

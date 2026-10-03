@@ -89,6 +89,14 @@ function reportOf(sprite: ReturnType<typeof corpus>): QualityReport {
   return aggregateQualityReport(createQualityContext(sprite));
 }
 
+interface Summary {
+  dimensions: Record<string, Plan>;
+  excluded: Record<string, string>;
+  score: number;
+  verdict: string;
+  blocking: Plan[];
+}
+
 interface Plan {
   code: string;
   dimension: string;
@@ -278,21 +286,34 @@ describe('what is measured', () => {
 
 describe('the report is a report, not a number', () => {
   it('carries every measured dimension with its verdict, its issues and its unmeasured map', () => {
-    const summary = createEditor(corpus('control/clean-figure-20')).execute('evaluate') as {
-      dimensions: Record<string, Plan>;
-      excluded: Record<string, string>;
-    };
-    // The four registered dimensions, in `QUALITY_DIMENSIONS` order — which is
+    const summary = createEditor(corpus('control/clean-figure-20')).execute('evaluate') as unknown as Summary;
+    // The five registered dimensions, in `QUALITY_DIMENSIONS` order — which is
     // `DEFAULT_QUALITY_WEIGHTS` order, so an array a reader scans for "what is this worth"
-    // answers the same as §5.1 — and nothing invented for the two that do not exist yet.
+    // answers the same as §5.1 — and nothing invented for the one that does not exist yet.
     // `palette` joined on its registration, and its *position* is the assertion: a dimension
     // registered out of weight order still measures correctly and still reads as though it
     // mattered less than it does.
-    expect(Object.keys(summary.dimensions)).toEqual(['silhouette', 'value', 'palette', 'noise']);
+    //
+    // **`outline` is fifth and it MEASURES on this case, where the assertion used to say it did not
+    // exist.** `control/clean-figure-20` is a two-tone figure with no drawn contour, so §4.5's `ink`
+    // reads the dark half's outer edge as one: `outlineShare 327` over 52 boundary pixels, and the
+    // dimension reports `scoreQ 350` with `outline-gap` at 0.25 and `outline-inconsistent-weight` at
+    // 0.45. Both are advisory and `blocking` is empty, so the report still passes the gate — but
+    // `verdict` is **`warn`**, not `pass`, because the total `0.845` sits under §5.3's line. That is
+    // the whole change and it is asserted on the number rather than waved at.
+    expect(Object.keys(summary.dimensions)).toEqual([
+      'silhouette',
+      'value',
+      'palette',
+      'noise',
+      'outline',
+    ]);
     expect(summary.excluded).toEqual({
-      outline: 'not-implemented',
       motion: 'not-implemented',
     });
+    expect(summary.dimensions.outline.scoreQ).toBe(350);
+    expect(summary.verdict).toBe('warn');
+    expect(summary.score).toBe(0.845);
     for (const [id, dimension] of Object.entries(summary.dimensions)) {
       expect(dimension.scoreQ, `${id} has no score`).toBeGreaterThanOrEqual(0);
       expect(dimension.scoreQ, `${id} is not a per-mille integer`).toBeLessThanOrEqual(1000);
@@ -415,11 +436,11 @@ describe('the gate decides exactly what the verdict decides', () => {
   });
 
   it('reproduces the verdict from its own re-derived total, on every case', () => {
-    // `qualityGate` recomputes §5.2's total rather than re-deriving an integer from the report's
-    // float, because `weightedTotalQ` is private to `quality/index.ts` and a gate has to be able
-    // to name a threshold it measured against. This is what stops that copy from drifting: the
-    // re-derived total, fed back through the one function that owns the verdict, has to return
-    // the verdict the report carries.
+    // `qualityGate` reads §5.2's total from the aggregator's own `weightedTotalQ` rather than
+    // re-deriving an integer from the report's float, because a gate has to be able to name a
+    // threshold it measured against. There is no second copy to drift any more; this test is
+    // what pins that the gate's reading of the total still reproduces the verdict the report
+    // carries, which is the property a delivery path is built on.
     for (const id of GATE_CASES) {
       const report = reportOf(corpus(id));
       const decision = qualityGate(report, { threshold: 'warn' });
@@ -705,7 +726,23 @@ describe('the gate a delivery path calls', () => {
     const released = assertFinalizable(corpus('control/clean-figure-20'));
     expect(released.decision.passed).toBe(true);
     expect(released.decision.measured).toBe(true);
-    expect(released.report.verdict).toBe('pass');
+    // **`pass` became `warn`, and `passed` stayed `true`. That divergence is the assertion.** Both
+    // halves are needed by a delivery path and they answer different questions: `passed` is §5.3's
+    // blocking cut, and `control/clean-figure-20`'s two outline advisories sit at 0.25 and 0.45, so
+    // `decision.refusals` is empty and the document ships. `verdict` is the *total*, and the two
+    // numbers are measured rather than narrated:
+    //
+    //   without `outline`: silhouette 1000, value 700, palette 1000, noise 1000  -> total **0.905**, `pass`
+    //   with `outline`:    the same four, plus outline 350 at weight 100          -> total **0.845**, `warn`
+    //
+    // The honest summary is that registering a dimension can demote a clean control without
+    // refusing it, and a delivery path that showed only `passed` would hide that; both numbers are
+    // returned so it can show both.
+    expect(released.report.verdict).toBe('warn');
+    expect(released.report.score).toBe(0.845);
+    expect(released.report.dimensions.outline?.scoreQ).toBe(350);
+    expect(released.report.blocking).toEqual([]);
+    expect(released.decision.refusals).toEqual([]);
     // Both halves, so a delivery path can show the report to whoever asked for a bypass.
     expect(released.target.frames).toHaveLength(corpus('control/clean-figure-20').frames.length);
     expect(released.report.dimensions.silhouette).toBeDefined();
