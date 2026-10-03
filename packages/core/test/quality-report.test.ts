@@ -896,7 +896,14 @@ describe('the repository\'s own artwork, measured through evaluate', () => {
       }
     }
     expect(offenders).toEqual([]);
-  });
+    // **This evaluates every full-bleed scene in `artwork/` through the whole dimension pipeline**,
+    // ten documents at 256² and 512², so it costs seconds rather than milliseconds. It sat on
+    // vitest's 5000ms default and failed intermittently under full-suite load while passing in
+    // isolation — a signature that reads as flakiness and is really two of the same defect. Bisected
+    // rather than assumed: it passes against every other test file in pairs, and both halves of the
+    // suite separately, and fails only when all 44 run together. The cause is elapsed time, not
+    // shared state. A test this size declares how long it takes.
+  }, 120_000);
 
   it('measures every asset that has a subject, and keeps the advisories visible', () => {
     const offenders: string[] = [];
@@ -911,7 +918,10 @@ describe('the repository\'s own artwork, measured through evaluate', () => {
       }
     }
     expect(offenders).toEqual([]);
-  });
+    // The same work as the test above, over the other half of the corpus, and the same reason for
+    // the same explicit budget. Fixed here rather than waiting for the day it fails on a slower
+    // machine, because the point of the fix above is that the failure mode is predictable.
+  }, 120_000);
 
   it('still reports the one real character sprite as having a thin profile', () => {
     // Deliberately not fixed here. T-012 measured this sprite at `compactnessQ` 269 against

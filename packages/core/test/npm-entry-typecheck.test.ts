@@ -245,5 +245,10 @@ describe('the published library entry is inside `pnpm typecheck`', () => {
     // And the gate is green again, so the probe was the only thing wrong.
     const clean = tsc(['-p', project, '--noEmit']);
     expect(clean.status, `${project} did not recover once the probe was removed:\n${clean.output}`).toBe(0);
-  });
+    // **This test spawns `tsc` three times** — once clean with --listFiles, once with the probe in
+    // place, once to prove the gate recovers — and each run costs several seconds under load. It
+    // was previously left on vitest's 5000ms default, where it timed out intermittently and was
+    // dismissed as machine noise rather than recognised as the same defect as its sibling below.
+    // A test that shells out to a compiler declares how long that takes; it does not gamble.
+  }, 120_000);
 });
