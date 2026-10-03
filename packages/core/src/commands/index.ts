@@ -14,6 +14,7 @@ export * from './rig.js';
 export * from './map.js';
 export * from './quality.js';
 export * from './tilemap.js';
+export * from './svgtrace.js';
 
 import { generativeCommands } from './generative.js';
 import {
@@ -79,6 +80,7 @@ import { mapCommands } from './map.js';
 import { qualityCommands } from './quality.js';
 import { rigCommands } from './rig.js';
 import { tilemapCommands } from './tilemap.js';
+import { traceSvgCommand } from './svgtrace.js';
 
 /**
  * Every command the product knows about.
@@ -108,6 +110,8 @@ export const allCommands: Command[] = [
   copyRegionCommand,
   measureRegionCommand,
   ...generativeCommands,
+  // Vector outlines in, pixels out
+  traceSvgCommand,
   // Structure
   addLayerCommand,
   removeLayerCommand,
