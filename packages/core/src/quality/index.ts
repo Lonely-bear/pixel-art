@@ -9,17 +9,23 @@ import {
   assertReportInvariants,
   DEFAULT_QUALITY_WEIGHTS,
   isBlocking,
+  QUALITY_ASSET_CLASSES,
   QUALITY_DIMENSIONS,
+  QUALITY_WEIGHT_PROFILES,
+  SCENE_AREA_THRESHOLD,
   unitScore,
   verdictFor,
   type ExcludedReason,
   type QualityAnalyzer,
+  type QualityAssetClass,
+  type QualityAssetClassRecord,
   type QualityCel,
   type QualityContext,
   type QualityDimension,
   type QualityDimensionId,
   type QualityIssue,
   type QualityReport,
+  type QualityWeights,
 } from './types.js';
 
 /**
@@ -446,6 +452,85 @@ function indexRegistrations(
 }
 
 /* ------------------------------------------------------------------ *
+ * §5.2 per-asset-class weight profiles
+ * ------------------------------------------------------------------ */
+
+/**
+ * Which profile's weights a document is scored under, when the caller does not say.
+ *
+ * Two rules, in this order, and the order is the decision.
+ *
+ *   1. **Motion-bearing → `animation`.** §7 item 8 names the walk cycle as the case the single
+ *      table cannot serve, and the aggregator can *tell* that case apart from a still icon of
+ *      identical canvas size: a 32² four-frame walk and a 32² single-frame icon are the same
+ *      area and are not the same animal, which is why §4.3's area-only split is not enough on
+ *      its own. So the derived rule asks `motionApplicability`, which is already the one
+ *      predicate that answers "is there motion here, honestly" — including the identical-frame
+ *      case, which must *not* promote a hold to an animation.
+ *   2. **Otherwise area > {@link SCENE_AREA_THRESHOLD} → `scene`.** A 256² landscape has no
+ *      subject to read a silhouette out of, and is carried by value planes and colour
+ *      discipline instead.
+ *
+ * **`animation` is checked first and that is the arguable choice.** An animated 256² background
+ * is classified `animation` rather than `scene`. The reason is that the two questions are not
+ * peers: motion applicability is a fact about *this evaluation*, while area is a property of
+ * the canvas, and a weight profile that changed because a caller passed `frames: [0]` instead
+ * of the whole loop would be a total that moves when nothing about the artwork changed. A still
+ * 256² canvas has no motion to weigh, so it falls through to rule 2 and is scored as a scene.
+ *
+ * **Two rules, three classes, and nothing else.** §7 item 8 names four asset kinds. `icon` and
+ * `tile` are both still subjects on a small canvas and both resolve to `sprite`, so no fourth
+ * table is invented for a distinction nothing here can measure — a new class is a new set of
+ * numbers with zero evidence behind it, and §6.2 has never been run once to justify even the
+ * two that exist.
+ *
+ * Deterministic and cheap: two predicates the aggregator already runs for applicability, plus
+ * one integer multiply. No clock, no randomness, nothing whose order can reach output.
+ */
+export function deriveAssetClass(context: QualityContext): QualityAssetClass {
+  if (motionApplicability(context) === null) return 'animation';
+  if (context.width * context.height > SCENE_AREA_THRESHOLD) return 'scene';
+  return 'sprite';
+}
+
+/**
+ * The class to score under, and whether anybody said so.
+ *
+ * **Both derived and overridable, and the override wins — that is the decision.** A derived
+ * class is convenient and needs no concept at the call site, but it is silently wrong in one
+ * case that is not hypothetical: a caller measuring one frame of a walk cycle (`frames: [0]`)
+ * gets a still sequence, so the honest derived answer is `sprite`, while the caller knows the
+ * asset is an animation. An explicit class is honest and puts a burden on every caller — which
+ * is why it is optional, and why `source` is recorded on the report so "the caller was right"
+ * and "the aggregator was right" are both checkable after the fact.
+ *
+ * An unknown class is rejected rather than rounded: `defineCommand`'s zod enum handles the
+ * command boundary, and this function is the same check for the programmatic callers.
+ */
+export function resolveAssetClass(
+  context: QualityContext,
+  explicit?: QualityAssetClass | undefined,
+): QualityAssetClassRecord {
+  if (explicit !== undefined) {
+    if (!QUALITY_ASSET_CLASSES.includes(explicit)) {
+      throw new Error(
+        `Unknown asset class '${explicit}'. Known classes: ${QUALITY_ASSET_CLASSES.join(', ')}.`,
+      );
+    }
+    return { cls: explicit, source: 'explicit' };
+  }
+  return { cls: deriveAssetClass(context), source: 'derived' };
+}
+
+/**
+ * The weights for one class. `sprite` is §5.1's table, so "nothing specified" reproduces every
+ * number this pipeline produced before profiles existed.
+ */
+export function weightsFor(cls: QualityAssetClass): QualityWeights {
+  return QUALITY_WEIGHT_PROFILES[cls].weights;
+}
+
+/* ------------------------------------------------------------------ *
  * The aggregation
  * ------------------------------------------------------------------ */
 
@@ -469,6 +554,7 @@ function indexRegistrations(
 export function evaluate(
   context: QualityContext,
   dimensions: readonly QualityDimensionRegistration[] = DEFAULT_DIMENSIONS,
+  options: { readonly assetClass?: QualityAssetClass | undefined } = {},
 ): QualityReport {
   if (context.frameIds.length === 0) {
     throw new Error('Cannot evaluate a quality context with no frames: there is no target to measure.');
@@ -494,12 +580,16 @@ export function evaluate(
     measured[id] = registration.analyze(context);
   }
 
-  const totalQ = weightedTotalQ(measured);
+  const assetClass = resolveAssetClass(context, options.assetClass);
+  const totalQ = weightedTotalQ(measured, weightsFor(assetClass.cls));
   const blocking = collectBlocking(measured, aggregatorIssues(context));
   const report: QualityReport = {
     dimensions: measured,
     excluded,
     score: unitScore(totalQ),
+    // Which profile produced the total above, so a reader can tell a re-weighting from a change
+    // in the artwork. See `QualityReport.assetClass` and `deriveAssetClass`.
+    assetClass,
     // The *integer* that produced `score` one line up, never the float. See the file header.
     verdict: verdictFor({ totalQ, dimensions: measured, blocking }),
     blocking,
@@ -511,15 +601,21 @@ export function evaluate(
 /**
  * §5.2, exactly: the denominator is the sum of the weights that contributed, round-half-up.
  *
- * `DEFAULT_QUALITY_WEIGHTS` is the only table consulted, and `STATIC_QUALITY_WEIGHTS` is
- * not a second code path: it is a *description* of the still case, where `motion`'s weight
- * is 0 because the active sum already omits a dimension that has no key. Reading the
- * weights from a table chosen by frame count would mean two sources of truth for one
- * denominator, and they would agree only until a dimension gained a second reason to be
+ * `weights` defaults to `DEFAULT_QUALITY_WEIGHTS` and that default **is** the `sprite`
+ * profile, so every pre-profile caller — including `weightedTotalQ(report.dimensions)` in the
+ * gate, and every test in this package that calls it with one argument — gets byte-identical
+ * arithmetic. The parameter is there so the aggregator can pass the profile it actually used;
+ * a caller that re-derives the total from a report should pass `weightsFor(report.assetClass.cls)`,
+ * and the gate in `commands/quality.ts` does.
+ *
+ * `STATIC_QUALITY_WEIGHTS` is not a second code path: it is a *description* of the still case,
+ * where `motion`'s weight is 0 because the active sum already omits a dimension that has no
+ * key. Reading the weights from a table chosen by frame count would mean two sources of truth
+ * for one denominator, and they would agree only until a dimension gained a second reason to be
  * excluded.
  *
  * **An empty active set totals 0, which is `fail`.** A target with no measurable dimension
- * — today, a full-bleed scene, because `value`/`palette`/`noise` do not exist yet — has no
+ * — a full-bleed scene, whose `silhouette` and `outline` are both excluded — has no
  * evidence of quality at all, and 0 says "nothing was measured" in the only way a required
  * number can. The alternative, 1000, is the fake-perfect score: it would tell an agent that
  * a scene nobody could measure is perfect, which is the same confidently-wrong failure this
@@ -528,13 +624,16 @@ export function evaluate(
  * reader sees "0.00, nothing measured" rather than "0.00, bad art". Whether a gate should
  * refuse such a document is T-024's call, not this file's.
  */
-export function weightedTotalQ(dimensions: QualityReport['dimensions']): number {
+export function weightedTotalQ(
+  dimensions: QualityReport['dimensions'],
+  weights: QualityWeights = DEFAULT_QUALITY_WEIGHTS,
+): number {
   let sum = 0;
   let denominator = 0;
   for (const id of QUALITY_DIMENSIONS) {
     const dimension = dimensions[id];
     if (dimension === undefined) continue;
-    const weight = DEFAULT_QUALITY_WEIGHTS[id];
+    const weight = weights[id];
     sum += weight * dimension.scoreQ;
     denominator += weight;
   }

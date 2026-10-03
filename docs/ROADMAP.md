@@ -45,12 +45,12 @@ section below.
 
 ### Next in the layer
 
-- **`motion` is registered** (weight 80). It is the only dimension whose defects are objective, which
-  is why it could be calibrated cheaply. Its corpus evidence is the layer's weakest: **six of its seven
-  codes have no corpus case**, because the corpus holds three multi-frame drawings rather than nine,
-  and **there is no clean multi-frame control at all** — while §4.6's severity scale is the only one
-  that cannot be checked from a contact sheet, so the corpus is the only place a clean loop could be
-  proven quiet. That is the next piece of work in the layer, and it is fixtures rather than code.
+- **`motion` is registered** (weight 80; 190 under the `animation` class). All seven of its codes now
+  have a corpus case, and — the part that mattered — there is a **clean multi-frame negative control**,
+  `motion/clean-walk-40x32`: 96 of its own 240 pixels change on every transition, seam included, at a
+  seam ratio of exactly 1.0. It is silent because the loop is well made, not because nothing moved.
+  That matters more than the defect cases: §4.6's severity scale is the only one that cannot be
+  checked from a contact sheet, so this is the only place a clean loop can be proven quiet.
 
 - **`outline` is registered and carries one known limitation, deliberately shipped.** Its predicate is
   topological (`encloses`: a contour wraps the subject, a cast shadow occupies one side), which
@@ -72,9 +72,18 @@ section below.
   "818 in both" reading was never possible — outline did not exist in the baseline when it was
   written. A lesson worth keeping: that note was on this page for weeks and was checkable in one
   grep the whole time.
-- **Per-asset-class weight profiles.** §7 item 8: an icon, a walk cycle, a tile and a 256² scene do not
-  share a definition of good, and one weight table cannot serve all four. This is probably worth more
-  than a fifth dimension.
+- **Per-asset-class weight profiles.** §7 item 8. **Shipped** — `QUALITY_WEIGHT_PROFILES` in
+  `packages/core/src/quality/types.ts` carries three classes (`sprite`, `animation`, `scene`),
+  derived from whether the evaluated sequence has measurable motion and from canvas area,
+  overridable per call (`assetClass` on `evaluate`, `verify`, `qualityGateForSprite`), and recorded
+  on every report as `{cls, source}` so a number that moved says why. With nothing specified the
+  result is `sprite`, which **is** §5.1's table, so every baseline generated under it is unchanged.
+  **What is left is calibration, not mechanism:** `sprite` is the only column §6.2 has touched
+  (once, on one sprite) and `animation` and `scene` are chosen numbers with zero human ratings
+  behind them. `docs/EVALUATION.md` §5.2 states what evidence would replace them.
+  **Measured load-bearing, so it is not decorative:** one fixed set of six readings totals 0.777 /
+  0.769 / 0.719 under the three classes, and on real corpus artwork `motion/worst-frame-wins-16`
+  moves 411 → 448, `motion/blank-frame-16` 762 → 794, `app/icon.png` 799 → 716.
 - **Does an abstention get netted?** Open, and it is an aggregator question rather than a dimension
   question. Registering `noise` moved `lantern-keeper` 30‰ *away* from its one real advisory; registering
   `palette` moved it 25‰ *toward*. A clean reading on one dimension currently offsets a real advisory on

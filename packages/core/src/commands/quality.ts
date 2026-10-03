@@ -7,6 +7,7 @@ import {
   aggregatorIssues,
   evaluate as aggregateQualityReport,
   weightedTotalQ,
+  weightsFor,
 } from '../quality/index.js';
 import {
   DEFAULT_QUALITY_WEIGHTS,
@@ -14,11 +15,13 @@ import {
   FLOOR_WARN,
   isBelow,
   isBlocking,
+  QUALITY_ASSET_CLASSES,
   QUALITY_DIMENSIONS,
   SCORE_FAIL_THRESHOLD,
   SCORE_PASS_THRESHOLD,
   SEVERITY_BLOCKING,
   type ExcludedReason,
+  type QualityAssetClass,
   type QualityContext,
   type QualityDimensionId,
   type QualityIssue,
@@ -137,6 +140,25 @@ interface QualityTarget {
 }
 
 /**
+ * The §5.2 weight-profile selector, shared verbatim by `evaluate` and `verify`.
+ *
+ * **`verify` takes it for the same reason `evaluate` does**, and this is the part that is easy
+ * to get wrong: the gate re-derives §5.2's total from the report, and if it re-derived the
+ * *class* too then a caller who said `assetClass: "animation"` to `evaluate` would be refused
+ * against a `sprite` total. One schema object for both is what makes that impossible to spell
+ * two ways. `fix` does not take it: it returns a repair plan and computes no total, so a class
+ * would be a parameter that changes nothing.
+ */
+const assetClassShape = {
+  assetClass: z
+    .enum(QUALITY_ASSET_CLASSES)
+    .optional()
+    .describe(
+      'Which weight profile to score under: `sprite` (a still subject, §5.1\'s table), `animation` (motion is measured and counts for much more), `scene` (a large canvas, where value planes and colour discipline carry the picture). Omit to derive it: a sequence with measurable motion is `animation`, otherwise a canvas over 16384px is `scene` and the rest is `sprite`. The derived answer is right unless you are judging one frame of an animation, which is the case to state here.',
+    ),
+};
+
+/**
  * Resolve `tag` / `frames` / `focus` into the ordered frame list `createQualityContext` wants.
  *
  * The two ways of naming frames are made mutually exclusive rather than silently combined.
@@ -178,9 +200,10 @@ function resolveQualityTarget(
 function runQuality(
   sprite: Sprite,
   target: QualityTarget,
+  assetClass?: QualityAssetClass | undefined,
 ): { report: QualityReport; context: QualityContext } {
   const context = createQualityContext(sprite, { frames: target.frames, focus: target.focus });
-  return { report: aggregateQualityReport(context), context };
+  return { report: aggregateQualityReport(context, undefined, { assetClass }), context };
 }
 
 /* ------------------------------------------------------------------ *
@@ -352,15 +375,21 @@ export const evaluateQualityCommand = defineCommand({
     'first pass on a new sprite to read low: that is the silhouette pass, not a failure. `fix` turns ' +
     'the issues that have an unambiguous repair into ops; `verify` is the gate that refuses delivery.',
   readOnly: true,
-  params: z.object({ ...targetShape }),
+  params: z.object({
+    ...targetShape,
+    ...assetClassShape,
+  }),
   apply(ctx, p) {
     const target = resolveQualityTarget(ctx.sprite, p);
-    const { report, context } = runQuality(ctx.sprite, target);
+    const { report, context } = runQuality(ctx.sprite, target, p.assetClass);
     const owner = dimensionIndex(report);
     return {
       frames: [...target.frames],
       tag: target.tag,
       focus: target.focus,
+      // Which weight profile produced `score`, and whether the caller or the aggregator chose
+      // it. A reader who cannot see this cannot explain a number that moved.
+      assetClass: { ...report.assetClass },
       dimensions: dimensionViews(report),
       excluded: { ...report.excluded },
       // Every issue, advisories included: `fix` and a reader both need the ones the report has
@@ -912,7 +941,11 @@ export function qualityGate(
   // that — multiplying a rounded wire value by 1000 is exactly the float arithmetic the
   // per-mille discipline exists to avoid. Calling the aggregator's own function rather than
   // keeping a copy is what makes the agreement structural instead of a test's job.
-  const totalQ = weightedTotalQ(report.dimensions);
+  //
+  // **The profile is taken from the report, never re-derived here.** The gate and the report
+  // must be talking about the same number, and re-deriving the class from a context this
+  // function does not hold would be a second place for the two to disagree.
+  const totalQ = weightedTotalQ(report.dimensions, weightsFor(report.assetClass.cls));
   if (isBelow(totalQ, totalFloorQ)) {
     refusals.push({
       kind: 'total',
@@ -1040,6 +1073,14 @@ export interface QualityGateOptions {
   readonly frames?: readonly FrameRef[];
   readonly focus?: Rect;
   readonly threshold?: QualityGateThreshold;
+  /**
+   * Which §5.2 weight profile to score under. Omit to derive it; see `deriveAssetClass`.
+   *
+   * Here for the same reason `verify` takes it: the decision contains a total, and a delivery
+   * path that scored the report under one profile and gated it under another would be refusing
+   * against a number the caller never saw.
+   */
+  readonly assetClass?: QualityAssetClass;
   /** Release a failing asset anyway. The result says so; it never passes silently. */
   readonly bypass?: boolean;
   /** Required with `bypass`, and required to be a reason a person can read. */
@@ -1056,7 +1097,7 @@ export interface QualityGateOptions {
  */
 export function qualityGateForSprite(sprite: Sprite, options: QualityGateOptions = {}): QualityGateRun {
   const target = resolveQualityTarget(sprite, options);
-  const { report } = runQuality(sprite, target);
+  const { report } = runQuality(sprite, target, options.assetClass);
   return { target, report, decision: qualityGate(report, { threshold: options.threshold }) };
 }
 
@@ -1124,6 +1165,7 @@ export const verifyQualityCommand = defineCommand({
   params: z
     .object({
       ...targetShape,
+      ...assetClassShape,
       threshold: z
         .enum(['fail', 'warn'])
         .optional()
@@ -1163,7 +1205,7 @@ export const verifyQualityCommand = defineCommand({
     const threshold = p.threshold ?? 'fail';
     const bypass = p.bypass === true;
     const target = resolveQualityTarget(ctx.sprite, p);
-    const { report } = runQuality(ctx.sprite, target);
+    const { report } = runQuality(ctx.sprite, target, p.assetClass);
     const decision = qualityGate(report, { threshold });
 
     const summary: CommandSummary = {
@@ -1174,6 +1216,8 @@ export const verifyQualityCommand = defineCommand({
       frames: [...target.frames],
       tag: target.tag,
       focus: target.focus,
+      // Which weight profile the refusal's total was measured under, and who chose it.
+      assetClass: { ...report.assetClass },
       refusals: decision.refusals,
       // The dimensions that did not apply, in the same result as the ones that refused, so an
       // abstention can never be read as a defect by a caller skimming for the verdict.

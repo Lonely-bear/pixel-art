@@ -283,6 +283,17 @@ export interface QualityReport {
    * per-mille integer for the pipeline's internals.
    */
   readonly score: number;
+  /**
+   * The weight profile this total was computed under, and whether the caller or the aggregator
+   * chose it. §5.2's per-asset-class profiles.
+   *
+   * **Required, and it is the reason a profile is a profile.** A weight change moves every
+   * total in the repository, and without this field a reader sees a number move and has no way
+   * to tell a re-weighting from a change in the artwork — which is precisely the diff §3.2's
+   * determinism rule exists to make meaningful. It also says `derived` versus `explicit`, so
+   * the "it was silently wrong and the caller knew better" case is visible after the fact.
+   */
+  readonly assetClass: QualityAssetClassRecord;
   /** 'pass' is shippable, 'warn' is shippable with eyes open, 'fail' is not. */
   readonly verdict: 'pass' | 'warn' | 'fail';
   /** Every issue at or above {@link SEVERITY_BLOCKING}. Never empty when verdict is 'fail'. */
@@ -632,6 +643,144 @@ export const STATIC_QUALITY_WEIGHTS: QualityWeights = {
   ...DEFAULT_QUALITY_WEIGHTS,
   motion: 0,
 };
+
+/* ------------------------------------------------------------------ *
+ * §5.2 per-asset-class weight profiles
+ * ------------------------------------------------------------------ */
+
+/**
+ * What kind of asset a report is about, and therefore what "good" means for it.
+ *
+ * §7 item 8: an icon, a walk cycle, a tile and a 256² scene do not share a definition of good,
+ * and one weight table cannot serve all four. Three classes is the smallest set that separates
+ * the cases §7 item 8 actually names, and every one of them is derivable from facts the
+ * aggregator already has (`motionApplicability`, `context.width * context.height`) — which is
+ * the reason the set is this short and not longer. A `tile` and a `ui-icon` are both
+ * single-frame subjects on a small canvas, they share a definition of good, and inventing a
+ * class for each would be four tables to keep right in exchange for a distinction nobody can
+ * currently measure.
+ *
+ * Adding a member is additive and safe; it is not free, because every new class is a new set
+ * of numbers nobody has evidence for (see {@link QUALITY_WEIGHT_PROFILES}).
+ */
+export type QualityAssetClass = 'sprite' | 'animation' | 'scene';
+
+/**
+ * Every {@link QualityAssetClass}, so a caller iterating the profiles cannot miss one — the
+ * same guard shape as {@link QUALITY_DIMENSIONS}, and for the same reason: a profile declared
+ * and never consulted is a table nobody chose.
+ */
+export const QUALITY_ASSET_CLASSES = [
+  'sprite',
+  'animation',
+  'scene',
+] as const satisfies readonly QualityAssetClass[];
+
+/**
+ * The weight table used when nothing is specified and nothing is derived: §5.1's table, byte
+ * for byte.
+ *
+ * **This is the backward-compatibility guarantee and it is deliberately exact.** A document
+ * that is a single frame on a canvas of 16384 pixels or fewer resolves to `sprite`, which
+ * resolves to *this object*, so `evaluate` with no arguments produces the same `totalQ`,
+ * the same `score` and the same `verdict` it produced before profiles existed. Every committed
+ * baseline that was generated under a derived `sprite` class is therefore unchanged, and
+ * `test/quality-asset-class.test.ts` asserts it on the arithmetic rather than on the words.
+ *
+ * It is kept as the default rather than replaced, because §5.1's table is the one set of
+ * numbers §6 has run against (once, on one sprite), and deleting it would delete the only
+ * thing in this file that anything has ever been compared to.
+ */
+export const SPRITE_QUALITY_WEIGHTS: QualityWeights = DEFAULT_QUALITY_WEIGHTS;
+
+/**
+ * One weight profile's weights and the class they belong to.
+ *
+ * `class` is on the profile rather than being the key alone so that the value is
+ * self-describing: a reader handed a {@link QualityWeights} by a function that did not also
+ * hand them the class has no way to tell which of three tables they are holding.
+ */
+export interface QualityWeightProfile {
+  readonly cls: QualityAssetClass;
+  readonly weights: QualityWeights;
+}
+
+/**
+ * The three weight tables of §5.2, keyed by asset class.
+ *
+ * ### Every number in here is CHOSEN, not measured
+ *
+ * §3 and §7 item 10 say it about every threshold in §4 and it applies with more force here:
+ * §6.2 has never been run on an animation or on a scene, the corpus's human-rated section is
+ * empty, and **there are zero human ratings of any kind in this repository**. So `sprite` is
+ * the only profile with anything behind it at all — and what is behind it is §6.2's single
+ * pass on one sprite — while `animation` and `scene` are arguments, not results:
+ *
+ *   - `animation` moves 20 points from `silhouette` and `value` onto `motion`, on the ground
+ *     that a walk cycle whose area churns and whose seam pops is a broken cycle even when every
+ *     frame is a handsome drawing, and `motion` at 80 of 1000 cannot outvote a good silhouette.
+ *   - `scene` moves 100 points from `silhouette` and `outline` onto `value` and `palette`,
+ *     on the ground that a full-bleed landscape has no subject to read (which is why
+ *     `silhouette` and `outline` are usually *excluded* there and their weights are then
+ *     irrelevant) and is carried instead by its value planes and its colour discipline.
+ *
+ * **What would replace them with measurements**, stated once so it is checkable: §6.2's
+ * protocol — a rater panel scoring N assets per class with the machine's numbers withheld —
+ * plus, for each pair of profiles, the distribution of the per-dimension scores on the
+ * corpus's rows of that class. The test that would justify a weight is the disproof, not the
+ * agreement: "a clean control of class C scores X on the dimension this weight moves and the
+ * defective case of the same class scores Y, and no other cut separates them." Until that
+ * exists these are hypotheses under review, exactly like every band in §4, and re-tuning them
+ * moves every committed baseline for that class.
+ */
+export const QUALITY_WEIGHT_PROFILES: Readonly<Record<QualityAssetClass, QualityWeightProfile>> = {
+  sprite: {
+    cls: 'sprite',
+    // Identical to DEFAULT_QUALITY_WEIGHTS, not a copy that can drift: see the object above.
+    weights: SPRITE_QUALITY_WEIGHTS,
+  },
+  animation: {
+    cls: 'animation',
+    // silhouette 280, value 230, palette 120, noise 100, outline 80, motion 190.
+    // CHOSEN. Sums to 1000; asserted in `test/quality-asset-class.test.ts`.
+    weights: { silhouette: 280, value: 230, palette: 120, noise: 100, outline: 80, motion: 190 },
+  },
+  scene: {
+    cls: 'scene',
+    // silhouette 200, value 320, palette 220, noise 140, outline 60, motion 60.
+    // CHOSEN. Sums to 1000; asserted in `test/quality-asset-class.test.ts`.
+    weights: { silhouette: 200, value: 320, palette: 220, noise: 140, outline: 60, motion: 60 },
+  },
+};
+
+/**
+ * The canvas area above which a still document is treated as a scene, in pixels.
+ *
+ * **Chosen, and deliberately equal to §4.3's `large`-band ceiling (16384, i.e. 128×128).** The
+ * coincidence is a convenience, not a contract: §4.3's bands are a *colour budget* and this is
+ * a *weight profile*, they are allowed to drift apart, and nothing here reads §4.3's table so
+ * that a change to a colour budget cannot silently move a weighted total.
+ *
+ * 16384 is the smallest bound that covers the ten committed full-bleed scenes in `artwork/`
+ * (all 256² or 512²) while leaving every 32²–128² sprite in the corpus on `sprite`.
+ */
+export const SCENE_AREA_THRESHOLD = 16384;
+
+/** Where a class came from, so a report can say whether the caller or the aggregator chose it. */
+export type QualityAssetClassSource = 'derived' | 'explicit';
+
+/**
+ * The class a report was scored under, and who chose it.
+ *
+ * Reported rather than merely applied, and required rather than optional for the same reason
+ * {@link QualityReport.excluded} is required: a number whose weighting a reader cannot see is
+ * a number they cannot explain, and §7 item 8 is a complaint about exactly that — a 0.82 on a
+ * scene and a 0.82 on a walk cycle are different claims and the report has to say which.
+ */
+export interface QualityAssetClassRecord {
+  readonly cls: QualityAssetClass;
+  readonly source: QualityAssetClassSource;
+}
 
 /**
  * The palette as an analyzer sees it.

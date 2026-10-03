@@ -55,9 +55,11 @@ import {
   evaluate,
   isBlocking,
   QUALITY_DIMENSIONS,
+  QUALITY_WEIGHT_PROFILES,
   rectSchema,
   resolveFrame,
   type ExcludedReason,
+  type QualityAssetClass,
   type QualityDimensionId,
   type QualityIssue,
   type QualityReport,
@@ -96,6 +98,16 @@ export interface QualityTargetOptions {
    * See `QualityContext.focus`.
    */
   readonly rect?: Rect;
+  /**
+   * Which §5.2 weight profile to score under. Omit to derive it.
+   *
+   * Derived: a sequence with measurable motion is `animation`, otherwise a canvas over 16384px
+   * is `scene` and the rest is `sprite`. State it when you are judging one frame of an
+   * animation — that pass is a still sequence and the derived answer is `sprite`, while the
+   * asset is not. **Not yet exposed as a tool argument** (see the module note): it is on the
+   * payload so the report is self-describing either way.
+   */
+  readonly assetClass?: QualityAssetClass;
   /** Ceiling on the flat `issues` list. Defaults to 40; blocking issues are never dropped. */
   readonly maxIssues?: number;
   /** Identity of the document, so the payload is self-describing on both channels. */
@@ -220,6 +232,11 @@ export const QUALITY_OUTPUT_SCHEMA = z.looseObject({
         .record(z.string(), z.string())
         .describe('Why each absent dimension is absent. These keys are exactly the ids missing from `dimensions`, and no id is in both. `single-frame`/`no-subject`/`no-motion-content` describe the document; `not-implemented` describes this build, not the artwork.'),
       score: z.number().describe('Weighted mean of the measured dimensions, 0..1. Diagnostics only - a higher number is not a better picture, and a target nothing could measure reports 0.00 rather than 1.00.'),
+      assetClass: z
+        .looseObject({})
+        .describe(
+          'Which §5.2 weight profile weighted `score`: `{cls: "sprite"|"animation"|"scene", source: "derived"|"explicit"}`. Two totals under different classes are different claims and are not comparable - read this before comparing a number to another one.',
+        ),
       verdict: z
         .enum(['pass', 'warn', 'fail'])
         .describe("The delivery gate, not a rating: 'pass' means no blocking defect was found, nothing more. `blocking` lists them."),
@@ -232,6 +249,11 @@ export const QUALITY_OUTPUT_SCHEMA = z.looseObject({
     ),
   issueCount: z.number().describe('Issues that exist, including any `issuesTruncated` did not show.'),
   issuesTruncated: z.boolean().describe('True when `issues` is shorter than `issueCount`. Only ever truncates advisories.'),
+  assetClass: z
+    .looseObject({})
+    .describe(
+      'Which §5.2 weight profile weighted `report.score`, and whether the caller named it (`explicit`) or the aggregator derived it from the frames and the canvas size (`derived`). Two totals under different classes are different claims and are not comparable.',
+    ),
   unmeasured: z
     .array(z.looseObject({}))
     .describe('`{dimension, subScore, reason}` per sub-score a measured dimension could not reach. Distinct from `report.excluded`, which is about whole dimensions: "measured, and here is the part it could not measure" is not "did not apply".'),
@@ -314,6 +336,21 @@ function reportNotes(report: QualityReport): string[] {
   const notes: string[] = [];
   const measured = Object.keys(report.dimensions).length;
 
+  // Which profile weighted the total. Said once, as a fact about the measurement, and said
+  // **always** rather than only for the non-default classes: `sprite` is the answer a reader
+  // most needs to have confirmed, because it is the one that makes this number comparable with
+  // the numbers they have seen before. It is a weight table, not a grade, so it does not read
+  // as a target.
+  notes.push(
+    `\`score\` is a weighted mean over the ${QUALITY_WEIGHT_PROFILES[report.assetClass.cls].cls} ` +
+      `profile's weights (${report.assetClass.source}, ${
+        report.assetClass.source === 'derived'
+          ? 'no asset class was given, so it was derived from the frames and the canvas size'
+          : 'the caller named the asset class'
+      }). A total is not comparable across profiles, and the weights are chosen numbers under ` +
+      'review rather than measured ones - see docs/EVALUATION.md 5.2.',
+  );
+
   if (measured === 0) {
     notes.push(
       'No dimension could measure this target, so `score` is 0.00. That means "nothing was measured", not "bad artwork" - read `excluded` for the reason behind each dimension.',
@@ -386,7 +423,7 @@ export function qualityPayload(sprite: Sprite, options: QualityTargetOptions = {
     frames: sequence.frames.map((entry) => entry.frameId),
     focus: options.rect ?? null,
   });
-  const report = evaluate(context);
+  const report = evaluate(context, undefined, { assetClass: options.assetClass });
   const index = indexIssues(report, aggregatorIssues(context));
   const blockingCount = index.filter((entry) => entry.blocking).length;
 
@@ -415,6 +452,9 @@ export function qualityPayload(sprite: Sprite, options: QualityTargetOptions = {
         : {}),
     },
     report,
+    // Repeated beside `report` so a reader who skims the payload can see which weight profile
+    // produced the total without walking into it. It is the same object, not a second answer.
+    assetClass: report.assetClass,
     issues: shown,
     issueCount: index.length,
     issuesTruncated: shown.length < index.length,
