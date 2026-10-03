@@ -282,8 +282,14 @@ removed. Say so in your report rather than shipping it quietly.
 1. Move the `## [Unreleased]` notes in `CHANGELOG.md` under a dated `## [X.Y.Z] - YYYY-MM-DD`.
 2. Bump `package.json` `version`. `packages/app/package.json` is synced by
    `scripts/prepare-release.mjs`, not by hand.
-3. `git commit -am "chore(release): prepare dotloom-mcp X.Y.Z"`, then `git tag vX.Y.Z` and push
-   with `--follow-tags`.
+3. `git commit -am "chore(release): prepare dotloom-mcp X.Y.Z"`, then `git tag -a vX.Y.Z -m
+   "dotloom-mcp X.Y.Z"` and `git push --follow-tags`. **The `-a` is not optional.**
+   `--follow-tags` pushes only *annotated* tags, so a lightweight `git tag vX.Y.Z` is silently
+   left behind — the branch push succeeds, `prepare-release.mjs` says "ready to build", and
+   `.github/workflows/release.yml` never fires because it triggers on the tag and nothing sends it.
+   The failure is silent in both directions: the local tag exists, and the remote has no trace of it.
+   If a release ever "did not happen" with no error anywhere, check `git cat-file -t vX.Y.Z` first;
+   `commit` means lightweight and means it was never pushed.
 
 `scripts/prepare-release.mjs` refuses a tag that disagrees with the manifest or a changelog without
 a dated section. Commits use Conventional Commits with a scope: `feat(mcp): …`, `fix(app): …`.

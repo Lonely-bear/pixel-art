@@ -19,6 +19,7 @@
  */
 import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -38,6 +39,21 @@ const expected = `v${pkg.version}`;
 if (tag !== expected) {
   console.error(`Tag ${tag} does not match package.json version ${pkg.version} (expected ${expected}).`);
   console.error('Bump the version first, or retag.');
+  process.exit(1);
+}
+
+// **An annotated tag, or refuse.** `git push --follow-tags` pushes only annotated tags, so a
+// lightweight `git tag vX.Y.Z` never leaves the machine — while this script reports "ready to
+// build", the branch push succeeds, and `.github/workflows/release.yml` never fires because it
+// triggers on the tag. Every symptom is a success and the release still does not happen. That is
+// the shape of failure this repository already has five of, in the release tooling rather than in
+// the product, so it is checked here rather than discovered on a release day.
+const tagType = execFileSync('git', ['cat-file', '-t', tag], { cwd: root, encoding: 'utf8' }).trim();
+if (tagType !== 'tag') {
+  console.error(`Tag ${tag} is a LIGHTWEIGHT tag (git reports "${tagType}", not "tag").`);
+  console.error('`git push --follow-tags` only sends annotated tags, so it would stay on this');
+  console.error('machine forever and no installer would ever be built. Recreate it:');
+  console.error(`  git tag -d ${tag} && git tag -a ${tag} -m "dotloom-mcp ${pkg.version}"`);
   process.exit(1);
 }
 
