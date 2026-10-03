@@ -2732,6 +2732,47 @@ loop for the one thing a loop is allowed to do.
 | `timing-mismatch` | equal durations with `deltaSpread >= 0.6` | 0.45 | no |
 | `loop-duration-out-of-range` | `loopMs` outside 80..1200 | 0.30 | no |
 
+#### Evidence
+
+**Seven corpus cases, one per code, and one clean multi-frame control.** `benchmarks/corpus/`
+holds `motion/clean-walk-40x32`, `motion/loop-seam-pop-32x32`, `motion/loop-seam-jump-40x32`,
+`motion/frame-jitter-40x40`, `motion/timing-mismatch-32x32`, `motion/timing-outlier-40x32` and
+`motion/loop-duration-out-of-range-40x32`, and `packages/core/test/quality-motion.test.ts` asserts
+each of them from the committed recipe with a MUST FIRE and a near-miss on the other side of the
+same gate. The control is the one that carries the weight, and it is **not** a still sprite: six
+frames of a body walked right by four pixels and back, changing **96 of its own 240 pixels on every
+transition including the seam** (`churn [96 96 96 96 96 96]`, seam 96, `areaSpreadQ 0`, every frame
+100ms), which reads 1000 with no issue at all. A dimension whose firing behaviour on good work has
+never been observed is the shape of the measurements this project has already shipped that could
+not fail, and a control that was clean because nothing moved would not have closed that hole.
+
+**Three facts the corpus says that this section did not.**
+
+1. **`loop-seam-pop` and `loop-seam-jump` are independent, and the corpus is what shows it.**
+   `motion/loop-seam-jump-40x32` fires the jump row and **not** the pop row, because its seam
+   ratio lands exactly on the inclusive `1.75` boundary (`168 * 20 === 35 * 96`).
+   `motion/loop-seam-pop-32x32` fires the pop row and not the jump row, because its silhouette is
+   byte-identical across the seam and the whole finding is in the tone channel. Neither fact is
+   visible from one fixture, and a corpus whose only pops were positional could never have shown
+   the tone half working at all.
+2. **For a rigidly translating body the two rows are the same ratio, so a positional pop always
+   fires both.** A translation moves the centroid and the pixel count by the same fraction, so
+   `seamStep / maxStep` and `seam / churnMedian` agree; `loop-seam-jump`'s window is (1.5, ∞)
+   and `loop-seam-pop`'s is (1.75, ∞). The overlap is the reason the pop case above is built on
+   tone rather than on position, and it is worth knowing before drawing another one.
+3. **A frame that jumps also makes `timing-mismatch` true, whenever the timing is even.** The row
+   is `allDurationsEqual and deltaSpread >= 600`, and `deltaSpread` is measured over internal
+   transitions, so any internal transition that moves more ink than the others raises it. That is
+   the specification working rather than two defects overlapping, but it means one fixture cannot
+   isolate `frame-jitter`: `motion/frame-jitter-40x40` holds its frames 80/100/120/140/160/120ms
+   deliberately, and says so in the case note.
+
+**What is not here.** There is no corpus case for `key-light-inconsistent`, for the same reason
+there is none in `value`: it is a subject-level taste check with one sample in this repository. And
+the `durations` recipe op exists only because §4.6's three timing rows are otherwise
+unconstructible — `createSprite`'s default is a uniform 100ms, so a corpus that can only draw
+pixels can produce an animation that is perfectly timed and never one that is not.
+
 **Worked example** — a 6-frame walk cycle, tag `walk`, forward, 100ms per frame:
 
 ```
@@ -2820,6 +2861,80 @@ character that scores 0.88 across the five applicable dimensions reports **0.88*
 The weights stay in thousandths in the code. Renormalising into floats at runtime would make
 the total depend on the active set in a way that is hard to diff and hard to explain in a
 CI log.
+#### Per-asset-class weight profiles — §7 item 8
+
+The table in §5.1 is the **`sprite` profile**. It is not *the* weight table any more: there are
+three, and which one a document is scored under is a fact the report carries.
+
+| Profile | Applies when | Source |
+| --- | --- | --- |
+| `sprite` | a still document on a canvas of 16384px or fewer (§5.1's table, unchanged) | derived |
+| `animation` | the evaluated sequence has measurable motion — two or more frames that are **not** all byte-identical | derived |
+| `scene` | otherwise, and the canvas area is above 16384px (a 256² or 512² landscape) | derived |
+
+**A caller may name a class instead**, on `evaluate`, `verify` and `qualityGateForSprite`
+(`assetClass: "sprite" | "animation" | "scene"`). The rule is *derived by default, overridable,
+and the override wins*, for one concrete reason: `frames: [0]` on a four-frame walk cycle is a
+still sequence, so the honest derived answer is `sprite` while the caller knows the asset is an
+animation. `QualityReport.assetClass` records `{cls, source}` either way, so "the caller was
+right" and "the aggregator was right" are both checkable after the fact.
+
+**`animation` is tested before area, and that is the arguable half of the rule.** An animated
+256² background is an `animation`, not a `scene`. The reason is that the two questions are not
+peers: motion applicability is a fact about *this evaluation*, while area is a property of the
+canvas, and a total that moved because a caller passed `frames: [0]` instead of the loop would be
+moving when nothing about the artwork changed. A still 256² canvas has no motion to weigh, so it
+falls through to the area rule and is scored as a scene.
+
+Three classes, not four. §7 item 8 names an icon, a walk cycle, a tile and a scene; an icon and a
+tile are both still subjects on a small canvas and both resolve to `sprite`, and inventing a
+class for each would be two more sets of numbers with **zero** evidence behind them.
+
+**Every weight below is CHOSEN, not measured.** §3 and §7 item 10 say so about every threshold in
+§4 and it applies with more force here: §6.2 has never been run on an animation or on a scene, the
+human-rated section of the corpus is empty, and this repository has **zero human ratings of any
+kind**. `sprite` is the only profile with anything behind it — §6.2's single pass, on one sprite —
+and `animation` and `scene` are arguments:
+
+| Dimension | `sprite` (§5.1) | `animation` | `scene` |
+| --- | --- | --- | --- |
+| `silhouette` | 300 | 280 | 200 |
+| `value` | 260 | 230 | 320 |
+| `palette` | 140 | 120 | 220 |
+| `noise` | 120 | 100 | 140 |
+| `outline` | 100 | 80 | 60 |
+| `motion` | 80 | 190 | 60 |
+
+- **`animation`: motion 80 → 190.** A walk cycle whose area churns and whose loop seam pops is a
+  broken cycle even when every individual frame is a handsome drawing, and at 80 of 1000 `motion`
+  cannot outvote a good silhouette.
+- **`scene`: 100 points off `silhouette` and `outline`, onto `value` and `palette`.** A
+  full-bleed landscape has no subject to read — which is why `silhouette` and `outline` are
+  usually *excluded* there and their weights are then irrelevant — and is carried instead by its
+  value planes and its colour discipline.
+
+All three columns sum to 1000, which is asserted in `test/quality-asset-class.test.ts` rather than
+left to review.
+
+**The backward-compatibility guarantee is exact.** Nothing specified resolves to `sprite`, and
+`sprite` **is** §5.1's table — the same object, not a copy that can drift — so `evaluate` with no
+arguments produces the same integer total, the same `score` and the same `verdict` it produced
+before profiles existed. The gate reads the class off the report rather than re-deriving it, so a
+report and its refusal cannot be about different numbers.
+
+**What would turn these into measurements**, stated once so it is checkable: §6.2's protocol — a
+rater panel scoring N assets per class with the machine's numbers withheld — plus, per class, the
+distribution of the per-dimension scores on the corpus's rows of that class. The test that would
+justify a weight is the **disproof**, not the agreement: *"a clean control of class C scores X on
+the dimension this weight moves and the defective case of the same class scores Y, and no other
+cut separates them."* Until that exists, these are hypotheses under review like every band in §4.
+
+**What moved, and where.** 13 of the corpus's 79 rows change class and therefore their total; the
+other 66 are byte-identical. Two rows become `animation` (both are 16×16 two-frame cases),
+eleven become `scene` (the ten committed `artwork/` scenes, the two `sweep/band-*` cases on a
+1024² canvas, and `app/icon.png`). No row changes **verdict**: nothing crosses §5.3's 800 line and
+every row that was already failing is still failing.
+
 
 ### 5.3 Verdicts
 
@@ -3522,10 +3637,23 @@ broken passes when evaluated on frame 0. For an animation, evaluate a *tag* — 
 resolves it into a playback-ordered `frameIds` — and treat a per-frame pass as a statement
 about that frame only.
 
-**8. It is not comparable across asset classes.** The weights are tuned for character sprites
-and small props. An icon, a walk cycle, a tile and a 256×256 scene do not share a definition
-of good, and one weight table cannot serve all four. Per-asset-class weight profiles are the
-obvious fix and they are not built.
+**8. Per-asset-class weight profiles exist now, and they are guesses.** §5.2 carries
+three — `sprite`, `animation`, `scene` — derived from whether the evaluated sequence has
+measurable motion and from the canvas area, overridable by the caller, and recorded on the report
+so a reader can tell which table produced a number. An icon, a walk cycle, a tile and a 256×256
+scene no longer share a weight table.
+
+**What is left is not the mechanism but the evidence.** The `sprite` column is §5.1's table, the
+one §6.2 has run against once, on one sprite. The other two columns are **chosen**: there are zero
+human ratings in this repository, so nothing distinguishes a good walk cycle from a bad one on
+these numbers, and §6.2's protocol has never been run on an animation or a scene at all. Re-tuning
+either column moves every corpus row of that class.
+
+Two things this item deliberately did not do. It did not add a class per asset *kind* — an icon
+and a tile both resolve to `sprite`, because a fifth and sixth table of numbers with no evidence
+behind them is a worse outcome than admitting the two are judged alike. And it did not derive the
+class from the document *kind*, because nothing here can tell an icon from a tile (§7 item 1); the
+derivation reads only the frames and the canvas, both of which are facts rather than judgements.
 
 **9. It has no style, period, or era awareness.** It will happily mark a deliberately
 chunky 16-bit look and a deliberately smooth modern one at the same score, because it only

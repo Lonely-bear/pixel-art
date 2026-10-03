@@ -2918,6 +2918,1245 @@
       }
     },
     {
+      "id": "motion/clean-walk-40x32",
+      "label": "A six-frame walk loop on a 40x32 canvas: even churn on every transition including the seam, and no motion code at all",
+      "tier": "synthetic",
+      "provenance": "generated",
+      "defects": [
+        {
+          "kind": "clean-control",
+          "note": "Nothing injected, and this is the case the whole `motion` corpus was missing: a declared-clean control on a SEQUENCE rather than on a single frame. §4.6's severity scale is the only one in the document that cannot be checked from a contact sheet, so a control that only ever drew stills left every motion reading uninterpretable — there was nothing to compare a firing case against. The loop is deliberately not trivial. Every transition, the seam included, moves exactly 96 of the canvas's 240 solid pixels (`churn [96 96 96 96 96 96]`, seam 96), the area is 240 on all six frames (`areaSpreadQ 0`), the centroid steps 4px in-loop and 4px at the seam (`seamStep 256` against `maxStep 256`, so §4.6's `> 1.5x` clause is false by a factor of 1.5), the tone is held constant so `lumDelta` is 0 on all six transitions, and every frame is held 100ms. A control that was clean because nothing moved would prove nothing; this one moves a fifth of its own pixels on every single transition and still says nothing."
+        }
+      ],
+      "recipe": {
+        "canvas": {
+          "w": 40,
+          "h": 32
+        },
+        "layers": [
+          "Base"
+        ],
+        "palette": [
+          "#3a2f2a",
+          "#e8d9a0"
+        ],
+        "ops": [
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 0,
+            "rect": [
+              4,
+              8,
+              20,
+              12
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 0,
+            "rect": [
+              4,
+              8,
+              20,
+              6
+            ],
+            "color": "pal:1",
+            "fill": true
+          },
+          {
+            "op": "duplicateFrame",
+            "count": 5
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 1,
+            "dx": 4,
+            "dy": 0
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 2,
+            "dx": 8,
+            "dy": 0
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 3,
+            "dx": 12,
+            "dy": 0
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 4,
+            "dx": 8,
+            "dy": 0
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 5,
+            "dx": 4,
+            "dy": 0
+          },
+          {
+            "op": "durations",
+            "ms": [
+              100,
+              100,
+              100,
+              100,
+              100,
+              100
+            ]
+          },
+          {
+            "op": "tag",
+            "name": "walk",
+            "from": 0,
+            "to": 5
+          }
+        ]
+      },
+      "expect": {
+        "codes": [],
+        "absent": [
+          "frames-identical",
+          "silhouette-instability",
+          "loop-seam-pop",
+          "loop-seam-jump",
+          "frame-jitter",
+          "timing-outlier",
+          "timing-mismatch",
+          "loop-duration-out-of-range"
+        ],
+        "verdict": "pass",
+        "noBlocking": true,
+        "preconditions": {
+          "silhouette": null,
+          "outline": "no-outline",
+          "motion": null
+        },
+        "connectivity": {
+          "four": 1,
+          "eight": 1
+        },
+        "measure": {
+          "N": [
+            240,
+            240,
+            240,
+            240,
+            240,
+            240
+          ],
+          "components": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "shareQ": [
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000
+          ],
+          "perimeter": [
+            64,
+            64,
+            64,
+            64,
+            64,
+            64            ],
+          "holeCount": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "compactnessQ": [
+            736,
+            736,
+            736,
+            736,
+            736,
+            736            ],
+          "scoreQ": [
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000
+          ]
+        }
+      },
+      "pair": [
+        "motion/seam",
+        "motion/timing",
+        "motion/step"
+      ]
+    },
+    {
+      "id": "motion/loop-seam-jump-40x32",
+      "label": "The same walk with the sixth frame drawn three pixels off the return: the loop closes with the body further away than any in-loop step",
+      "tier": "synthetic",
+      "provenance": "generated",
+      "defects": [
+        {
+          "kind": "loop-seam-jump",
+          "note": "Severity 0.55, blocking. §4.6's `seamStep > maxStep * 1.5` with `seamStep >= 1.0px`, and the numbers are the hand-derivable ones: the in-loop steps are 4px (`maxStep 256` in 1/64px) and the return is drawn from 7px rather than 4px (`seamStep 448`), so `448 * 2 = 896 > 256 * 3 = 768`. **This case is also the measurement that `loop-seam-pop` does NOT fire here**, which is the point of drawing it on this shape rather than on an obvious one: the seam changes 168 pixels against a median of 96, and `168 * 20 = 3360` is exactly `35 * 96 = 3360`, so §4.6's pop trigger is inclusive and does not fire. The two gates are not the same gate, and a case that fired both would have proved nothing about either."
+        }
+      ],
+      "recipe": {
+        "canvas": {
+          "w": 40,
+          "h": 32
+        },
+        "layers": [
+          "Base"
+        ],
+        "palette": [
+          "#3a2f2a",
+          "#e8d9a0"
+        ],
+        "ops": [
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 0,
+            "rect": [
+              4,
+              8,
+              20,
+              12
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 0,
+            "rect": [
+              4,
+              8,
+              20,
+              6
+            ],
+            "color": "pal:1",
+            "fill": true
+          },
+          {
+            "op": "duplicateFrame",
+            "count": 5
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 1,
+            "dx": 4,
+            "dy": 0
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 2,
+            "dx": 8,
+            "dy": 0
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 3,
+            "dx": 12,
+            "dy": 0
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 4,
+            "dx": 8,
+            "dy": 0
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 5,
+            "dx": 7,
+            "dy": 0
+          },
+          {
+            "op": "tag",
+            "name": "walk",
+            "from": 0,
+            "to": 5
+          }
+        ]
+      },
+      "expect": {
+        "codes": [
+          "loop-seam-jump"
+        ],
+        "absent": [
+          "frame-jitter",
+          "silhouette-instability",
+          "timing-outlier",
+          "loop-duration-out-of-range"
+        ],
+        "preconditions": {
+          "silhouette": null,
+          "outline": "no-outline",
+          "motion": null
+        },
+        "connectivity": {
+          "four": 1,
+          "eight": 1
+        },
+        "measure": {
+          "N": [
+            240,
+            240,
+            240,
+            240,
+            240,
+            240
+          ],
+          "components": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "perimeter": [
+            64,
+            64,
+            64,
+            64,
+            64,
+            64            ],
+          "holeCount": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "pair": [
+        "motion/seam",
+        "motion/step"
+      ]
+    },
+    {
+      "id": "motion/frame-jitter-40x40",
+      "label": "The same walk with one frame drawn a step off in both axes: one internal transition moves three times the median",
+      "tier": "synthetic",
+      "provenance": "generated",
+      "defects": [
+        {
+          "kind": "frame-jitter",
+          "note": "Severity 0.50, blocking. §4.6's `churnMax > 2 * churnMedian` over the INTERNAL transitions only: `churn [96 96 224 224 96 96]`, median 96, so `224 > 192`. **The durations are deliberately uneven and that is stated rather than hidden.** §4.6's `timing-mismatch` row needs `allDurationsEqual` AND `deltaSpreadQ >= 600`, and a frame that jumps also makes `lumDelta` uneven, so an evenly-timed version of this exact drawing reports `frame-jitter` *and* `timing-mismatch` — two true statements, and one fixture cannot isolate either. Holding the frames 80/100/120/140/160/120ms (median 120, nothing past `3 * 120`, 720ms total) removes the second row without removing the first, so this case says what it declares."
+        }
+      ],
+      "recipe": {
+        "canvas": {
+          "w": 40,
+          "h": 40
+        },
+        "layers": [
+          "Base"
+        ],
+        "palette": [
+          "#3a2f2a",
+          "#e8d9a0"
+        ],
+        "ops": [
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 0,
+            "rect": [
+              4,
+              8,
+              20,
+              12
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 0,
+            "rect": [
+              4,
+              8,
+              20,
+              6
+            ],
+            "color": "pal:1",
+            "fill": true
+          },
+          {
+            "op": "duplicateFrame",
+            "count": 5
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 1,
+            "dx": 4,
+            "dy": 0
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 2,
+            "dx": 8,
+            "dy": 0
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 3,
+            "dx": 12,
+            "dy": 4
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 4,
+            "dx": 8,
+            "dy": 0
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 5,
+            "dx": 4,
+            "dy": 0
+          },
+          {
+            "op": "durations",
+            "ms": [
+              80,
+              100,
+              120,
+              140,
+              160,
+              120
+            ]
+          },
+          {
+            "op": "tag",
+            "name": "walk",
+            "from": 0,
+            "to": 5
+          }
+        ]
+      },
+      "expect": {
+        "codes": [
+          "frame-jitter"
+        ],
+        "absent": [
+          "loop-seam-jump",
+          "loop-seam-pop",
+          "silhouette-instability",
+          "timing-mismatch"
+        ],
+        "preconditions": {
+          "silhouette": null,
+          "outline": "no-outline",
+          "motion": null
+        },
+        "connectivity": {
+          "four": 1,
+          "eight": 1
+        },
+        "measure": {
+          "N": [
+            240,
+            240,
+            240,
+            240,
+            240,
+            240
+          ],
+          "components": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "perimeter": [
+            64,
+            64,
+            64,
+            64,
+            64,
+            64            ],
+          "holeCount": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "pair": [
+        "motion/step"
+      ]
+    },
+    {
+      "id": "motion/loop-seam-pop-32x32",
+      "label": "Four frames on the same pixels, the lit half brightening in even steps and then snapping back: a seam that pops in tone",
+      "tier": "synthetic",
+      "provenance": "generated",
+      "defects": [
+        {
+          "kind": "loop-seam-pop",
+          "note": "Severity 0.55, blocking. §4.6's own sentence names this shape: \"a seam that pops in *colour* while the silhouette happens to match still gets caught\", and it is the only way to land the primary ratio on a chosen integer without drawing a second shape. The silhouette is byte-identical across all four frames (`churn [0 0 0 0]`, so the mask reading is silent and `churnMedian` 0), while `lumDelta` is 25, 25, 25 and a seam of 75 — the lit half climbs three equal steps and is then drawn three steps' worth darker in a single frame. `75 * 20 = 1500` against `35 * 25 = 875` fires the code and `50 * 25 = 1250` makes it blocking, with the band at 500. **This case is also why `loop-seam-pop` and `loop-seam-jump` are separate cases:** a pop carried by position fires the jump row as well, because a rigid translation moves the centroid and the pixels by the same fraction, so a corpus that only had positional pops could never show the tone channel working."
+        }
+      ],
+      "recipe": {
+        "canvas": {
+          "w": 32,
+          "h": 32
+        },
+        "layers": [
+          "Base"
+        ],
+        "frames": 4,
+        "palette": [
+          "#1a1a1a",
+          "#474747",
+          "#797979",
+          "#ababab",
+          "#dddddd"
+        ],
+        "ops": [
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 0,
+            "rect": [
+              6,
+              10,
+              20,
+              12
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 0,
+            "rect": [
+              6,
+              10,
+              20,
+              6
+            ],
+            "color": "pal:1",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 1,
+            "rect": [
+              6,
+              10,
+              20,
+              12
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 1,
+            "rect": [
+              6,
+              10,
+              20,
+              6
+            ],
+            "color": "pal:2",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 2,
+            "rect": [
+              6,
+              10,
+              20,
+              12
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 2,
+            "rect": [
+              6,
+              10,
+              20,
+              6
+            ],
+            "color": "pal:3",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 3,
+            "rect": [
+              6,
+              10,
+              20,
+              12
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 3,
+            "rect": [
+              6,
+              10,
+              20,
+              6
+            ],
+            "color": "pal:4",
+            "fill": true
+          },
+          {
+            "op": "durations",
+            "ms": [
+              100,
+              100,
+              100,
+              100
+            ]
+          },
+          {
+            "op": "tag",
+            "name": "glow",
+            "from": 0,
+            "to": 3
+          }
+        ]
+      },
+      "expect": {
+        "codes": [
+          "loop-seam-pop"
+        ],
+        "absent": [
+          "loop-seam-jump",
+          "frame-jitter",
+          "silhouette-instability",
+          "timing-outlier",
+          "timing-mismatch",
+          "loop-duration-out-of-range"
+        ],
+        "preconditions": {
+          "silhouette": null,
+          "outline": "no-outline",
+          "motion": null
+        },
+        "connectivity": {
+          "four": 1,
+          "eight": 1
+        },
+        "measure": {
+          "N": [
+            240,
+            240,
+            240,
+            240
+          ],
+          "components": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "perimeter": [
+            64,
+            64,
+            64,
+            64            ],
+          "holeCount": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "pair": [
+        "motion/seam"
+      ]
+    },
+    {
+      "id": "motion/timing-mismatch-32x32",
+      "label": "Every frame held 100ms over a glow that jumps bright, drops back, and moves a third of as far: uniform timing over uneven motion",
+      "tier": "synthetic",
+      "provenance": "generated",
+      "defects": [
+        {
+          "kind": "timing-mismatch",
+          "note": "Severity 0.45, not blocking. §4.6's `allDurationsEqual and deltaSpread >= 600`, and both halves are load-bearing: the internal `lumDelta`s are 60, 60 and 15, so `deltaSpread = rhu((60 - 15) * 1000, 60) = 750`. **The seam is deliberately quiet** — the last frame is 15 `Lq` from the first against a median of 60, so `loop-seam-pop` does not fire and this case is about the clock rather than about the loop point. `timing-mismatch` is not reachable any other way: `deltaSpread` is measured over internal transitions only, and a document whose transitions all move the same amount of ink cannot have one whatever its durations say."
+        }
+      ],
+      "recipe": {
+        "canvas": {
+          "w": 32,
+          "h": 32
+        },
+        "layers": [
+          "Base"
+        ],
+        "frames": 4,
+        "palette": [
+          "#1a1a1a",
+          "#474747",
+          "#bfbfbf",
+          "#474747",
+          "#656565"
+        ],
+        "ops": [
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 0,
+            "rect": [
+              6,
+              10,
+              20,
+              12
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 0,
+            "rect": [
+              6,
+              10,
+              20,
+              6
+            ],
+            "color": "pal:1",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 1,
+            "rect": [
+              6,
+              10,
+              20,
+              12
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 1,
+            "rect": [
+              6,
+              10,
+              20,
+              6
+            ],
+            "color": "pal:2",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 2,
+            "rect": [
+              6,
+              10,
+              20,
+              12
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 2,
+            "rect": [
+              6,
+              10,
+              20,
+              6
+            ],
+            "color": "pal:3",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 3,
+            "rect": [
+              6,
+              10,
+              20,
+              12
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 3,
+            "rect": [
+              6,
+              10,
+              20,
+              6
+            ],
+            "color": "pal:4",
+            "fill": true
+          },
+          {
+            "op": "tag",
+            "name": "glow",
+            "from": 0,
+            "to": 3
+          }
+        ]
+      },
+      "expect": {
+        "codes": [
+          "timing-mismatch"
+        ],
+        "absent": [
+          "loop-seam-pop",
+          "loop-seam-jump",
+          "frame-jitter",
+          "silhouette-instability",
+          "timing-outlier",
+          "loop-duration-out-of-range"
+        ],
+        "preconditions": {
+          "silhouette": null,
+          "outline": "no-outline",
+          "motion": null
+        },
+        "connectivity": {
+          "four": 1,
+          "eight": 1
+        },
+        "measure": {
+          "N": [
+            240,
+            240,
+            240,
+            240
+          ],
+          "components": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "perimeter": [
+            64,
+            64,
+            64,
+            64            ],
+          "holeCount": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "pair": [
+        "motion/timing"
+      ]
+    },
+    {
+      "id": "motion/timing-outlier-40x32",
+      "label": "The clean walk with one frame held four times as long as the rest",
+      "tier": "synthetic",
+      "provenance": "generated",
+      "defects": [
+        {
+          "kind": "timing-outlier",
+          "note": "Severity 0.35, **not** blocking. §4.6's `any duration > 3 * the median duration`, and the near-miss is the same drawing at 300ms: `300 > 300` is false, so a frame held exactly three times the median is deliberate timing rather than a stutter. Every other reading on this case is the clean control's, unchanged — same pixels, same churn, same seam — which is what makes it a timing case and not a movement one. This is also the case that needed the `durations` recipe op: `createSprite`'s default is a uniform 100ms on every frame, so a corpus that could only draw pixels could produce an animation that is perfectly timed and never one that is not."
+        }
+      ],
+      "recipe": {
+        "canvas": {
+          "w": 40,
+          "h": 32
+        },
+        "layers": [
+          "Base"
+        ],
+        "palette": [
+          "#3a2f2a",
+          "#e8d9a0"
+        ],
+        "ops": [
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 0,
+            "rect": [
+              4,
+              8,
+              20,
+              12
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 0,
+            "rect": [
+              4,
+              8,
+              20,
+              6
+            ],
+            "color": "pal:1",
+            "fill": true
+          },
+          {
+            "op": "duplicateFrame",
+            "count": 5
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 1,
+            "dx": 4,
+            "dy": 0
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 2,
+            "dx": 8,
+            "dy": 0
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 3,
+            "dx": 12,
+            "dy": 0
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 4,
+            "dx": 8,
+            "dy": 0
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 5,
+            "dx": 4,
+            "dy": 0
+          },
+          {
+            "op": "durations",
+            "ms": [
+              100,
+              100,
+              400,
+              100,
+              100,
+              100
+            ]
+          },
+          {
+            "op": "tag",
+            "name": "walk",
+            "from": 0,
+            "to": 5
+          }
+        ]
+      },
+      "expect": {
+        "codes": [
+          "timing-outlier"
+        ],
+        "absent": [
+          "loop-seam-pop",
+          "loop-seam-jump",
+          "frame-jitter",
+          "silhouette-instability",
+          "timing-mismatch",
+          "loop-duration-out-of-range"
+        ],
+        "preconditions": {
+          "silhouette": null,
+          "outline": "no-outline",
+          "motion": null
+        },
+        "connectivity": {
+          "four": 1,
+          "eight": 1
+        },
+        "measure": {
+          "N": [
+            240,
+            240,
+            240,
+            240,
+            240,
+            240
+          ],
+          "components": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "perimeter": [
+            64,
+            64,
+            64,
+            64,
+            64,
+            64            ],
+          "holeCount": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "pair": [
+        "motion/timing"
+      ]
+    },
+    {
+      "id": "motion/loop-duration-out-of-range-40x32",
+      "label": "The clean walk held at 12ms a frame: a 72ms cycle, under §4.6's 80ms floor",
+      "tier": "synthetic",
+      "provenance": "generated",
+      "defects": [
+        {
+          "kind": "loop-duration-out-of-range",
+          "note": "Severity 0.30, **not** blocking. §4.6's `loopMs < 80 or loopMs > 1200`, read on `6 * 12 = 72`. The near-miss is the same drawing at 14ms a frame: 84ms is inside the window, so the window has two sides and the other one is 1200ms, not 0. Nothing else about this case differs from `motion/clean-walk-40x32` — the pixels are the same and the churn is the same — so the report on the two differs by exactly this one code, which is the only evidence that the row reads timing and not movement."
+        }
+      ],
+      "recipe": {
+        "canvas": {
+          "w": 40,
+          "h": 32
+        },
+        "layers": [
+          "Base"
+        ],
+        "palette": [
+          "#3a2f2a",
+          "#e8d9a0"
+        ],
+        "ops": [
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 0,
+            "rect": [
+              4,
+              8,
+              20,
+              12
+            ],
+            "color": "pal:0",
+            "fill": true
+          },
+          {
+            "op": "rect",
+            "layer": "Base",
+            "frame": 0,
+            "rect": [
+              4,
+              8,
+              20,
+              6
+            ],
+            "color": "pal:1",
+            "fill": true
+          },
+          {
+            "op": "duplicateFrame",
+            "count": 5
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 1,
+            "dx": 4,
+            "dy": 0
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 2,
+            "dx": 8,
+            "dy": 0
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 3,
+            "dx": 12,
+            "dy": 0
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 4,
+            "dx": 8,
+            "dy": 0
+          },
+          {
+            "op": "translate",
+            "layer": "Base",
+            "frame": 5,
+            "dx": 4,
+            "dy": 0
+          },
+          {
+            "op": "durations",
+            "ms": [
+              12,
+              12,
+              12,
+              12,
+              12,
+              12
+            ]
+          },
+          {
+            "op": "tag",
+            "name": "walk",
+            "from": 0,
+            "to": 5
+          }
+        ]
+      },
+      "expect": {
+        "codes": [
+          "loop-duration-out-of-range"
+        ],
+        "absent": [
+          "loop-seam-pop",
+          "loop-seam-jump",
+          "frame-jitter",
+          "silhouette-instability",
+          "timing-outlier",
+          "timing-mismatch"
+        ],
+        "preconditions": {
+          "silhouette": null,
+          "outline": "no-outline",
+          "motion": null
+        },
+        "connectivity": {
+          "four": 1,
+          "eight": 1
+        },
+        "measure": {
+          "N": [
+            240,
+            240,
+            240,
+            240,
+            240,
+            240
+          ],
+          "components": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ],
+          "perimeter": [
+            64,
+            64,
+            64,
+            64,
+            64,
+            64            ],
+          "holeCount": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "pair": [
+        "motion/timing"
+      ]
+    },
+    {
       "id": "sweep/rect-30x28",
       "label": "Calibration sweep: a 30x28 rect, compactnessQ 784",
       "tier": "synthetic",

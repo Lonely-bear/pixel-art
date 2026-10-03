@@ -1340,12 +1340,20 @@ export function renderMarkdown(spec: CorpusSpec, scores: CorpusScores, rows: rea
   /* --- motion --- */
   out.push('## 2c · `motion`, and the seam it exists to catch', '');
   out.push(
-    '**Two cases in this corpus have a sequence `motion` can measure**, and they are the only rows ' +
-      'in this section. Every still sprite in the rest of the corpus is the aggregator\'s ' +
-      '`single-frame` exclusion and `motion/frames-identical-16` is `no-motion-content`, so neither ' +
-      'appears here at all: a dimension excluded for applicability contributes no row rather than a ' +
-      'row of zeros, because §4.6\'s own argument is that a degenerate sequence measures as a ' +
-      '*perfect* animation and must never be handed a number.',
+    '**' +
+      rows.filter(
+        (row): row is CorpusRow & { readonly motion: MotionReading } =>
+          row.tier !== 'human' && row.motion !== null,
+      ).length +
+      ' cases in this corpus have a sequence `motion` can measure**, and they are the only rows in ' +
+      'this section. Every still sprite in the rest of the corpus is the aggregator\'s `single-frame` ' +
+      'exclusion and `motion/frames-identical-16` is `no-motion-content`, so neither appears here at ' +
+      'all: a dimension excluded for applicability contributes no row rather than a row of zeros, ' +
+      'because §4.6\'s own argument is that a degenerate sequence measures as a *perfect* animation ' +
+      'and must never be handed a number. **Until T-105 there were two such rows and neither of them ' +
+      'was a declared-clean multi-frame subject**, which is why this dimension\'s distribution had ' +
+      '`n = 2` and no negative control to read — a firing case with nothing beside it is not ' +
+      'evidence that a gate is right, only evidence that it can fire.',
     '',
     '`churn` is listed per transition with the seam last, so the ratio can be checked by hand: ' +
       '`churnMed` is the lower median of the internal entries only, and the seam is `churn[n-1]`. ' +

@@ -282,11 +282,13 @@ describe('the corpus is a regression guard, not a report', () => {
     // hand. A new dimension should add a case *and* a row here in the same commit, and the
     // companion test below is what notices when only one of the two happened.
     //
-    // **Was 14, `noise` made it 16, `palette` made it 25, and every rename is the finding rather than
-    // a chore.** `defect/stray-colour-16` and `defect/near-duplicate-ramp-16` were `noise`'s first
-    // two cases ever; `palette` arrived with **six** codes and **none** of them on this list, which is
-    // precisely the situation the paragraph above warns about, and nine cases later it has one case
-    // per code. Six of those nine are the isolating shapes in `quality-palette.test.ts` brought to
+    // **Was 14, `noise` made it 16, `palette` made it 25, `motion` made it 31, and every rename is
+    // the finding rather than a chore.** `defect/stray-colour-16` and `defect/near-duplicate-ramp-16`
+    // were `noise`'s first two cases ever; `palette` arrived with **six** codes and **none** of them
+    // on this list, which is precisely the situation the paragraph above warns about, and nine cases
+    // later it has one case per code. `motion` arrived in the same shape — seven §4.6 codes and one
+    // case between them — and T-105 closed it with six more plus the clean multi-frame control.
+    // Six of those nine are the isolating shapes in `quality-palette.test.ts` brought to
     // the corpus, and three are negative controls for `hue-sprawl`, `grey-colours` and
     // `colour-budget-exceeded` that pin the *other* side of each gate.
     expect([...emitted].sort()).toEqual([
@@ -296,6 +298,7 @@ describe('the corpus is a regression guard, not a report', () => {
       'empty-frame',
       'flat-value',
       'fragmented-silhouette',
+      'frame-jitter',
       'frames-identical',
       'grey-colours',
       'highlight-blown',
@@ -304,6 +307,9 @@ describe('the corpus is a regression guard, not a report', () => {
       'interior-hole',
       'invented-colours',
       'isolated-pixels',
+      'loop-duration-out-of-range',
+      'loop-seam-jump',
+      'loop-seam-pop',
       'muddy-mix',
       'narrow-value-range',
       'near-duplicate-colours',
@@ -316,6 +322,8 @@ describe('the corpus is a regression guard, not a report', () => {
       'stray-colour',
       'subject-undersized',
       'thin-profile',
+      'timing-mismatch',
+      'timing-outlier',
     ]);
   });
 });
@@ -822,9 +830,17 @@ describe('thicknessQ separates what compactnessQ cannot, and says what it cannot
     // *precise* value of `thicknessQ`'s gate does not matter and the decision is only "inside or
     // outside that window". That is a much smaller decision than picking a number, and it is
     // only visible because the distribution exists.
+    //
+    // **The 300 column moved from 17 to 55 and the dead zone did not move with it**, which is the
+    // finding T-105's seven cases produce rather than a threshold change. Every new subject is a
+    // 20x12 body on a 32px-or-taller canvas, so `thicknessQ` is `rhu(1000 * 12, min(W, H))` — 375
+    // at 32², 300 at 40², 240 at 50² — and the three of them land either side of the 300 candidate.
+    // That is the dead zone doing its job on new data: a decision about *where* the gate sits is
+    // now visibly a decision about canvas size, which is the thing §3.7's per-mille unit was
+    // supposed to make scale-free and does not make a fixed `min(W, H)` denominator.
     const counts = DISTRIBUTION.thickness.sensitivity.map((entry) => entry.penalised);
     expect(DISTRIBUTION.thickness.sensitivity.map((entry) => entry.gate)).toEqual([200, 250, 300, 400]);
-    expect(counts).toEqual([7, 7, 7, 17]);
+    expect(counts).toEqual([7, 7, 7, 55]);
     // Monotone, like the compactness table.
     expect(counts).toEqual([...counts].sort((a, b) => a - b));
     // And the seven are named, so a reader can see that five of them are the degenerate
@@ -892,11 +908,28 @@ describe('multi-frame: the worst frame wins, and a degenerate sequence is exclud
   });
 
   it('re-derives every `motion` exclusion from the corpus rather than from the committed table', () => {
-    // `expect.preconditions.motion` is declared on all 76 buildable cases, so a gate that stopped
+    // `expect.preconditions.motion` is declared on all 83 buildable cases, so a gate that stopped
     // firing in either direction — a still sprite measured, or an animation declined — is a failing
-    // case rather than a row that quietly reads differently.
+    // case rather than a row that quietly reads differently. **76 was the count before T-105 and 83
+    // is the count after it**, which is the seven `motion` cases this batch added and nothing else;
+    // the other four failures above are the dimensions' own corpus, not this one.
     const declared = SPEC.cases.filter((entry) => entry.tier !== 'human');
-    expect(declared.length).toBe(76);
+    expect(declared.length).toBe(83);
+    // And the split is the whole point of §4.6's applicability: stills are declined, and exactly
+    // the sequences with ink are measured. Nine of the eighty-three now carry a measurable
+    // sequence, and one of those nine is a declared-clean control.
+    const measured = declared.filter((entry) => row(entry.id).preconditions.motion === null);
+    expect(measured.map((entry) => entry.id)).toEqual([
+      'motion/worst-frame-wins-16',
+      'motion/blank-frame-16',
+      'motion/clean-walk-40x32',
+      'motion/loop-seam-jump-40x32',
+      'motion/frame-jitter-40x40',
+      'motion/loop-seam-pop-32x32',
+      'motion/timing-mismatch-32x32',
+      'motion/timing-outlier-40x32',
+      'motion/loop-duration-out-of-range-40x32',
+    ]);
     for (const entry of declared) {
       expect(row(entry.id).preconditions.motion, entry.id).not.toBeUndefined();
     }
@@ -1261,13 +1294,13 @@ describe("this repository's own artwork, which is real and unlabelled", () => {
     // predicate and the wiring are checked from two directions.
     //
     // Four properties, all of which have to hold together for the abstention to mean anything:
-    //   1. it fires — 55 of the corpus's 79 cases declare no contour and say so;
+    //   1. it fires — 62 of the corpus's 86 cases declare no contour and say so;
     //   2. it is not `no-subject` — a different claim about a different thing (§4.5's own two
     //      exclusions must not be conflated, which is T-099's lesson in a new dimension);
     //   3. it emits **nothing** — no code, no severity, no score, and the weight renormalises away;
     //   4. `outline-missing` no longer exists as a code anywhere in the report.
     const declined = RUN.rows.filter((r) => r.preconditions.outline === 'no-outline');
-    expect(declined.length).toBe(55);
+    expect(declined.length).toBe(62);
 
     // (2) Every one of them HAS a readable subject. This is the assertion that keeps the two
     // exclusions apart, and it is cheap to state and impossible to state by accident.
@@ -1280,11 +1313,11 @@ describe("this repository's own artwork, which is real and unlabelled", () => {
     // ran — and it cannot have run, because `preconditions.outline` says the gate fired.
     //
     // **The blocking assertion is scoped to outline codes and deliberately not to the whole list.**
-    // Half of these 55 cases carry a *real* blocking defect from another dimension —
+    // Half of these 62 cases carry a *real* blocking defect from another dimension —
     // `connectivity/diagonal-bridge-16` blocks on `fragmented-silhouette` and `flat-value`, and it
     // should. The claim being made is that the abstention adds nothing, which is a statement about
     // what the abstention contributed and not about whether the artwork has a problem. Asserting
-    // `blocking === []` here would have been asserting that 55 declared-defect fixtures are clean,
+    // `blocking === []` here would have been asserting that 62 declared-defect fixtures are clean,
     // which would be false and which the corpus's own `expect` block says with a reason.
     for (const r of declined) {
       expect(r.actualCodes.filter((c) => c.startsWith('outline')), r.id).toEqual([]);
@@ -2266,16 +2299,23 @@ describe('the report', () => {
     // sits on the repository's one rated artwork is a much better argument for calibrating this
     // dimension than any of the other four can make.
     expect(measured[4].median).toBe(650);
-    // **`motion` was the one dimension that did not exist, and it is the last.** Two numbers rather
-    // than seventy-six, because 73 of the 76 buildable cases are `single-frame` and
-    // `motion/frames-identical-16` is `no-motion-content`. **This is the exclusion working and it is
-    // also the reason this dimension's corpus distribution cannot be read as "does it fire on good
-    // work"** — with n = 2 there is no negative control to read, which is the gap §4.6's remaining
-    // six corpus cases would close. The two numbers are `motion/worst-frame-wins-16` at 800 (a base
-    // of 1000 less §4.6's 200 for a 169 per-mille area change) and `motion/blank-frame-16` at 1000,
-    // which is the guard holding: the blank frame contributes churn and contributes no area.
+    // **`motion` was the one dimension that did not exist, and it is the last — and it is the one
+    // whose distribution T-105 made readable.** It used to be two numbers against seventy-six
+    // buildable cases, because 73 of them are `single-frame` and `motion/frames-identical-16` is
+    // `no-motion-content`; with `n = 2` there was no negative control to read, which is a gap and not
+    // a result. It is now **nine** numbers, one per measurable sequence, and **the top of the range
+    // is a declared-clean control that moves a fifth of its own pixels on every transition**.
+    //
+    // **The median moved and that is the finding rather than a chore.** The old median sat on two
+    // rows and meant nothing; the new one is 900 because the clean control is 1000 and four of the
+    // five timed cases are a flat -100 off the same 1000 base — §4.6's timing rows are advisory and
+    // a badly-timed but well-drawn loop is otherwise a good loop, which is what the specification
+    // says and what this distribution now shows. The two blocking rows are visible at the bottom:
+    // 500 is `motion/loop-seam-pop-32x32` (base 500, no Δ) and 730 is `motion/loop-seam-jump-40x32`
+    // (base 880 less §4.6's 150).
     const motion = DISTRIBUTION.scores.find((entry) => entry.dimension === 'motion');
-    expect(motion?.values).toEqual([800, 1000]);
+    expect(motion?.values).toEqual([500, 730, 800, 850, 900, 900, 900, 1000, 1000]);
+    expect(motion?.median).toBe(900);
     expect(DISTRIBUTION.scores.filter((entry) => entry.values.length === 0)).toHaveLength(0);
   });
 });
@@ -2603,7 +2643,12 @@ describe('coverage is aimed at the failures that were found, not exhaustive', ()
     expect(sizes.size).toBeGreaterThanOrEqual(6);
     expect([...sizes].filter((s) => s.split('x')[0] !== s.split('x')[1]).length).toBeGreaterThanOrEqual(2);
     const frames = new Set(drawn.map((r) => r.attributes.frames));
-    expect([...frames].sort((a, b) => a - b)).toEqual([1, 2, 3]);
+    // **Was [1, 2, 3] and `motion` made it [1, 2, 3, 4, 6].** The 4-frame members are the two tone
+    // ladders — `loop-seam-pop` and `timing-mismatch` — which is a real limit of the recipe
+    // vocabulary rather than a preference: a `deltaSpread` of 600 needs internal `lumDelta`s at
+    // least 2.5x apart, and four frames is the fewest that can carry one large step and one small
+    // one with a quiet seam between them. The 6-frame members are the walk and its five variants.
+    expect([...frames].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 6]);
     // And the real artwork spans 32 through 1024, which is the part a generated corpus cannot fake.
     const realSizes = new Set(real().map((entry) => row(entry.id).attributes.width));
     expect([...realSizes].sort((a, b) => a - b)).toEqual([32, 64, 256, 512, 1024]);
@@ -2642,16 +2687,16 @@ describe('coverage is aimed at the failures that were found, not exhaustive', ()
     // the corpus, both are gone, and **a kind that later loses its case goes red here again** — which
     // is the property the subtraction had quietly given away.
     const declared = new Set(synthetic().flatMap((entry) => entry.defects.map((d) => d.kind)));
-    // `palette` made it 26 and `motion` makes it 27, but `motion`'s seven codes are not seven cases
-    // and this is the one place the difference is written down. `silhouette-instability` is the only
-    // one a case declares, because `motion/worst-frame-wins-16` draws a 64px block and then 54px of
-    // masses and genuinely has that defect. The other six are in §4.6's issue table, are emitted by
-    // `motion.ts`, and are covered by `quality-motion.test.ts`'s MUST FIRE / NEAR MISS pairs — and
-    // they are **owed a corpus case each**. Listing them here without one would make this assertion
-    // vacuous and the closed list a list of unimplemented features, which is the failure it exists
-    // to prevent, so they are absent rather than present-and-red.
+    // `palette` made it 26 and `motion` made it 33 — but `motion`'s seven codes were **not** seven
+    // cases, and this was the one place the difference was written down. `silhouette-instability` was
+    // the only one a case declared, because `motion/worst-frame-wins-16` draws a 64px block and then
+    // 54px of masses and genuinely has that defect; the other six were in §4.6's issue table, were
+    // emitted by `motion.ts`, and were covered by `quality-motion.test.ts`'s MUST FIRE / NEAR MISS
+    // pairs while being **owed a corpus case each**. **T-105 paid that debt**: all seven now have a
+    // case, the seven new ones are in `DEFECT_KINDS`, and this comparison has no exceptions left to
+    // make — which is the property the old `NOT_COVERED` list had quietly given away.
     expect([...declared].sort()).toEqual(DEFECT_KINDS.slice().sort());
-    expect(DEFECT_KINDS.length).toBe(27);
+    expect(DEFECT_KINDS.length).toBe(33);
     expect(DEFECT_KINDS.filter((kind) => !declared.has(kind)).sort()).toEqual([]);
     // And the gap, named rather than left to be inferred. `key-light-inconsistent` is the one
     // `value` code with no case that *declares* it, because §4.2's `keyLight` is a subject-level

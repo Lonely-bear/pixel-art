@@ -157,7 +157,29 @@ export type DefectKind =
   // frame-wins-16` is a 64px block on frame 0 and three masses totalling 54px on frame 1, which is
   // `areaSpread 169` against §4.6's 150 gate — a real area change, drawn in on purpose, and the
   // reason that case's verdict moved from `warn` to `fail` when this dimension landed.
-  | 'silhouette-instability';
+  | 'silhouette-instability'
+  // T-105: `motion`'s other six codes, one case each, and the clean multi-frame control that makes
+  // them interpretable. **All seven codes have a case now**, which is the change this batch exists to
+  // record: before it, `motion` was the only dimension in the corpus whose seven §4.6 codes had one
+  // case between them, and §4.6's severity scale is the one scale in `docs/EVALUATION.md` that a
+  // contact sheet cannot check, so a firing case with nothing to be compared against could not be
+  // read as evidence either way.
+  //
+  // **Two of these cases are also measurements about the OTHER codes NOT firing**, which is the part
+  // a single-fixture reading would miss:
+  //
+  //   - `motion/loop-seam-jump-40x32` reports `loop-seam-jump` and **not** `loop-seam-pop`, because
+  //     its seam ratio lands exactly on §4.6's inclusive `1.75` boundary (`168 * 20 === 35 * 96`).
+  //   - `motion/loop-seam-pop-32x32` reports `loop-seam-pop` and **not** `loop-seam-jump`, because
+  //     its seam is carried entirely by the tone channel on a silhouette that does not move at all.
+  //
+  // Between them they say the two rows are independent, which is not visible from either alone.
+  | 'loop-seam-pop'
+  | 'loop-seam-jump'
+  | 'frame-jitter'
+  | 'timing-outlier'
+  | 'timing-mismatch'
+  | 'loop-duration-out-of-range';
 
 /** One injected defect and why it is there. The note is the reviewer's context, not the assertion. */
 export interface CorpusDefect {
@@ -296,6 +318,16 @@ export type RecipeOp =
   /** `duplicate_frame`, so an animation is two lines rather than a frame-by-frame rewrite. */
   | { readonly op: 'duplicateFrame'; readonly frame?: number; readonly count?: number }
   | { readonly op: 'translate'; readonly layer: string; readonly frame: number; readonly dx: number; readonly dy: number }
+  /**
+   * `update_frame`, once per entry: how long each frame is held, in playback order.
+   *
+   * The one op that changes **document metadata rather than pixels**, and it exists because §4.6's
+   * three timing rows (`timing-outlier`, `timing-mismatch`, `loop-duration-out-of-range`) are
+   * unconstructible without it: `createSprite`'s default is a uniform 100ms on every frame, so a
+   * corpus drawing only pixels can produce an animation that is perfectly timed and can never
+   * produce one that is not. A timing defect that cannot be drawn is a code with no corpus case.
+   */
+  | { readonly op: 'durations'; readonly ms: readonly number[] }
   | { readonly op: 'tag'; readonly name: string; readonly from: number; readonly to: number; readonly direction?: 'forward' | 'reverse' | 'pingpong'; readonly repeat?: number }
   /** `quantize_to_palette` with `dither: 'none'`: the proof that every colour is a swatch. */
   | { readonly op: 'quantize' };
@@ -913,9 +945,19 @@ export const DEFECT_KINDS: readonly DefectKind[] = [
   'muddy-mix',
   'grey-colours',
   'invented-colours',
-  // T-017: `motion` arrives with seven codes and the corpus reaches one of them, which is recorded
-  // as a gap above rather than papered over. See the note on `DefectKind`.
+  // T-105: **all seven of `motion`'s codes now have a case, and the corpus's first clean
+  // multi-frame control.** `motion/clean-walk-40x32` is the load-bearing one: §4.6's severity scale
+  // is the only scale in the document that a contact sheet cannot check, so until this landed every
+  // other motion reading in the corpus had nothing to be compared against, and a dimension whose
+  // firing behaviour on good work has never been observed is exactly the shape of the five
+  // measurements this repository has already shipped that could not fail.
   'silhouette-instability',
+  'loop-seam-pop',
+  'loop-seam-jump',
+  'frame-jitter',
+  'timing-outlier',
+  'timing-mismatch',
+  'loop-duration-out-of-range',
 ];
 
 const MEASURED_QUANTITIES: readonly MeasuredQuantity[] = [
@@ -979,6 +1021,7 @@ const RECIPE_OPS: readonly string[] = [
   'clear',
   'duplicateFrame',
   'translate',
+  'durations',
   'tag',
   'quantize',
 ];
@@ -997,6 +1040,7 @@ const OP_KEYS: Readonly<Record<string, readonly string[]>> = {
   clear: ['layer', 'frame'],
   duplicateFrame: ['frame', 'count'],
   translate: ['layer', 'frame', 'dx', 'dy'],
+  durations: ['ms'],
   tag: ['name', 'from', 'to', 'direction', 'repeat'],
   quantize: [],
 };
@@ -1102,8 +1146,24 @@ function validateRecipe(where: string, value: unknown): Recipe {
       fail(at, `unknown op ${JSON.stringify(op)} (available: ${RECIPE_OPS.join(', ')})`);
     }
     checkKeys(at, raw, ['op', ...(OP_KEYS[op] ?? [])]);
-    if (op !== 'duplicateFrame' && op !== 'translate' && op !== 'tag' && op !== 'quantize') {
+    if (
+      op !== 'duplicateFrame' &&
+      op !== 'translate' &&
+      op !== 'durations' &&
+      op !== 'tag' &&
+      op !== 'quantize'
+    ) {
       requireString(at, raw, 'layer');
+    }
+    if (op === 'durations') {
+      if (!Array.isArray(raw.ms) || raw.ms.length === 0) {
+        fail(at, '"durations" needs a non-empty array of milliseconds, one per frame in playback order');
+      }
+      for (const ms of raw.ms as unknown[]) {
+        if (typeof ms !== 'number' || !Number.isInteger(ms) || ms < 1) {
+          fail(at, `a duration must be an integer of at least 1ms (got ${JSON.stringify(ms)})`);
+        }
+      }
     }
     if (op === 'rect' || op === 'ellipse' || op === 'erase') requireRect(`${at}.rect`, raw.rect);
     if (op === 'polygon' || op === 'polyline' || op === 'pixels') {

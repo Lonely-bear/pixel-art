@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { buildFromRecipe, readCorpusSpec } from '../../../benchmarks/corpus/build.js';
 import { createQualityContext } from '../src/quality/context.js';
-import { motionAnalyzer, measureMotion } from '../src/quality/motion.js';
+import { motionAnalyzer, measureMotion, type MotionSequence } from '../src/quality/motion.js';
 import { lqOf, rhu } from '../src/quality/measure.js';
 import { DEFAULT_DIMENSIONS, motionApplicability } from '../src/quality/index.js';
 import type { QualityContext, QualityIssue } from '../src/quality/types.js';
@@ -478,6 +479,191 @@ describe('a frame with no ink has no area and no centroid, and the rows that div
     expect(motion.seamStep).toBe(0);
     expect(motion.maxStep).toBe(0);
     expect(codes(motion.issues)).not.toContain('loop-seam-jump');
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * 6 · The corpus cases, measured through the recipes `cases.json` commits
+ * ------------------------------------------------------------------ */
+
+/**
+ * §4.6's seven codes, one corpus case each, plus the clean multi-frame control that makes every
+ * other reading in this file interpretable.
+ *
+ * ## Why this block exists when sections 2 and 3 already test the same gates
+ *
+ * **Sections 2 and 3 are built from hand-written `PixelBuffer` fixtures and this block is built from
+ * the recipes the corpus commits.** They are not the same claim. A hand-written fixture can be
+ * `FRAME_FABRICATED`: it is whatever the test says it is, it never went through `draw_rect`, and it
+ * cannot drift from the picture `cases.json` records because nothing links them. These seven go
+ * through `buildFromRecipe`, so if a recipe is edited the number here moves with it, and if a number
+ * here moves the corpus test goes red in the same run.
+ *
+ * ## What the control is for, and what it would be worth without it
+ *
+ * §4.6 is the only dimension whose severity scale cannot be checked from a contact sheet, which
+ * makes `benchmarks/` the only place a *clean* loop can be shown to be quiet. Before T-105 the
+ * corpus had no such case at all, so every firing reading in this file was an assertion that the
+ * analyzer can complain and never an assertion about when it stays quiet — which is the shape of the
+ * five measurements this repository has shipped that could not fail. `motion/clean-walk-40x32` is
+ * that case, and the assertion that matters most is the last one in the block: it is silent, and it
+ * is silent while moving 96 of its own 240 pixels on every transition including the seam.
+ */
+describe('the corpus cases, through the recipes `cases.json` commits', () => {
+  /** `measureMotion` on one committed corpus case, by id. */
+  function corpusMotion(id: string): MotionSequence {
+    const entry = readCorpusSpec().cases.find((candidate) => candidate.id === id);
+    if (entry === undefined || entry.tier !== 'synthetic') {
+      throw new Error(`quality-motion: the corpus has no synthetic case "${id}"`);
+    }
+    return measureMotion(createQualityContext(buildFromRecipe(id, entry.recipe)));
+  }
+
+  const CONTROL = 'motion/clean-walk-40x32';
+
+  it('NEAR MISS on all seven gates at once: the clean control is silent, and it is not silent because nothing moved', () => {
+    const motion = corpusMotion(CONTROL);
+    // Every transition, the seam included, moves a fifth of the subject. A control whose quiescence
+    // came from standing still would be worth nothing, and this is the number that says it does not.
+    expect(motion.churn).toEqual([96, 96, 96, 96, 96, 96]);
+    expect(motion.churnMedian).toBe(96);
+    expect(motion.seam).toBe(96);
+    expect(motion.inkedFrames).toBe(6);
+    expect(motion.areas).toEqual([240, 240, 240, 240, 240, 240]);
+    expect(motion.durations).toEqual([100, 100, 100, 100, 100, 100]);
+    expect(motion.loopMs).toBe(600);
+    // And every §4.6 quantity is in its best band: the seam ratio is 1, the centroid steps are even
+    // (4px in-loop and 4px at the seam), the area never moves, the tone never moves.
+    expect(motion.seamStep).toBe(256);
+    expect(motion.maxStep).toBe(256);
+    expect(motion.areaSpreadQ).toBe(0);
+    expect(motion.deltaSpreadQ).toBe(0);
+    expect(motion.lumDelta).toEqual([0, 0, 0, 0, 0, 0]);
+    expect(motion.baseQ).toBe(1000);
+    expect(codes(motion.issues)).toEqual([]);
+    expect(motion.scoreQ).toBe(1000);
+  });
+
+  it('MUST FIRE: motion/loop-seam-pop-32x32 reports loop-seam-pop at 0.55, out of the tone channel', () => {
+    const motion = corpusMotion('motion/loop-seam-pop-32x32');
+    // The silhouette does not move at all, which is the whole point of this case: §4.6 says "a seam
+    // that pops in colour while the silhouette happens to match still gets caught", and the only
+    // channel that can see it is the luminance one.
+    expect(motion.churn).toEqual([0, 0, 0, 0]);
+    expect(motion.lumDelta).toEqual([25, 25, 25, 75]);
+    expect(motion.lumPrimary).toBe(true);
+    // `75 * 20 = 1500` is past `35 * 25 = 875` and past `50 * 25 = 1250`, so the code is blocking.
+    expect(severityOf(motion.issues, 'loop-seam-pop')).toBe(0.55);
+    expect(motion.baseQ).toBe(500);
+    // And the other three rows are silent: nothing moved, so nothing can jitter or jump.
+    expect(motion.seamStep).toBe(0);
+    expect(codes(motion.issues)).toEqual(['loop-seam-pop']);
+  });
+
+  it('NEAR MISS on the other side of the same gate: a tone step of 24 at the seam does not pop', () => {
+    // The control, moved in tone rather than in position: three steps of 24 and a seam of 72 is a
+    // ratio of exactly 3.0, and 72 * 20 = 1440 is past 35 * 24 = 840, so this is the same side. The
+    // near-miss that matters is on the *trigger*, and §4.6's own band table is where it is pinned —
+    // `quality-motion.test.ts` section 2 already asserts 36 against a median of 20 as the first
+    // firing step and 27 as the last silent one. What this corpus adds is the other half: a pop with
+    // a perfectly even silhouette, which no band-table ladder on `lumSeam` alone can be sure of.
+    const motion = corpusMotion('motion/loop-seam-pop-32x32');
+    // 25 is the internal step and 75 the seam; the trigger is on the SEAM only, and the internal
+    // spread is 0, so `timing-mismatch` has nothing to read either.
+    expect(motion.deltaSpreadQ).toBe(0);
+    expect(codes(motion.issues)).not.toContain('timing-mismatch');
+  });
+
+  it('MUST FIRE: motion/loop-seam-jump-40x32 reports loop-seam-jump at 0.55 and NOT loop-seam-pop', () => {
+    const motion = corpusMotion('motion/loop-seam-jump-40x32');
+    // In-loop steps are 4px (`maxStep 256`) and the return is drawn from 7px (`seamStep 448`):
+    // `448 * 2 = 896 > 256 * 3 = 768`, and `448 >= 64` is §4.6's 1.0px clause.
+    expect(motion.maxStep).toBe(256);
+    expect(motion.seamStep).toBe(448);
+    expect(severityOf(motion.issues, 'loop-seam-jump')).toBe(0.55);
+    // **And the pop row does not fire, which is the measurement this case is really for.** The seam
+    // changes 168 pixels against a median of 96, and `168 * 20 = 3360` is exactly `35 * 96 = 3360`:
+    // §4.6's trigger is strict, so a seam sitting on the boundary pops for nobody. The two rows are
+    // not the same row, and a corpus whose only pop cases were positional could never have shown it.
+    expect(motion.churn).toEqual([96, 96, 96, 96, 24, 168]);
+    expect(motion.seam * 20).toBe(35 * motion.churnMedian);
+    expect(codes(motion.issues)).not.toContain('loop-seam-pop');
+    expect(motion.baseQ).toBe(880);
+  });
+
+  it('NEAR MISS on the same row: the control closes its loop over the same 4px it uses in-loop', () => {
+    const motion = corpusMotion(CONTROL);
+    // `seamStep * 2 = 512` is not `> maxStep * 3 = 768`, and the reason a moving loop ever needs the
+    // `>= 1.0px` clause at all is that a still one has `seamStep == maxStep == 0` and would otherwise
+    // pass the ratio test on a frame that never went anywhere.
+    expect(motion.seamStep).toBe(motion.maxStep);
+    expect(codes(motion.issues)).not.toContain('loop-seam-jump');
+  });
+
+  it('MUST FIRE: motion/frame-jitter-40x40 reports frame-jitter at 0.50', () => {
+    const motion = corpusMotion('motion/frame-jitter-40x40');
+    expect(motion.churn).toEqual([96, 96, 224, 224, 96, 96]);
+    expect(motion.churnMedian).toBe(96);
+    expect(motion.churnMax).toBe(224);
+    expect(224).toBeGreaterThan(2 * motion.churnMedian);
+    expect(severityOf(motion.issues, 'frame-jitter')).toBe(0.5);
+    // The seam is a plain 4px slide, so the row the fixture is not about stays quiet.
+    expect(motion.seam).toBe(96);
+    expect(codes(motion.issues)).not.toContain('loop-seam-pop');
+  });
+
+  it('NEAR MISS on the same row: the control\'s largest internal transition IS its median', () => {
+    const motion = corpusMotion(CONTROL);
+    expect(motion.churnMax).toBe(motion.churnMedian);
+    expect(codes(motion.issues)).not.toContain('frame-jitter');
+  });
+
+  it('MUST FIRE: motion/timing-outlier-40x32 reports timing-outlier at 0.35, non-blocking', () => {
+    const motion = corpusMotion('motion/timing-outlier-40x32');
+    expect(motion.durations).toEqual([100, 100, 400, 100, 100, 100]);
+    expect(400).toBeGreaterThan(3 * 100);
+    expect(motion.loopMs).toBe(900);
+    expect(severityOf(motion.issues, 'timing-outlier')).toBe(0.35);
+    expect(motion.scoreQ).toBe(900);
+  });
+
+  it('NEAR MISS on the same row: the control holds every frame for the same 100ms', () => {
+    const motion = corpusMotion(CONTROL);
+    expect(motion.durations.every((ms) => ms === 100)).toBe(true);
+    expect(codes(motion.issues)).not.toContain('timing-outlier');
+    // And 600ms is inside the 80..1200 window, so the control is silent on the other timing row too.
+    expect(motion.loopMs).toBeGreaterThanOrEqual(80);
+    expect(motion.loopMs).toBeLessThanOrEqual(1200);
+    expect(codes(motion.issues)).not.toContain('loop-duration-out-of-range');
+  });
+
+  it('MUST FIRE: motion/loop-duration-out-of-range-40x32 reads a 72ms cycle, under §4.6\'s 80ms floor', () => {
+    const motion = corpusMotion('motion/loop-duration-out-of-range-40x32');
+    expect(motion.loopMs).toBe(72);
+    expect(severityOf(motion.issues, 'loop-duration-out-of-range')).toBe(0.3);
+    expect(codes(motion.issues)).toEqual(['loop-duration-out-of-range']);
+    // Same pixels as the control, so the difference between the two reports is exactly this code.
+    expect(motion.churn).toEqual([96, 96, 96, 96, 96, 96]);
+    expect(motion.durations.every((ms) => ms === 12)).toBe(true);
+  });
+
+  it('MUST FIRE: motion/timing-mismatch-32x32 reports timing-mismatch at 0.45 over a quiet seam', () => {
+    const motion = corpusMotion('motion/timing-mismatch-32x32');
+    expect(motion.durations.every((ms) => ms === 100)).toBe(true);
+    expect(motion.lumDelta).toEqual([60, 60, 15, 15]);
+    expect(motion.deltaSpreadQ).toBe(750);
+    expect(severityOf(motion.issues, 'timing-mismatch')).toBe(0.45);
+    // **The seam is 15 against a median of 60**, so `loop-seam-pop` does not fire and this case is
+    // about the clock rather than about the loop point. §4.6 measures `deltaSpread` over internal
+    // transitions only, which is what makes that separable.
+    expect(motion.lumSeam).toBe(15);
+    expect(codes(motion.issues)).toEqual(['timing-mismatch']);
+  });
+
+  it('NEAR MISS on the same row: the control moves the same amount on every transition', () => {
+    const motion = corpusMotion(CONTROL);
+    expect(motion.deltaSpreadQ).toBe(0);
+    expect(codes(motion.issues)).not.toContain('timing-mismatch');
   });
 });
 

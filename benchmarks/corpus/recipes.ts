@@ -87,6 +87,15 @@ export function applyOp(editor: Editor, op: RecipeOp, index: number): void {
     });
     return;
   }
+  if (op.op === 'durations') {
+    // One `update_frame` per entry rather than `set_frame_durations`: a per-frame list is already
+    // resolved, and `set_frame_durations` takes selectors whose overlap rules ("later updates win")
+    // are a second vocabulary this corpus would then have to teach a reader.
+    op.ms.forEach((durationMs, index) => {
+      step(editor, index, op.op, 'update_frame', { frame: index, durationMs });
+    });
+    return;
+  }
   if (op.op === 'tag') {
     step(editor, index, op.op, 'add_tag', {
       name: op.name,
