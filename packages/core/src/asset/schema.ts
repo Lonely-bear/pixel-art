@@ -281,8 +281,8 @@ export const assetMetaSchema = z
                 index: z.number().int().min(0).describe('Derived: which timeline frame this cell holds; always equal to its own position in the array.'),
                 x: z.number().int().min(0).describe('Left edge of the cell in the sheet, in sheet pixels.'),
                 y: z.number().int().min(0).describe('Top edge of the cell in the sheet, in sheet pixels.'),
-                width: z.number().int().min(1).describe('Derived: cell width; equals rames.size.width * sheet.scale.'),
-                height: z.number().int().min(1).describe('Derived: cell height; equals rames.size.height * sheet.scale.'),
+                width: z.number().int().min(1).describe('Derived: cell width; equals ${frames.size.width} * sheet.scale.'),
+                height: z.number().int().min(1).describe('Derived: cell height; equals ${frames.size.height} * sheet.scale.'),
               })
               .strict(),
           )

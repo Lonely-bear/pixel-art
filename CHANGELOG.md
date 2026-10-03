@@ -9,10 +9,18 @@ All notable changes to dotloom-mcp are documented in this file.
 ## [Unreleased]
 ### Added
 
+- **Four more recipes, and a way to read one.** `topdown-rpg`, `dungeon-tileset`, `ui-icons`
+  and `item-icons` join `platformer` in `recipes/`, each a full brief rather than a stub:
+  canvas sizes with what each buys, palette ramps and a colour budget the ramps can reach,
+  a layer stack, tone planes against one light, production order, ten mistakes with an action
+  for each, and read-only checks. A recipe lands as a file — there is no registry to edit.
+  `describe_recipe` serves them (no `id` lists the catalogue), and `pixel://recipes` and
+  `pixel://recipe/{id}` serve the same bytes without a tool call.
+
 - **The judgement layer is reachable.** Four of six quality dimensions are registered (silhouette,
   value, palette, noise) and all four are now usable: an evaluate command, an evaluate MCP tool, a
-  pixel://quality/{doc} resource, and a quality gate on inalize_document that refuses a failing
-  asset and leaves a notice when it is bypassed. A ix command turns issues into executable ops where
+  pixel://quality/{doc} resource, and a quality gate on finalize_document that refuses a failing
+  asset and leaves a notice when it is bypassed. A fix command turns issues into executable ops where
   a safe repair exists, and into prose where one does not.
 - **palette is the fourth dimension.** Colour discipline over the composite. Two known false
   positives are recorded rather than loosened, because their remedies are upstream: quantize before
@@ -232,12 +240,6 @@ All notable changes to dotloom-mcp are documented in this file.
 - **Two OpenCode claims that could not be verified have been removed rather than hedged** — the
   non-interactive `opencode mcp add <name> -- <cmd>` form, and the `/mcps` slash command.
 - **Four committed scenes have no judged plane because their tone field is dithered, and the gate that
-  was supposed to be at fault is not.** The `reachQ` gate closes the last of the full-bleed scenes and## [0.4.2] - 2026-09-27
-- **The desktop app can import `.aseprite` files again.** The file dialog accepted PNGs
-  only, so an Aseprite file could not be picked at all - the feature the MCP tool and the
-  `pixel import` command already supported. The dialog now offers `png`, `aseprite` and
-  `ase`, and the file is told apart by its header, exactly as the CLI does: an Aseprite
-  file arrives with its layers, frames, durations and tags intact.
   was supposed to be at fault is not.** The `reachQ` gate closes the last of the full-bleed scenes and
   reads its denominator as the subject's bounding box, which on a full-bleed document is the whole canvas
   — so a plane has to span half the picture to be judged. That is the same shape of error the previous two
