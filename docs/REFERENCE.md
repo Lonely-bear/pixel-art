@@ -82,6 +82,7 @@ node packages/cli/dist/index.js commands --plugin stripe.js                # ext
 node packages/cli/dist/index.js thumb hero.pixel --out thumb.png --max 128
 node packages/cli/dist/index.js pixels hero.pixel --rect 0,0,16,16
 node packages/cli/dist/index.js commands --json                            # every command + its JSON Schema
+node packages/cli/dist/index.js contract hero.pixel --out bundle/hero-idle.meta.json --engine godot
 ```
 
 `apply`/`pipeline` take a JSON list of commands, which is the same payload an agent will

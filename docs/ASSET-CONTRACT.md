@@ -12,12 +12,15 @@
 > run, the machine and the person who made it.
 >
 > **How it gets written.** `{type: "meta", path}` in `finalize_document`'s `outputs`, or
-> `{type: "engine", engine, path}` to write it together with one engine's files. Both are
+> `{type: "engine", engine, path}` to write it together with one engine's files; or
+> `pixel contract <file.pixel> --out <meta.json> [--engine <name>]` at a shell. All three are
 > **opt-in**: this file is not produced beside every export, because a target engine is the
 > caller's choice and a tool cannot know it, and because writing engine files into everyone's
 > existing bundles would break the byte-identical expectations those outputs already carry. See
-> `IMPORTERS.md`. `license` is the one block the tool surface does not carry — it is a
-> declaration the document model cannot hold, and it is never invented.
+> `IMPORTERS.md`. `license` is the one block the MCP tool surface does not carry — it is a
+> declaration the document model cannot hold, and it is never invented. The CLI carries it
+> as `--license <spdx>`, because a flag costs nothing per request and a shell caller is the one
+> place a licence is plausibly being declared; it is still never inferred from the document.
 
 A PNG dropped into a Godot project, a Unity package or a Phaser build is a file with no idea
 what frame it is. Every serious engine needs the same six facts - how big a frame is, how

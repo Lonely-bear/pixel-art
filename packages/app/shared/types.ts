@@ -268,6 +268,10 @@ export const CHANNELS = {
   exportSheet: 'pixel:export-sheet',
   exportGif: 'pixel:export-gif',
   exportTiled: 'pixel:export-tiled',
+  /** The engine-agnostic `meta.json` asset contract. */
+  exportMeta: 'pixel:export-meta',
+  /** The asset contract plus one engine importer's files. */
+  exportEngine: 'pixel:export-engine',
   tilesetInfo: 'pixel:tileset-info',
   tilemapData: 'pixel:tilemap-data',
   animationSequence: 'pixel:animation-sequence',
@@ -321,6 +325,92 @@ export interface ExportResult {
   tiles?: number;
   /** Tilemap layer names, for a Tiled export. */
   layers?: string[];
+}
+
+/** The four engine importers, as a closed set. */
+export const ASSET_ENGINES = ['godot', 'unity', 'phaser', 'excalidraw'] as const;
+
+export type AssetEngine = (typeof ASSET_ENGINES)[number];
+
+export function isAssetEngine(value: unknown): value is AssetEngine {
+  return typeof value === 'string' && (ASSET_ENGINES as readonly string[]).includes(value);
+}
+
+/**
+ * One naming diagnostic, flattened for the renderer.
+ *
+ * Structurally identical to `AssetNamingDiagnostic` in `@pixel/core`, restated
+ * so this file stays free of a dependency both tsconfigs would have to resolve.
+ * `error` refuses the bundle; `warning` is reported and written. There is
+ * deliberately no score anywhere near this — see AGENTS.md, "Do not show an
+ * agent a number to optimise".
+ */
+export interface AssetNamingFinding {
+  code: string;
+  severity: 'error' | 'warning';
+  /** Dotted path into the contract, or `''` for the file as a whole. */
+  path: string;
+  message: string;
+  value: string;
+}
+
+/** Files written, importer losses and naming diagnostics: everything a panel renders. */
+export interface AssetEngineSummary {
+  engine: AssetEngine;
+  /** Folder the engine files landed in, relative to the contract. */
+  root: string;
+  files: string[];
+  /** What this mapping could not carry across. Stated, never hidden. */
+  warnings: string[];
+}
+
+/**
+ * The closed set of bundle-output roles, as the contract's validator admits them.
+ *
+ * `sheet` is in the enum and rejected by the validator with its own
+ * `reserved-output-role` diagnostic, because "expected one of these six" does not
+ * say why. Restated here rather than imported from `@pixel/core`: this file has to
+ * typecheck under both tsconfigs with no engine dependency.
+ */
+export type AssetOutputRole =
+  | 'source'
+  | 'frame'
+  | 'sheet-json'
+  | 'gif'
+  | 'contact-sheet'
+  | 'sheet';
+
+export interface AssetExportRequest {
+  /**
+   * Bundle-relative name for the sheet PNG, or omit for no sheet.
+   *
+   * The sheet is packed main-side rather than left to the panel, because the
+   * contract's `sheet.regions` has to describe the pixels that actually land on
+   * disk.
+   */
+  sheet?: { image: string; columns?: number; padding?: number; margin?: number; scale?: number };
+  /** Override the importer's suggested root. Defaults to `<asset.name>/`. */
+  directory?: string;
+  /** Which way each frame faces, in timeline order. Never guessed. */
+  directions?: (string | null)[];
+  /** Other files in the bundle, for the contract's `outputs` list. */
+  outputs?: { path: string; role: AssetOutputRole }[];
+}
+
+export interface AssetExportResult {
+  /** False on refusal, and then **no file was created or overwritten**. */
+  written: boolean;
+  /** Absolute path of `meta.json`, when it was written. */
+  metaPath?: string;
+  /** `sha256:` identity of the asset. Change detection, not a verdict. */
+  contentHash?: string;
+  schemaVersion?: number;
+  /** Files written, relative to the contract's folder, forward slashes. */
+  files: string[];
+  naming: { ok: boolean; diagnostics: AssetNamingFinding[] };
+  engine?: AssetEngineSummary;
+  /** Why nothing was written, in one sentence, when `written` is false. */
+  refusal?: string;
 }
 
 /**
@@ -401,6 +491,25 @@ export interface PixelApi {
   exportSheet(id: string | undefined, options: Record<string, unknown>): Promise<ExportResult | null>;
   exportGif(id: string | undefined, options: Record<string, unknown>): Promise<ExportResult | null>;
   exportTiled(id: string | undefined, options: Record<string, unknown>): Promise<ExportResult | null>;
+  /**
+   * Write `meta.json`, the engine-agnostic asset contract.
+   *
+   * A naming **error** refuses the whole call and writes nothing, matching
+   * `finalize_document`. The dialog is main-side; this only receives the options
+   * and gets the whole report back, diagnostics included.
+   */
+  exportMeta(id: string | undefined, options: AssetExportRequest): Promise<AssetExportResult | null>;
+  /**
+   * Write `meta.json` *and* one engine importer's files beside it.
+   *
+   * The contract always comes along: every importer reads one, and a caller
+   * holding only `.tres` files has got nothing they can re-derive.
+   */
+  exportEngine(
+    id: string | undefined,
+    engine: AssetEngine,
+    options: AssetExportRequest,
+  ): Promise<AssetExportResult | null>;
   tilesetInfo(id: string | undefined): Promise<TilesetInfo | null>;
   tilemapData(id: string | undefined, tilemap: string | number): Promise<TilemapInfo | null>;
   animationSequence(id: string | undefined, tag?: string | number): Promise<AnimationSequenceInfo>;

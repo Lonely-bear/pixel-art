@@ -24,7 +24,7 @@ import {
   toAsepriteJson,
   toTiledJson,
 } from '@pixel/core';
-import { CHANNELS, isAppLocale, type AppLocale, type DocumentSummary, type PreviewRequest, type UpdateSettings } from '../shared/types.js';
+import { CHANNELS, isAppLocale, type AppLocale, type AssetExportRequest, type DocumentSummary, type PreviewRequest, type UpdateSettings } from '../shared/types.js';
 import {
   describeDocument,
   execute,
@@ -36,6 +36,7 @@ import {
   store,
   undo,
 } from './host.js';
+import { exportAssetBundle, isAssetEngine, type AssetEngine } from './asset-export.js';
 import {
   checkForUpdates,
   downloadUpdate,
@@ -62,26 +63,31 @@ const dialogText: Record<AppLocale, Record<string, string>> = {
     open: 'Open sprite', save: 'Save sprite', saveAs: 'Save sprite as',
     png: 'Export PNG', sheet: 'Export spritesheet', gif: 'Export GIF',
     tiled: 'Export Tiled map', importImage: 'Import image',
+    meta: 'Export asset contract', engine: 'Export engine assets',
   },
   ja: {
     open: 'スプライトを開く', save: 'スプライトを保存', saveAs: 'スプライトを名前を付けて保存',
     png: 'PNG を書き出し', sheet: 'スプライトシートを書き出し', gif: 'GIF を書き出し',
     tiled: 'Tiled マップを書き出し', importImage: '画像をインポート',
+    meta: 'アセット契約を書き出し', engine: 'エンジン用アセットを書き出し',
   },
   ko: {
     open: '스프라이트 열기', save: '스프라이트 저장', saveAs: '스프라이트 다른 이름으로 저장',
     png: 'PNG 내보내기', sheet: '스프라이트 시트 내보내기', gif: 'GIF 내보내기',
     tiled: 'Tiled 맵 내보내기', importImage: '이미지 가져오기',
+    meta: '에셋 계약 내보내기', engine: '엔진 에셋 내보내기',
   },
   'zh-CN': {
     open: '打开角色文件', save: '保存角色', saveAs: '角色另存为',
     png: '导出 PNG', sheet: '导出精灵图', gif: '导出 GIF',
     tiled: '导出 Tiled 地图', importImage: '导入图片',
+    meta: '导出资产契约', engine: '导出引擎资源',
   },
   'zh-TW': {
     open: '開啟角色檔案', save: '儲存角色', saveAs: '角色另存新檔',
     png: '匯出 PNG', sheet: '匯出精靈圖', gif: '匯出 GIF',
     tiled: '匯出 Tiled 地圖', importImage: '匯入圖片',
+    meta: '匯出資產契約', engine: '匯出引擎資源',
   },
 };
 const text = () => dialogText[appLocale];
@@ -363,6 +369,55 @@ export function registerIpc(getMcpStatus: () => unknown): void {
       layers: map.layers.map((layer) => layer.name),
     };
   });
+
+  /**
+   * The asset contract, and one engine's files.
+   *
+   * Two channels rather than one with an optional engine, because the MCP
+   * surface has two output types (`{type: "meta"}` and `{type: "engine"}`) and
+   * two surfaces disagreeing about the same policy is a bug. `exportEngine`
+   * always writes the contract too — every importer reads one.
+   *
+   * The policy — naming validation, refusing the bundle on a naming *error*,
+   * writing nothing — lives in `asset-export.ts`, which is also where it is
+   * tested. This owns the dialog and nothing else. Note what comes back:
+   * named defects and paths, never a score.
+   */
+  const assetExportHandler = async (
+    _event: unknown,
+    id: string | undefined,
+    options: AssetExportRequest,
+    engine?: AssetEngine,
+  ) => {
+    const doc = store.require(id);
+    const picked = await dialog.showSaveDialog(focusedWindow()!, {
+      title: engine ? text().engine : text().meta,
+      defaultPath: path.join(doc.name, 'meta.json'),
+      filters: [{ name: 'Asset contract', extensions: ['json'] }],
+    });
+    if (picked.canceled || !picked.filePath) return null;
+    return exportAssetBundle(doc.editor.sprite, {
+      ...(options ?? {}),
+      path: picked.filePath,
+      ...(engine ? { engine } : {}),
+    });
+  };
+
+  
+
+  ipcMain.handle(
+    CHANNELS.exportMeta,
+    (_event, id: string | undefined, options: AssetExportRequest = {}) =>
+      assetExportHandler(_event, id, options),
+  );
+
+  ipcMain.handle(
+    CHANNELS.exportEngine,
+    (_event, id: string | undefined, engine: unknown, options: AssetExportRequest = {}) => {
+      if (!isAssetEngine(engine)) throw new Error(`Unknown engine "${String(engine)}".`);
+      return assetExportHandler(_event, id, options, engine);
+    },
+  );
 
   // Resolved by the same `animationSequence` the GIF writer uses, so the canvas
   // plays exactly the frames the export would write.

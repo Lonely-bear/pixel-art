@@ -125,6 +125,16 @@ The division that works: **a sub-agent runs only its own package's vitest**, and
 the three root commands serially. Core's tests import `../src/index.js` directly and need no build;
 `mcp`, `script` and `cli` tests read `dist`, which is safe as long as nothing writes it.
 
+**The rule covers the tests, not only the three commands.** Vitest runs test *files* in parallel, so
+two files that each invoke `build-npm-package.mjs` write the same root `dist/` at the same time, and
+two files that each own a temp tree delete each other's state in `afterAll`. That cost three
+consecutive full-suite failures and seven unrelated-looking assertions to find, because the symptom
+named no shared resource and **every subset passed**. `packages/core/test/helpers/npm-build-lock.ts`
+is the fix: the tarball is built once, under a lock, into a path derived from the package name and
+version. **When a failure appears only in the full suite and not in any subset, the cause is
+parallelism until proven otherwise** — and a cleanup hook that deletes shared state "just in case" is
+how it gets there.
+
 ## Accepting work
 
 Do not accept a report; verify it. Concretely:
@@ -261,10 +271,10 @@ removed. Say so in your report rather than shipping it quietly.
 
 ## Testing
 
-- Vitest, no shared config. Tests live in `packages/{core,mcp,script}/test/*.test.ts`; the app's
-  one test sits next to its source in `packages/app/electron/`. `cli` has no tests and uses
-  `--passWithNoTests`.
-- `packages/core` tests import `../src/index.js`; `script` and `mcp` tests import `@pixel/core`
+- Vitest, no shared config. Tests live in `packages/{core,mcp,script,cli}/test/*.test.ts`; the app's
+  sit next to their source in `packages/app/{electron,src}/`. Every package uses `--passWithNoTests`,
+  which is now a safety net rather than a description of `cli`, which has tests.
+- `packages/core` tests import `../src/index.js`; `script`, `mcp` and `cli` tests import `@pixel/core`
   (built `dist`). That asymmetry is why `build:libs` is a prerequisite.
 - **Tests are not typechecked.** Every package tsconfig has `include: ["src"]`, so a type error in
   a test only surfaces when vitest runs it. `packages/app/electron/update-support.test.ts` *is*

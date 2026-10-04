@@ -3,6 +3,7 @@ import { useEditor } from '../editor-context.js';
 import { api } from '../api.js';
 import { useI18n } from '../i18n.js';
 import { Icon, PixelMark, type IconName } from './Icon.js';
+import { AssetBundleDialog } from './AssetBundleDialog.js';
 
 const BUILTIN_PALETTES = ['dawnbringer16', 'endesga16', 'pico8', 'gameboy'] as const;
 
@@ -27,6 +28,7 @@ export function TitleBar({
   const { detail, status } = editor;
   const { t } = useI18n();
   const [creating, setCreating] = useState(false);
+  const [assetOpen, setAssetOpen] = useState(false);
   const [maximized, setMaximized] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [docsOpen, setDocsOpen] = useState(false);
@@ -168,7 +170,9 @@ export function TitleBar({
             <span className="hide-narrow">{t('top.export')}</span>
             <Icon name="chevronDown" size={12} />
           </button>
-          {exportOpen && <ExportMenu onPick={closePopovers} />}
+          {exportOpen && (
+            <ExportMenu onPick={closePopovers} onOpenAsset={() => setAssetOpen(true)} />
+          )}
         </div>
       </div>
 
@@ -205,6 +209,7 @@ export function TitleBar({
       </div>
 
       {creating && <NewSpriteDialog onClose={() => setCreating(false)} />}
+      {assetOpen && <AssetBundleDialog onClose={() => setAssetOpen(false)} />}
     </header>
   );
 }
@@ -296,7 +301,7 @@ function DocumentMenu({ onPick }: { onPick(): void }): React.ReactNode {
   );
 }
 
-function ExportMenu({ onPick }: { onPick(): void }): React.ReactNode {
+function ExportMenu({ onPick, onOpenAsset }: { onPick(): void; onOpenAsset(): void }): React.ReactNode {
   const editor = useEditor();
   const { detail } = editor;
   const { t } = useI18n();
@@ -382,6 +387,19 @@ function ExportMenu({ onPick }: { onPick(): void }): React.ReactNode {
         }}
       />
       <div className="popover-sep" />
+      {/* The engine-agnostic asset contract, and the four engine importers. It
+          takes a dialog of its own because a save dialog is involved and because
+          an engine export has choices the other four do not: a sheet, and a
+          folder for the importer's files. */}
+      <ExportItem
+        icon="stack"
+        title={t('top.exportAsset')}
+        meta={t('top.exportAssetMeta')}
+        onClick={() => {
+          onOpenAsset();
+          onPick();
+        }}
+      />
       <ExportItem
         icon="save"
         title={t('top.saveAs')}

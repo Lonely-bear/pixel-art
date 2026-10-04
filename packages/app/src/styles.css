@@ -2145,6 +2145,105 @@ input[type='checkbox'] {
   font-size: calc(12px * var(--ui-scale));
 }
 
+/* ---- asset bundle panel --------------------------------------------------- */
+
+/* Wider than the sprite dialog: the report lists file paths and defect text,
+   and a wrapped path is worse than useless. */
+.asset-modal {
+  width: min(560px, 100%);
+  max-height: min(84vh, 720px);
+  overflow-y: auto;
+}
+
+.asset-modal .setting {
+  margin-bottom: 12px;
+}
+
+/* Wraps rather than scrolls: five targets in a row on a narrow window would
+   otherwise be five truncated ones. */
+.engine-choices {
+  flex-wrap: wrap;
+}
+
+.asset-report {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-sunken);
+}
+
+.asset-report.is-error {
+  border-color: var(--accent);
+}
+
+.asset-report > b {
+  display: block;
+  font-size: calc(12px * var(--ui-scale));
+}
+
+.asset-report p {
+  margin: 4px 0 0;
+  font-size: calc(11px * var(--ui-scale));
+  color: var(--ink-2);
+}
+
+.asset-report .asset-counts {
+  margin-top: 10px;
+  color: var(--ink-2);
+}
+
+.asset-report .asset-counts.is-error {
+  color: var(--accent);
+}
+
+.asset-block {
+  margin-top: 10px;
+}
+
+.asset-files,
+.asset-notes,
+.asset-findings {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  font-size: calc(11px * var(--ui-scale));
+  color: var(--ink-2);
+}
+
+.asset-files li,
+.asset-notes li {
+  overflow-wrap: anywhere;
+}
+
+.asset-findings li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+.asset-findings code {
+  color: var(--ink);
+}
+
+.asset-refusal {
+  margin-top: 8px;
+}
+
+.asset-refusal span {
+  display: block;
+  font-size: calc(10px * var(--ui-scale));
+  color: var(--ink-3);
+}
+
+.asset-refusal code {
+  display: block;
+  margin-top: 2px;
+  font-size: calc(10px * var(--ui-scale));
+  overflow-wrap: anywhere;
+}
+
 .toast {
   position: fixed;
   bottom: 42px;

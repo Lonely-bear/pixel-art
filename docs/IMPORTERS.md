@@ -5,11 +5,15 @@ the one contract in [`ASSET-CONTRACT.md`](ASSET-CONTRACT.md). That file says wha
 *means*; this one says what each engine *does with it*, and — more usefully — what each one
 loses.
 
-> **Status:** the importers are reachable two ways. They remain library functions in
-> `packages/core/src/asset/importers/`, callable from code or a plugin; and they are
+> **Status:** the importers are reachable three ways. They remain library functions in
+> `packages/core/src/asset/importers/`, callable from code or a plugin; they are
 > **opt-in outputs of `finalize_document`**, `{type: "engine", engine, path}`, alongside
-> `{type: "meta", path}` for the contract itself. There is deliberately no second export tool:
-> one `finalize_document` plan is the whole delivery path, and a separate tool would split it.
+> `{type: "meta", path}` for the contract itself; and the CLI reaches them as
+> `pixel contract <file.pixel> --out <meta.json> [--engine <name>]`. There is deliberately no
+> second export *tool* on the MCP surface: one `finalize_document` plan is the whole delivery
+> path there, and a separate tool would split it. The CLI has no such plan to keep whole, so one
+> command with one optional `--engine` flag is the whole of its delivery path — `--engine` is a
+> strict superset of the flagless run rather than a second way to ask for the same thing.
 >
 > **Why opt-in rather than automatic.** The target engine is the caller's choice and a tool
 > cannot know it — a Godot resource beside every PNG export would be a surprise to everyone
@@ -249,8 +253,17 @@ throw, so the boundary is stated rather than assumed.
   generator never invents it, but the tool surface leaves it out (~600 bytes of every request in
   every session) rather than advertise a declaration the document model cannot hold. Add the
   block to the written file, or call `buildAssetMeta` directly.
-- **No CLI surface** for the importers — `finalize_document` is the MCP path, and the CLI has no
-  asset-output equivalent yet.
+- **The CLI path is `pixel contract`, not a separate importer surface.**
+  `pixel contract <file.pixel> --out <meta.json> [--engine godot|unity|phaser|excalidraw]` writes the
+  same contract through the same four importer functions, refuses on the same naming `error`s, and
+  reports warnings in its JSON result. It differs from the MCP plan in exactly two ways: the
+  destination path and the engine folder come from flags rather than from a plan entry, and a
+  `--sheet` writes the sheet PNG itself rather than describing one somebody else packed —
+  `sheet.regions` is authoritative, so a contract for a sheet that does not exist is a lie. Two
+  consequences worth stating: `pixel contract --sheet` re-packs with the same flags `pixel sheet`
+  takes, so a contract cannot describe a sheet packed by some other tool; and there is **no quality
+  gate on this path** — `AGENTS.md` records what an uncalibrated gate does to artwork, and a gate
+  bolted onto a flag that also has to name a destination and an engine is a gate nobody asked for.
 - **Excalidraw does not embed pixels** (above).
 - **Unity is a script plus a JSON description**, not a native `.meta`/`.asset`. That is what works
   in Unity; a pipeline wanting committed binary Unity assets needs something this does not do.

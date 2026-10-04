@@ -27,6 +27,7 @@ import {
 } from '@pixel/core';
 import { ScriptRuntime } from '@pixel/script';
 import { boolFlag, intFlag, listFlag, repeatFlag, stringFlag, UsageError, type ParsedArgs } from './args.js';
+import { contractCommand } from './contract.js';
 import { demoCommand } from './demo.js';
 import { loadSprite, printJson, readBytes, readText, saveSprite, writeBytes, writeText } from './io.js';
 
@@ -641,6 +642,7 @@ export const COMMANDS: CommandSpec[] = [
   thumbCommand,
   pixelsCommand,
   commandsCommand,
+  contractCommand,
 ];
 
 export function findCommand(name: string): CommandSpec | undefined {

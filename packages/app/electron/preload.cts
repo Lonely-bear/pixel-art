@@ -16,6 +16,9 @@ import type {
   AnimationSequenceInfo,
   AppLocale,
   AppStatus,
+  AssetEngine,
+  AssetExportRequest,
+  AssetExportResult,
   ChangedPayload,
   DocumentDetail,
   DocumentSummary,
@@ -72,6 +75,11 @@ const api = {
     invoke<ExportResult | null>('pixel:export-gif', id, options),
   exportTiled: (id: string | undefined, options: Record<string, unknown>) =>
     invoke<ExportResult | null>('pixel:export-tiled', id, options),
+  
+  exportMeta: (id: string | undefined, options: AssetExportRequest) =>
+    invoke<AssetExportResult | null>('pixel:export-meta', id, options),
+  exportEngine: (id: string | undefined, engine: AssetEngine, options: AssetExportRequest) =>
+    invoke<AssetExportResult | null>('pixel:export-engine', id, engine, options),
   tilesetInfo: (id: string | undefined) => invoke<TilesetInfo | null>('pixel:tileset-info', id),
   tilemapData: (id: string | undefined, tilemap: string | number) =>
     invoke<TilemapInfo | null>('pixel:tilemap-data', id, tilemap),
