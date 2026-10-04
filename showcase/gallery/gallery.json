@@ -2,7 +2,7 @@
   "generatedBy": "scripts/build-gallery.mjs",
   "engine": {
     "name": "dotloom-mcp-link",
-    "version": "0.5.0"
+    "version": "1.0.0"
   },
   "dimensions": [
     "silhouette",

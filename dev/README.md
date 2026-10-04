@@ -13,8 +13,8 @@ from a fixed path:
 
 - [`../AGENTS.md`](../AGENTS.md) — layout, the build-serialisation rule, the acceptance
   procedure, and the file-format traps.
-- [`../docs/EVALUATION.md`](../docs/EVALUATION.md) — the scoring specification. It stays in
+- [`EVALUATION.md`](EVALUATION.md) — the scoring specification. It stays in
   `docs/` for a mechanical reason worth knowing:
-  `packages/core/test/quality-weights.test.ts` resolves `../../../docs/EVALUATION.md` and
+  `packages/core/test/quality-weights.test.ts` resolves `../../EVALUATION.md` and
   **fails the build** if it cannot read it, so the specification and the code are pinned to
   each other by path. Moving it is a one-line change in that test, not a file move.

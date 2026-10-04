@@ -10,7 +10,7 @@ this package as a `devDependency`, generates its sprites at build time, and this
 how that generation happens on a pull request instead of on someone's laptop.
 
 ```yaml
-- uses: dotloom-mcp/build-assets@v0.5.0
+- uses: dotloom-mcp/build-assets@v1.0.0
   with:
     command: node tools/build-assets.mjs
     check-command: node tools/check-assets.mjs

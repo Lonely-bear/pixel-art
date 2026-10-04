@@ -12,7 +12,7 @@
 在构建期生成精灵，而这个 Action 就是让那次生成发生在 PR 上，而不是发生在某个人的笔记本上。
 
 ```yaml
-- uses: dotloom-mcp/build-assets@v0.5.0
+- uses: dotloom-mcp/build-assets@v1.0.0
   with:
     command: node tools/build-assets.mjs
     check-command: node tools/check-assets.mjs

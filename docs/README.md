@@ -14,7 +14,7 @@ What a product user or an integrator reads. Developer-facing material is in
 | setting up an MCP client | [`CLIENTS.md`](CLIENTS.md) |
 | sharing a bundle or a review | [`ACTION.md`](ACTION.md), [`SHARING.md`](SHARING.md) |
 | looking up a command, a script or the tilemap model | [`REFERENCE.md`](REFERENCE.md) |
-| curious how the quality pipeline decides | [`EVALUATION.md`](EVALUATION.md) |
+| curious how the quality pipeline decides | [`dev/EVALUATION.md`](../dev/EVALUATION.md) |
 
 ## Every file
 
@@ -29,13 +29,13 @@ What a product user or an integrator reads. Developer-facing material is in
 | [`ACTION.md`](ACTION.md) | 176 | User. What to do when a document is refused: what was found, and what to do about it. |
 | [`SHARING.md`](SHARING.md) | 276 | User. Share bundles, provenance, and why a badge is metadata and never burned in. |
 | [`REFERENCE.md`](REFERENCE.md) | 787 | Anyone looking something up. Command catalogue, MCP internals, scripting, animation, tilemaps. |
-| [`EVALUATION.md`](EVALUATION.md) | 3805 | Reader of a quality report. The scoring specification. **Machine-read by `packages/core/test/quality-weights.test.ts`**, which resolves it by path and fails the build if it cannot — so it cannot move while that path stands. |
+| [`dev/EVALUATION.md`](../dev/EVALUATION.md) | 3805 | Reader of a quality report. The scoring specification. **Machine-read by `packages/core/test/quality-weights.test.ts`**, which resolves it by path and fails the build if it cannot — which is why it is pinned to the code, and why this one document is developer material in `dev/` rather than in `docs/`. |
 
 ## `*-ZH.md` mirrors
 
 `API-ZH.md`, `ASSET-CONTRACT-ZH.md`, `CLIENTS-ZH.md`, `COOKBOOK-ZH.md`, `ACTION-ZH.md` and
 `EVALUATION-ZH.md` mirror their English original. D-3 asks for a mirror per English document;
-`EVALUATION-ZH.md` is a partial one (§4.4 and §7 only) and `STABILITY.md` has none. Both gaps
+`dev/EVALUATION-ZH.md` is a partial one (§4.4 and §7 only) and `STABILITY.md` has none. Both gaps
 are recorded in `dev/DECISIONS.md` D-3 rather than hidden.
 
 ## What is not here
