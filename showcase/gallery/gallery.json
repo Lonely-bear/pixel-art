@@ -64,125 +64,10 @@
       ]
     },
     {
-      "id": "dusk-lake-valley-agent",
-      "slug": "dusk-lake-valley-agent",
-      "title": "Dusk Lake Valley Agent",
-      "caption": "Dusk Lake Valley Agent, 256x256.",
-      "source": "artwork/dusk-lake-valley-agent.pixel",
-      "width": 256,
-      "height": 256,
-      "layers": 7,
-      "frames": 1,
-      "image": "out/dusk-lake-valley-agent.png",
-      "imageBytes": 9434,
-      "imageSha256": "8b86c79a8fc99ffeb0056584b3b6fde0df6ccdf622654e236f22a7135a54a46e",
-      "assetClass": "scene",
-      "measuredDimensions": [
-        "noise",
-        "palette",
-        "value"
-      ],
-      "notMeasured": [
-        {
-          "dimension": "motion",
-          "reason": "single-frame",
-          "note": "the evaluated sequence is one frame, so there is nothing to measure motion across."
-        },
-        {
-          "dimension": "outline",
-          "reason": "no-subject",
-          "note": "the ink runs to the frame on every edge, so the alpha boundary *is* the canvas and there is no shape to read. Measured on a different canvas, not on a different drawing."
-        },
-        {
-          "dimension": "silhouette",
-          "reason": "no-subject",
-          "note": "the ink runs to the frame on every edge, so the alpha boundary *is* the canvas and there is no shape to read. Measured on a different canvas, not on a different drawing."
-        }
-      ],
-      "issues": [
-        {
-          "code": "colour-budget-exceeded",
-          "dimensions": [
-            "palette"
-          ],
-          "rect": null,
-          "blocking": false,
-          "message": "112 distinct colours against a budget of 96 for a 256x256 canvas (scene class). Scene-class canvases get a budget of 96 by area alone, so a large painting can still exceed it — and §7 item 8 records that one budget table cannot serve an icon, a tile and a landscape at once.",
-          "disposition": "needs-a-decision",
-          "guidance": "The defect is a count over the whole document rather than a place on the canvas, so the issue names no region and none was invented. No op, and the reason is arithmetic rather than caution: every colour counted here is already a declared swatch, so `quantize_to_palette` changes 0 bytes and the code survives it. The repair is to *merge* two of them — which two is a decision about the ramp, and a ramp whose steps are one apart is doing its job. `replace_colors {from, to}` merges one into another document-wide, then `prune_palette` drops the entry nothing uses; picking the pair is yours. If the count is right and the budget is wrong, that is §7 item 8 (budgets are keyed on canvas area, so one table cannot serve an icon and a landscape) and the honest response is to size the canvas to the job."
-        },
-        {
-          "code": "near-duplicate-colours",
-          "dimensions": [
-            "noise"
-          ],
-          "rect": null,
-          "blocking": false,
-          "message": "50 pairs of distinct colours each cover at least 8 pixels and sit within 8 of each other. Two ramp entries three steps apart are a decision error rather than a frequency one, so the count cannot size it; `quantize_to_palette` merges them.",
-          "disposition": "safe-repair-available",
-          "guidance": "The defect is a pair of palette entries rather than a place on the canvas, so the issue names no region and none was invented. `quantize_to_palette` is whole-document by nature, which is the right scope here. `quantize_to_palette` snaps every pixel onto the nearer swatch, which merges the pair when at least one of the two is off-palette. It is a no-op on a document already snapped to its own palette — both swatches are already nearest to their own pixels — and there the pair has to be merged on the palette itself, by recolouring one of them with `replace_color` and then `prune_palette`. Which of the two survives is a decision, so that part is yours. Re-run `evaluate` afterwards: merging two ramp entries can expose a new pair."
-        },
-        {
-          "code": "off-palette",
-          "dimensions": [
-            "palette"
-          ],
-          "rect": null,
-          "blocking": false,
-          "message": "2339 of 65297 solid pixels are a colour that is not in the document palette. A colour one step off a swatch is a snapping miss and `quantize_to_palette` fixes it in one call.",
-          "disposition": "safe-repair-available",
-          "guidance": "The defect is the document's relationship to its own palette rather than a place on the canvas, so the issue names no region and none was invented. `quantize_to_palette` snaps every pixel onto a declared swatch, which is §7.3's documented mitigation. Read §7.3's warning first: a translucent highlight layer composites into a colour that is in no palette by design, so this is the most likely false positive in the pipeline and quantizing it may cost more than it saves. It is also a no-op on a document already snapped to its own palette."
-        }
-      ]
-    },
-    {
-      "id": "dusk-lake-valley-agent2",
-      "slug": "dusk-lake-valley-agent2",
-      "title": "Dusk Lake Valley Agent2",
-      "caption": "Dusk Lake Valley Agent2, 256x256.",
-      "source": "artwork/dusk-lake-valley-agent2.pixel",
-      "width": 256,
-      "height": 256,
-      "layers": 9,
-      "frames": 1,
-      "image": "out/dusk-lake-valley-agent2.png",
-      "imageBytes": 9692,
-      "imageSha256": "088586bd8efd9a20208bc2d37b0beb58f5cc9981208de797df685239a04f9a10",
-      "assetClass": "scene",
-      "measuredDimensions": [
-        "noise",
-        "palette",
-        "value"
-      ],
-      "notMeasured": [
-        {
-          "dimension": "motion",
-          "reason": "single-frame",
-          "note": "the evaluated sequence is one frame, so there is nothing to measure motion across."
-        },
-        {
-          "dimension": "outline",
-          "reason": "no-subject",
-          "note": "the ink runs to the frame on every edge, so the alpha boundary *is* the canvas and there is no shape to read. Measured on a different canvas, not on a different drawing."
-        },
-        {
-          "dimension": "silhouette",
-          "reason": "no-subject",
-          "note": "the ink runs to the frame on every edge, so the alpha boundary *is* the canvas and there is no shape to read. Measured on a different canvas, not on a different drawing."
-        },
-        {
-          "dimension": "value.form",
-          "reason": "no-subject",
-          "note": "the ink runs to the frame on every edge, so the alpha boundary *is* the canvas and there is no shape to read. Measured on a different canvas, not on a different drawing. The rest of this dimension was measured and is reported normally; this one term is absent, not counted at its best."
-        }
-      ],
-      "issues": []
-    },
-    {
       "id": "dusk-lake-valley-v2",
       "slug": "dusk-lake-valley-v2",
       "title": "Dusk Lake Valley V2",
-      "caption": "Dusk Lake Valley V2, 256x256.",
+      "caption": "Second pass: six layers and a wider palette. The report names two things that wider palette cost - form carried by hue rather than by lightness, and a key light that does not read.",
       "source": "artwork/dusk-lake-valley-v2.pixel",
       "width": 256,
       "height": 256,
@@ -264,7 +149,7 @@
       "id": "dusk-lake-valley-v3",
       "slug": "dusk-lake-valley-v3",
       "title": "Dusk Lake Valley V3",
-      "caption": "Dusk Lake Valley V3, 256x256.",
+      "caption": "Third pass, back down to four layers. One advisory left, and it is the kind that is advisory by design.",
       "source": "artwork/dusk-lake-valley-v3.pixel",
       "width": 256,
       "height": 256,
@@ -319,7 +204,7 @@
       "id": "dusk-lake-valley",
       "slug": "dusk-lake-valley",
       "title": "Dusk Lake Valley",
-      "caption": "An environment, revised over four critique passes. The later passes are listed beside it rather than replacing it, because the differences between them are the interesting part.",
+      "caption": "An environment, and the two passes that followed it. The later versions are listed beside the original rather than replacing it, because the differences between them are the interesting part - including what the report said about each.",
       "source": "artwork/dusk-lake-valley.pixel",
       "width": 256,
       "height": 256,
@@ -365,88 +250,6 @@
           "rect": null,
           "blocking": false,
           "message": "4 pairs of distinct colours each cover at least 8 pixels and sit within 8 of each other. Two ramp entries three steps apart are a decision error rather than a frequency one, so the count cannot size it; `quantize_to_palette` merges them.",
-          "disposition": "safe-repair-available",
-          "guidance": "The defect is a pair of palette entries rather than a place on the canvas, so the issue names no region and none was invented. `quantize_to_palette` is whole-document by nature, which is the right scope here. `quantize_to_palette` snaps every pixel onto the nearer swatch, which merges the pair when at least one of the two is off-palette. It is a no-op on a document already snapped to its own palette — both swatches are already nearest to their own pixels — and there the pair has to be merged on the palette itself, by recolouring one of them with `replace_color` and then `prune_palette`. Which of the two survives is a decision, so that part is yours. Re-run `evaluate` afterwards: merging two ramp entries can expose a new pair."
-        }
-      ]
-    },
-    {
-      "id": "moonlit-alpine-lake-fast",
-      "slug": "moonlit-alpine-lake-fast",
-      "title": "Moonlit Alpine Lake Fast",
-      "caption": "Moonlit Alpine Lake Fast, 64x64.",
-      "source": "artwork/moonlit-alpine-lake-fast.pixel",
-      "width": 64,
-      "height": 64,
-      "layers": 8,
-      "frames": 1,
-      "image": "out/moonlit-alpine-lake-fast.png",
-      "imageBytes": 5690,
-      "imageSha256": "ee67a1f4882069e35e13d0a64f3a895281b4c628f50c965a5f7f003b5191aceb",
-      "assetClass": "sprite",
-      "measuredDimensions": [
-        "noise",
-        "palette",
-        "value"
-      ],
-      "notMeasured": [
-        {
-          "dimension": "motion",
-          "reason": "single-frame",
-          "note": "the evaluated sequence is one frame, so there is nothing to measure motion across."
-        },
-        {
-          "dimension": "outline",
-          "reason": "no-subject",
-          "note": "the ink runs to the frame on every edge, so the alpha boundary *is* the canvas and there is no shape to read. Measured on a different canvas, not on a different drawing."
-        },
-        {
-          "dimension": "silhouette",
-          "reason": "no-subject",
-          "note": "the ink runs to the frame on every edge, so the alpha boundary *is* the canvas and there is no shape to read. Measured on a different canvas, not on a different drawing."
-        },
-        {
-          "dimension": "value.form",
-          "reason": "no-subject",
-          "note": "the ink runs to the frame on every edge, so the alpha boundary *is* the canvas and there is no shape to read. Measured on a different canvas, not on a different drawing. The rest of this dimension was measured and is reported normally; this one term is absent, not counted at its best."
-        }
-      ],
-      "issues": [
-        {
-          "code": "hue-sprawl",
-          "dimensions": [
-            "palette"
-          ],
-          "rect": null,
-          "blocking": false,
-          "message": "8 distinct hue families (30-degree sectors) on a 64x64 canvas, which the medium budget assumes is not a scene. Scene-class canvases are exempt from this row; this one is not, and that is a property of its size rather than of its colour.",
-          "disposition": "needs-a-decision",
-          "guidance": "The defect is a count over the whole document rather than a place on the canvas, so the issue names no region and none was invented. No op. As with `colour-budget-exceeded`, every colour involved is already declared — `quantize_to_palette` changes 0 bytes here — so the repair is choosing which two hue families to pull onto one ramp and which swatches should carry them, and that is an art-direction call, not a nearest-colour lookup. `replace_colors {from, to}` does the merge once you have decided it. Read the class sentence in the issue first: it fires *because* the canvas is not scene-class, so if this really is a scene that was painted small, the fix is the canvas rather than the palette."
-        },
-        {
-          "code": "key-light-inconsistent",
-          "dimensions": [
-            "value"
-          ],
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 64,
-            "h": 64
-          },
-          "blocking": false,
-          "message": "the top-left of the subject is only 6 lighter than its bottom-right, so the light direction is not readable; this is a consistency check, not a correctness one.",
-          "disposition": "needs-a-decision",
-          "guidance": "The region is 64x64 at (0, 0); that is the smallest area the defect was localised to. Pick one light direction and commit to it. This is a consistency check against a top-left key, not a correctness one, and lighting from the right is a legitimate choice."
-        },
-        {
-          "code": "near-duplicate-colours",
-          "dimensions": [
-            "noise"
-          ],
-          "rect": null,
-          "blocking": false,
-          "message": "1 pair of distinct colours each cover at least 8 pixels and sit within 8 of each other. Two ramp entries three steps apart are a decision error rather than a frequency one, so the count cannot size it; `quantize_to_palette` merges them.",
           "disposition": "safe-repair-available",
           "guidance": "The defect is a pair of palette entries rather than a place on the canvas, so the issue names no region and none was invented. `quantize_to_palette` is whole-document by nature, which is the right scope here. `quantize_to_palette` snaps every pixel onto the nearer swatch, which merges the pair when at least one of the two is off-palette. It is a no-op on a document already snapped to its own palette — both swatches are already nearest to their own pixels — and there the pair has to be merged on the palette itself, by recolouring one of them with `replace_color` and then `prune_palette`. Which of the two survives is a decision, so that part is yours. Re-run `evaluate` afterwards: merging two ramp entries can expose a new pair."
         }
@@ -526,77 +329,6 @@
           "message": "43 pixels of 4096 agree with nothing within two pixels and sit outside the lightness range of everything around them. That is what separates a stray colour from an edge: on a gradient a pixel's neighbours are the steps either side of it, and on an outline the rest of the contour reaches it diagonally, so both agree with it somehow.",
           "disposition": "needs-a-decision",
           "guidance": "The orphan pixels are scattered across the sprite, so the issue names no region. Repaint each orphan with the colour its neighbourhood implies, or accept it as texture. A pixel-level predicate cannot tell a mistake from a deliberate glint, and §7 records the one case in this repository where the machine was wrong about it."
-        }
-      ]
-    },
-    {
-      "id": "sunset-lighthouse-512-baseline-model-a",
-      "slug": "sunset-lighthouse-512-baseline-model-a",
-      "title": "Sunset Lighthouse 512 Baseline Model A",
-      "caption": "Sunset Lighthouse 512 Baseline Model A, 512x512.",
-      "source": "artwork/sunset-lighthouse-512-baseline-model-a.pixel",
-      "width": 512,
-      "height": 512,
-      "layers": 11,
-      "frames": 1,
-      "image": "out/sunset-lighthouse-512-baseline-model-a.png",
-      "imageBytes": 24561,
-      "imageSha256": "1a76b5499b37caecc641a7a061e92f0efe46c1b539a0f3e5840c942e69b4599a",
-      "assetClass": "scene",
-      "measuredDimensions": [
-        "noise",
-        "palette",
-        "value"
-      ],
-      "notMeasured": [
-        {
-          "dimension": "motion",
-          "reason": "single-frame",
-          "note": "the evaluated sequence is one frame, so there is nothing to measure motion across."
-        },
-        {
-          "dimension": "outline",
-          "reason": "no-subject",
-          "note": "the ink runs to the frame on every edge, so the alpha boundary *is* the canvas and there is no shape to read. Measured on a different canvas, not on a different drawing."
-        },
-        {
-          "dimension": "silhouette",
-          "reason": "no-subject",
-          "note": "the ink runs to the frame on every edge, so the alpha boundary *is* the canvas and there is no shape to read. Measured on a different canvas, not on a different drawing."
-        },
-        {
-          "dimension": "value.form",
-          "reason": "no-subject",
-          "note": "the ink runs to the frame on every edge, so the alpha boundary *is* the canvas and there is no shape to read. Measured on a different canvas, not on a different drawing. The rest of this dimension was measured and is reported normally; this one term is absent, not counted at its best."
-        }
-      ],
-      "issues": [
-        {
-          "code": "key-light-inconsistent",
-          "dimensions": [
-            "value"
-          ],
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 512,
-            "h": 512
-          },
-          "blocking": false,
-          "message": "the top-left of the subject is only 10 lighter than its bottom-right, so the light direction is not readable; this is a consistency check, not a correctness one.",
-          "disposition": "needs-a-decision",
-          "guidance": "The region is 512x512 at (0, 0); that is the smallest area the defect was localised to. Pick one light direction and commit to it. This is a consistency check against a top-left key, not a correctness one, and lighting from the right is a legitimate choice."
-        },
-        {
-          "code": "near-duplicate-colours",
-          "dimensions": [
-            "noise"
-          ],
-          "rect": null,
-          "blocking": false,
-          "message": "10 pairs of distinct colours each cover at least 8 pixels and sit within 8 of each other. Two ramp entries three steps apart are a decision error rather than a frequency one, so the count cannot size it; `quantize_to_palette` merges them.",
-          "disposition": "safe-repair-available",
-          "guidance": "The defect is a pair of palette entries rather than a place on the canvas, so the issue names no region and none was invented. `quantize_to_palette` is whole-document by nature, which is the right scope here. `quantize_to_palette` snaps every pixel onto the nearer swatch, which merges the pair when at least one of the two is off-palette. It is a no-op on a document already snapped to its own palette — both swatches are already nearest to their own pixels — and there the pair has to be merged on the palette itself, by recolouring one of them with `replace_color` and then `prune_palette`. Which of the two survives is a decision, so that part is yours. Re-run `evaluate` afterwards: merging two ramp entries can expose a new pair."
         }
       ]
     },

@@ -111,7 +111,11 @@ const CAPTIONS = {
   'autumn-dusk-lake-256':
     'A 256x256 environment. Full-bleed, so it has no subject to read a silhouette or a contour from - and the page says so rather than showing an empty column.',
   'dusk-lake-valley':
-    'An environment, revised over four critique passes. The later passes are listed beside it rather than replacing it, because the differences between them are the interesting part.',
+    'An environment, and the two passes that followed it. The later versions are listed beside the original rather than replacing it, because the differences between them are the interesting part - including what the report said about each.',
+  'dusk-lake-valley-v2':
+    'Second pass: six layers and a wider palette. The report names two things that wider palette cost - form carried by hue rather than by lightness, and a key light that does not read.',
+  'dusk-lake-valley-v3':
+    'Third pass, back down to four layers. One advisory left, and it is the kind that is advisory by design.',
   'moonlit-alpine-lake':
     'A deliberately small and fast pass: the whole pass, at low cost, in a single document.',
   'sunset-lighthouse-512':
