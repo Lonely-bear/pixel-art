@@ -755,10 +755,21 @@ try {
     // against — it is self-consistent by construction and would happily agree with a gallery whose
     // artwork had changed three commits ago.
     //
-    // The comparison is made from `git show HEAD:`, not from the working tree, so it also catches a
-    // generated file that was edited by hand and left uncommitted. Work in flight is the one case
-    // this cannot judge, which is why it is a flag and not unconditional: a session with an edited
-    // `.pixel` will see this fail, and the fix is to regenerate and commit both together.
+    // **What this catches, precisely** — written after a perturbation proved a stronger claim false:
+    //
+    //   - source changed, gallery not regenerated      → caught, which is the whole point
+    //   - a generated file hand-edited AND committed     → caught, same reason
+    //   - a file hand-edited and left UNcommitted        → NOT caught, and cannot be: this runs
+    //     after `build()`, which has already overwritten the working tree with the fresh render.
+    //     That is not a gap worth closing — the edit is transient and the next build discards it —
+    //     but an earlier version of this comment claimed it was caught, and **a guard described as
+    //     stronger than it is** is the habit this repository is trying to break.
+    //
+    // `git ls-tree` also names what is tracked, so a render that exists on disk but was never
+    // committed is caught from the other direction: it is in `writtenHashes` and absent here.
+    //
+    // A flag rather than unconditional, because a session with an edited `.pixel` in flight will see
+    // it fail, and the fix there is to regenerate and commit both together.
     const committed = await committedHashes();
     const fresh = await writtenHashes();
     const names = [...new Set([...committed.keys(), ...fresh.keys()])].sort();
