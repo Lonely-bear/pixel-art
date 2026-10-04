@@ -89,7 +89,7 @@ import { z } from 'zod';
 import { ScriptRuntime } from '@pixel/script';
 import { BUILTIN_PALETTES, type DocumentStore, type PixelDocument } from './session.js';
 import { PIXEL_ART_SKILL } from './skill.js';
-import { advertiseSchema, TOOL_RESULT_ENVELOPE } from './surface.js';
+import { fullSchema, TOOL_RESULT_ENVELOPE } from './surface.js';
 import { analyzeTilemapQuality } from './quality-tilemap.js';
 import { listRecipeIds, loadRecipe, summarise } from './recipe-catalogue.js';
 import { QUALITY_OUTPUT_SCHEMA, qualityPayload } from './quality-report.js';
@@ -1584,10 +1584,22 @@ interface ToolDeclaration {
  * in the command registry, so `describe_command` used to answer `unknown_command` for
  * `apply_ops` and `finalize_document` - precisely the two tools whose arguments are
  * worth reading. A tool list is not documentation you can query; this is.
+ *
+ * `params` is the *untruncated* schema ({@link fullSchema}). The tool list carries
+ * one-sentence summaries because it answers "may I pass this?"; this answers "and
+ * when?", and a caller that got here has already decided to pass it. `resultSchema`
+ * is the shared result envelope with its descriptions intact, for the same reason:
+ * the advertised copy is a shape, and this is the qualified shape.
  */
 const DECLARED_TOOLS = new Map<
   string,
-  { title: string; description: string; params: unknown; annotations: ToolAnnotations }
+  {
+    title: string;
+    description: string;
+    params: unknown;
+    resultSchema: unknown;
+    annotations: ToolAnnotations;
+  }
 >();
 
 /**
@@ -1607,11 +1619,13 @@ function addTool(
   const { outputSchema, annotations, meta, ...rest } = config;
   const strict = { ...rest, inputSchema: config.inputSchema.strict() };
   const resolved = toolAnnotations(name, annotations);
+  const resultSchema = outputSchema ?? TOOL_RESULT_ENVELOPE;
   // Kept as JSON Schema, because that is the dialect `describe_command` answers in.
   DECLARED_TOOLS.set(name, {
     title: config.title,
     description: config.description,
-    params: advertiseSchema(z.toJSONSchema(strict.inputSchema, { io: 'input' })),
+    params: fullSchema(z.toJSONSchema(strict.inputSchema, { io: 'input' })),
+    resultSchema: fullSchema(z.toJSONSchema(resultSchema, { io: 'output' })),
     annotations: resolved,
   });
   (server.registerTool as unknown as (
@@ -1622,7 +1636,7 @@ function addTool(
     name,
     {
       ...strict,
-      outputSchema: outputSchema ?? TOOL_RESULT_ENVELOPE,
+      outputSchema: resultSchema,
       annotations: resolved,
       _meta: { kind: 'session', ...meta },
     },
@@ -3978,7 +3992,7 @@ export function registerTools(
     {
       title: 'Describe one command or tool',
       description:
-        'The exact schema and documentation for one command or one of the entry-point tools. Use it for a command you know only by name - it also promotes that command to a tool you can call directly. It is also the only way to read the full parameter list of a tool like `apply_ops` or `finalize_document` without reading the tool list.',
+        'The exact schema and documentation for one command or one of the entry-point tools. Use it for a command you know only by name - it also promotes that command to a tool you can call directly. It is also the only way to read the full parameter list of a tool like `apply_ops` or `finalize_document` without reading the tool list, and the tool list carries only each parameter\'s first sentence: this returns every sentence.',
       inputSchema: z.object({
         name: z.string().min(1).describe('A command name from `list_commands`, or a tool name from the tool list.'),
       }),

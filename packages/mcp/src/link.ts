@@ -63,6 +63,14 @@ export const CONNECTION_STATUS_TOOL = 'get_connection_status';
 /**
  * Advertised by hand rather than registered, because it must survive the upstream
  * switch: it exists in neither the app's catalogue nor the bare in-memory one.
+ *
+ * The one tool on the list with no `outputSchema`, and it is deliberately left that
+ * way. The SDK refuses a result from a tool that declares an output schema but
+ * returns no `structuredContent` - "Tool get_connection_status has an output schema
+ * but did not return structured content" - and this relay answers the call from a raw
+ * `Server` rather than from a registered handler, so it has no `structuredContent` to
+ * give. Declaring one is an omission of a different kind than the other 37: the
+ * protocol makes it a lie the client would enforce.
  */
 const CONNECTION_STATUS_DESCRIPTOR = {
   name: CONNECTION_STATUS_TOOL,

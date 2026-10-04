@@ -228,7 +228,7 @@ export const QUALITY_OUTPUT_SCHEMA = z.looseObject({
       assetClass: z
         .looseObject({})
         .describe(
-          'Which §5.2 weight profile weighted `score`: `{cls: "sprite"|"animation"|"scene", source: "derived"|"explicit"}`. Two totals under different classes are different claims and are not comparable - read this before comparing a number to another one.',
+          'Which §5.2 weight profile weighted `score`: `{cls: "sprite"|"animation"|"scene", source: "derived"|"explicit"}`, where `explicit` means the caller named the class and `derived` means the aggregator inferred it from the frames and the canvas size. Two totals under different classes are different claims and are not comparable - read this before comparing a number to another one.',
         ),
       verdict: z
         .enum(['pass', 'warn', 'fail'])
@@ -242,11 +242,13 @@ export const QUALITY_OUTPUT_SCHEMA = z.looseObject({
     ),
   issueCount: z.number().describe('Issues that exist, including any `issuesTruncated` did not show.'),
   issuesTruncated: z.boolean().describe('True when `issues` is shorter than `issueCount`. Only ever truncates advisories.'),
+  // The same `{cls, source}` block, and the same warning about comparing two totals
+  // weighted differently, is on `report.assetClass` above. Repeating it here cost ~330
+  // bytes of every request in every session to say one thing twice, and the copy that
+  // survives is the first one, which is the one a reader reaches first.
   assetClass: z
     .looseObject({})
-    .describe(
-      'Which §5.2 weight profile weighted `report.score`, and whether the caller named it (`explicit`) or the aggregator derived it from the frames and the canvas size (`derived`). Two totals under different classes are different claims and are not comparable.',
-    ),
+    .describe('Copy of `report.assetClass`, so the class is readable without walking the report.'),
   unmeasured: z
     .array(z.looseObject({}))
     .describe('`{dimension, subScore, reason}` per sub-score a measured dimension could not reach. Distinct from `report.excluded`, which is about whole dimensions: "measured, and here is the part it could not measure" is not "did not apply".'),

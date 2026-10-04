@@ -30,21 +30,22 @@ function payload(result: ToolResult): Record<string, unknown> {
 }
 
 /**
- * The two tools allowed to run past the description budget.
+ * The tool allowed to run past the description budget.
  *
- * `apply_ops` and `run_script` are the two ways to issue many commands at once, so
- * their schemas and their inline/param/undo/preview conventions genuinely do not fit
- * in a paragraph. Everything else has to.
+ * `read_grid` is the primary way to check a drawing, so it has to say when to reach
+ * for it *instead* of a preview, and name the four views. Everything else about it -
+ * regions, frames, layers, diffing - is in the schema, where it costs nothing unless
+ * it is used.
+ *
+ * It is here because its headline is *under* the 80 characters the diet requires, so
+ * it keeps its whole description rather than being cut to one. The three that used to
+ * be here - `apply_ops`, `run_script`, `preview_tilemap` - are gone because the diet
+ * gave them 124, 116 and 162 character headlines instead of 817, 957 and 565. Their
+ * declared prose is unchanged and is still what `describe_command` returns; the
+ * listing simply stopped restating it. Leaving the exemptions would have hidden a
+ * regression, which is the one thing a budget list must not do.
  */
 const DESCRIPTION_BUDGET: Record<string, number> = {
-  apply_ops: 900,
-  run_script: 1000,
-  // The tilemap preview is the one place a structural defect has to be seen rather
-  // than described, so it names its overlays instead of deferring to the schema.
-  preview_tilemap: 600,
-  // The primary way to check a drawing, so it has to say when to reach for it *instead*
-  // of a preview, and name the four views. Everything else about it - regions, frames,
-  // layers, diffing - is in the schema, where it costs nothing unless it is used.
   read_grid: 1000,
 };
 const DESCRIPTION_FLOOR = 80;
@@ -85,13 +86,21 @@ describe('declared tool surface', () => {
     expect(names).not.toContain('autotile');
   });
 
-  it('stays inside its token budget', async () => {
+  it('fits in 71KB because the prose was relocated, not deleted - that is what the next lane has to preserve', async () => {
+    // 38 tools / 70,668 bytes measured through `tools/list`, down from 99,994 at six
+    // bytes of headroom. The saving came from four relocations, each with a pull route
+    // that the tests below check: the result envelope became a shape (its prose is in
+    // the server instructions and in `describe_command`'s `resultSchema`), and tool
+    // and parameter descriptions became their first sentence (the full text is what
+    // `describe_command` returns). Nothing here is gone; it is one call away.
+    //
+    // The budget is what stops a new tool from quietly costing 4K tokens of every
+    // request in every session, and it is deliberately set *at* the achieved number
+    // rather than at a round target: a ceiling with headroom is an invitation.
     const { tools } = await connect();
-    const bytes = tools.reduce((sum, t) => sum + JSON.stringify(t).length, 0);
-    // 33 tools / ~82KB measured. The budget is what stops a new tool from quietly
-    // costing 4K tokens of every request in every session.
+    const bytes = tools.reduce((sum, t) => sum + Buffer.byteLength(JSON.stringify(t)), 0);
     expect(tools.length).toBeLessThanOrEqual(40);
-    expect(bytes).toBeLessThanOrEqual(100_000);
+    expect(bytes).toBeLessThanOrEqual(71_000);
   });
 
   it('declares all four risk hints on every tool', async () => {
@@ -194,6 +203,132 @@ describe('declared tool surface', () => {
     })) as ToolResult;
     expect(fresh.isError).toBeUndefined();
     expect(payload(fresh).applied).toBe(1);
+  });
+
+  it('advertises a schema that stands alone, because the diet is only allowed to make one smaller', async () => {
+    // The single most dangerous way to spend these bytes is a `$ref`. MCP gives a tool
+    // no document to point into, so a cross-tool `$ref` resolves for a client holding
+    // the whole `tools/list` response and for nothing else - and the common client
+    // reads one tool's schema at a time. The saving is real and the promise is not, so
+    // this is asserted rather than trusted: zero `$ref` anywhere, and no `$defs`
+    // entry that something in the same tool does not point at.
+    const { tools } = await connect();
+    const refs: string[] = [];
+    const dangling: string[] = [];
+    const walk = (node: unknown, tool: string): void => {
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node)) return void node.forEach((entry) => walk(entry, tool));
+      for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+        if (key === '$ref') refs.push(`${tool}: ${String(value)}`);
+        walk(value, tool);
+      }
+    };
+    for (const tool of tools) {
+      walk(tool.inputSchema, tool.name);
+      walk(tool.outputSchema, tool.name);
+      const defs = (tool.inputSchema as { $defs?: Record<string, unknown> })?.$defs ?? {};
+      const serialised = JSON.stringify(tool.inputSchema);
+      for (const name of Object.keys(defs)) {
+        if (!serialised.includes(`"#/$defs/${name}"`)) dangling.push(`${tool.name}.$defs.${name}`);
+      }
+    }
+    expect(refs).toEqual([]);
+    expect(dangling).toEqual([]);
+  });
+
+  it('advertises the result envelope as a shape and still serves its prose on demand', async () => {
+    // 23,345 bytes of the old list were one 667-byte paragraph repeated 36 times. The
+    // shape is what a caller reads off a particular call; the conventions it explained
+    // are not deleted, they are in the server instructions and in `resultSchema` here.
+    // Both halves are asserted, because a diet that only checked the first would let
+    // the second rot away unnoticed.
+    const { tools } = await connect();
+    const shared = tools.filter((tool) => tool.name !== 'evaluate');
+    const key = JSON.stringify(shared[0].outputSchema);
+    expect(shared.every((tool) => JSON.stringify(tool.outputSchema) === key)).toBe(true);
+    // A shape: the field names a caller branches on, and no prose.
+    expect(Object.keys((shared[0].outputSchema as { properties: object }).properties))
+      .toEqual(['ok', 'version', 'summary', 'error', 'code', 'remediation']);
+    expect(JSON.stringify(shared[0].outputSchema)).not.toContain('description');
+
+    // A tool with its own result keeps its own schema - `evaluate`'s quality report is
+    // described field by field, and that is not a duplication to be optimised away.
+    const bespoke = tools.find((tool) => tool.name === 'evaluate')!;
+    expect(JSON.stringify(bespoke.outputSchema)).toContain('"description"');
+
+    await connect();
+    const described = payload((await client.callTool({
+      name: 'describe_command',
+      arguments: { name: 'undo' },
+    })) as ToolResult);
+    const tool = described.tool as {
+      resultSchema: { properties: Record<string, { description?: string }> };
+    };
+    // Every field named in the advertised shape is explained in the served one.
+    for (const field of Object.keys((shared[0].outputSchema as { properties: object }).properties)) {
+      expect(tool.resultSchema.properties[field]?.description, `resultSchema.${field}`).toBeTruthy();
+    }
+    expect(tool.resultSchema.properties.code?.description).toMatch(/branch on/i);
+  });
+
+  it('relocates description prose rather than rewriting it, and never drops a route', async () => {
+    // The budget above is only defensible if the text it removed is still reachable,
+    // so this is the test that makes the diet a relocation instead of a deletion: for
+    // every tool, the advertised description is a prefix of the one `describe_command`
+    // serves, and the advertised parameter descriptions are prefixes of theirs.
+    //
+    // The `pixel://` clause is here because it failed once, the day the diet landed.
+    // `autotile`'s only mention of `pixel://guide/autotile` was in its second
+    // sentence, so the truncation silently unpublished the manual - nothing looked
+    // broken, and the manual simply became unreachable.
+    const { tools } = await connect();
+    await connect();
+    const advertised = new Map(tools.map((tool) => [tool.name, tool]));
+    for (const name of advertised.keys()) {
+      const full = payload((await client.callTool({
+        name: 'describe_command',
+        arguments: { name },
+      })) as ToolResult).tool as {
+        description: string;
+        params: { properties?: Record<string, { description?: string }> };
+      };
+      const listed = advertised.get(name)!;
+
+      // Sentence punctuation is not part of a URI: `…see pixel://quality/{doc}.` refers to
+      // `pixel://quality/{doc}`. Asserting the un-stripped form would pin the mistake
+      // that the first version of `headline` made.
+      const uris = (text: string): string[] =>
+        (text.match(/pixel:\/\/[^\s`,)]+/g) ?? []).map((uri) => uri.replace(/[.,;:]+$/, ''));
+      for (const uri of uris(full.description)) {
+        expect(uris(listed.description ?? ''), `${name} dropped ${uri}`).toContain(uri);
+      }
+      expect(full.description.startsWith(listed.description!.split(' See ')[0])).toBe(true);
+
+      const listedParams = (listed.inputSchema as { properties?: Record<string, { description?: string }> }).properties ?? {};
+      for (const [key, property] of Object.entries(listedParams)) {
+        const served = full.params.properties?.[key]?.description;
+        if (property.description && served) {
+          expect(served.startsWith(property.description), `${name}.${key}`).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('drops the SDK\'s default execution hint and keeps the four that are undeclared without it', async () => {
+    // `execution: {taskSupport: "forbidden"}` was 999 bytes across the list to restate
+    // what the specification already applies when the field is absent. The four risk
+    // hints are the opposite case and stay: they default to "unknown", so omitting one
+    // leaves a client guessing rather than told.
+    const { tools } = await connect();
+    expect(tools.filter((tool) => tool.execution !== undefined).map((tool) => tool.name)).toEqual([]);
+    for (const tool of tools) {
+      expect(Object.keys(tool.annotations ?? {}).sort()).toEqual([
+        'destructiveHint',
+        'idempotentHint',
+        'openWorldHint',
+        'readOnlyHint',
+      ]);
+    }
   });
 
   it('registers the full catalogue when asked to', async () => {
