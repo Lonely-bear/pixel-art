@@ -14,6 +14,7 @@ export * from './rig.js';
 export * from './directions.js';
 export * from './map.js';
 export * from './quality.js';
+export * from './share.js';
 export * from './tilemap.js';
 export * from './svgtrace.js';
 
@@ -79,6 +80,7 @@ import {
 } from './transform.js';
 import { mapCommands } from './map.js';
 import { qualityCommands } from './quality.js';
+import { shareCommands } from './share.js';
 import { rigCommands } from './rig.js';
 import { directionCommands } from './directions.js';
 import { tilemapCommands } from './tilemap.js';
@@ -155,6 +157,8 @@ export const allCommands: Command[] = [
   transformCelCommand,
   // Quality: measure, plan a repair, refuse delivery. The pipeline exists; these make it reachable.
   ...qualityCommands,
+  // Sharing: one template, one bundle, on the same bus as a draw.
+  ...shareCommands,
   // Character rigs, poses, anchors and tween baking
   ...rigCommands,
   // Eight-direction orientation and generated walk cycles

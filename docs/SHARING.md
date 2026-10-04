@@ -164,6 +164,21 @@ something `describe_recipe` had to know about. Two directories, two audiences. T
 is an error, not a default, which is `ASSET-CONTRACT` S3's rule that tolerance for the future must
 not become tolerance for typos.
 
+### The schema is the command's
+
+`shareTemplateSchema` on the `share_bundle` command (`packages/core/src/commands/share.ts`) owns the
+field set, the checked `format` and the output union. The build script does not validate anything:
+it reads `share-templates/*.share.json` and hands each object straight to the command, so a template
+the script has never seen is checked by exactly the code that builds it. A second list of known
+fields is a second place for the two to drift, and a template is presentation *policy* - the one
+thing that must not be silently reinterpreted.
+
+`outputs` is the same union `finalize_document` offers - `png`, `frames`, `sheet`, `gif`, `pose`,
+`meta`, `engine` - minus `contact`, which is refused by name (see S6). `meta` and `engine` are spelled
+`finalize_document`'s way, so the two surfaces cannot describe different bundles; the top-level
+`assetContract` and `engine` fields are shorthand that expands into them, and expanding is idempotent,
+so `handoff` naming its engine in both places gets one contract rather than two.
+
 ### The four that ship
 
 | id | what it is |
@@ -176,6 +191,13 @@ not become tolerance for typos.
 `handoff` is **opt-in in exactly the way `finalize_document`, the CLI and the app already are**: the
 target engine is the caller's choice and a tool cannot know it. The test asserts `meta.json` exists
 for `handoff` and for no other template.
+
+The engine is named in the template so a bundle is reproducible for everybody sharing that piece, and
+**overridable at the call** - `share_bundle {engine: "phaser"}`, or `node scripts/build-share.mjs
+--engine phaser`. The override wins over both the output's own `engine` and the template's, which is
+the point: a caller sending the same artwork into a Phaser project says so rather than forking the
+preset. `meta.json` is reachable on its own too, through `{type: "meta"}`, for a bundle that wants
+the contract and no engine files.
 
 ### The bundle
 
@@ -223,25 +245,34 @@ node scripts/build-share.mjs --list           # the templates and what each cont
 by spawning `packages/mcp/dist/cli.js`, exactly as `build-gallery.mjs` does, so a card in a bundle
 is evidence about the product rather than about a library shortcut.
 
-The one library import is `fast-png`, and it is narrow on purpose: `writeBadgedPng` decodes the file
-the **engine** wrote and re-encodes the same RGBA with chunks attached. Nothing about the artwork is
-recomputed or re-derived there, which is what the cross-process pixel comparison in S2 measures.
+The script itself no longer builds a bundle. It is two advertised calls per piece - `open_document`,
+then one `apply_ops` carrying `share_bundle` - and everything after that is decoding base64 and
+writing files, because `packages/core` has no filesystem and somebody has to place them. The render,
+the badge, the contract and the card are all inside the command.
+
+**There is no `fast-png` import here any more.** The badge used to be stamped by decoding the file the
+engine had written and re-encoding the same RGBA with chunks attached: three lines of duplication,
+and a second place for the provenance vocabulary to drift from the one the engine enforces. The
+engine now writes the chunks in the pass that renders the pixels, so `assertPngMetadata` is the only
+writer and there is no window in which the file on disk disagrees with the record describing it.
 
 ---
 
 ## S6. Limitations
 
-- **One `if (template.assetContract)` branch rather than a per-output plan.** A template that wants
-  a GIF, a rig pose or an Excalidraw bundle has to say so in `outputs` first and get it wired here
-  second. Deliberate: a template is presentation, and a half-wired output is a template that
-  silently ships less than it claims.
-- **One engine per bundle, and it is named in the template.** The caller's choice, per the policy
-  above; passing it on the command line is the obvious next step and is not done.
+- **No `contact` output.** Its only implementation, `animationPreviewPayload`, is private to
+  `packages/mcp/src/tools.ts`, so a template that asks for one is refused by name rather than
+  shipped without it. Every other output `finalize_document` offers is reachable, including a bare
+  `{type: "meta"}` and each of the four importers including Excalidraw.
 - **No licence is ever inferred.** `dotloom:license` appears only if a template sets `license`, and
-  none of the four does. A user who wants one adds it to their own template.
+  none of the four does. A user who wants one adds it to their own template. Absent is not public
+  domain (`ASSET-CONTRACT` S11).
 - **The card is HTML, not a composited PNG.** That is the badge decision (S2) applied to the whole
   card: the card is presentation and is regenerated, while the sprite is the artefact. It does mean
   a recipient who wants a single image file has to screenshot it.
+- **The card's footer still names the build script**, not the command, because the script is what
+  runs it and the sentence is true either way. Moving it would change every card's bytes for no
+  gain a recipient can see.
 - **`share/` is not committed and has no `--check-stale` gate**, unlike `showcase/gallery/`. A share
   bundle is per-recipient and per-template, so the gallery's "committed but stale" failure mode does
   not apply; the cost is that there is no CI gate proving a *committed* bundle is current, because

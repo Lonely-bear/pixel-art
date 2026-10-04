@@ -669,6 +669,15 @@ structure for terrain, walls and floors, and it is what an agent uses to build a
   order or `frameOrder: "timeline"` for the raw source order; `layout`, `columns`, `padding`,
   `margin`, `onion`, `layers`, `scale`, and `background` control the view. Set
   `format: "gif"` to return an animated image for clients that support playback.
+- `share_bundle` builds a whole share bundle from a `share-templates/*.share.json` preset:
+  the rendered PNG carrying its provenance as `tEXt` chunks, an optional spritesheet,
+  per-frame PNGs, GIF, baked rig pose and `meta.json` with one engine's files, a
+  self-contained HTML card naming every defect and every abstention, and a `share.json`
+  record. Read-only and deterministic, and it writes nothing: each file comes back base64
+  in `files[]` for the caller to place. The template schema is `shareTemplateSchema` on
+  the command, a closed field set the build script does not duplicate. It publishes **no
+  score** - named defect codes only, which is the rule for the whole bundle. See
+  `docs/SHARING.md`.
 - `finalize_document.outputs` can deliver a contact sheet beside source, sheet, frames and GIF;
   `manifest: {path, hashes}` produces an engine-facing bundle inventory.
 - `finalize_document.outputs` also takes `{type: "meta", path}` for the asset contract
