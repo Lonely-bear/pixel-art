@@ -7,6 +7,66 @@ All notable changes to dotloom-mcp are documented in this file.
 </p>
 
 ## [Unreleased]
+### Added
+
+- **`docs/STABILITY.md`, and a guard that reads it.** The 1.0 stability contract, written as the
+  other normative documents here are written: a rule and the reason for it. What is stable is nine
+  exports of the published package - `buildSprite`, `buildAnimation`, `exportAssets`,
+  `getDirectionModel`, `buildWalkAnimation`, `exportEngineAssets`, `traceSvg`, `VERSION`,
+  `API_VERSION` - plus the three internal namespaces `core`, `mcp`, `script`, which are shipped
+  and named as the escape hatch rather than promised. `API_VERSION` stays at `'1'`: the four
+  names added since it was set were additions, and an addition is additive.
+
+  The negative half is the part that had not been written down. Not stable: the 32-module engine
+  barrel behind `core`, the MCP tool list and its parameters (deliberately budgeted, and promoted
+  out of the command catalogue on demand), the CLI flag surface, command parameter schemas, the
+  quality pipeline's numbers, and the share card's layout. Each entry names the guard that owns
+  it, so `mcp-tool-list` is not a promise nobody checks - it is
+  `packages/mcp/test/tool-surface.test.ts`.
+
+- **The `.pixel` format's promise is stated plainly, in the direction that costs us.** Forward
+  compatibility is **not** promised: a file written by a newer build is refused by an older one,
+  and a future build is not obliged to open yours. What is promised at 1.0 is that format version
+  1 and 2 load, that a non-integer or sub-1 version is refused, and that the archive is
+  byte-reproducible. A committed `.pixel` is a migration, not a permanent artefact, so pin the
+  package version in the same commit as the artwork. This is deliberately narrower than
+  `docs/ASSET-CONTRACT.md`'s additive-fields story, and the document says why: an integrator reads
+  `meta.json` in someone else's repository and cannot be asked to upgrade; a `.pixel` is read by
+  the build that wrote it.
+
+- **The share-bundle ruling is a rule now, not folklore.** A share bundle is a view of the
+  contract - the same engine files, the same `meta.json`, plus a card and provenance - and never a
+  second kind of artifact. So a new export target is a renderer over `renderAssetBundle`, not a
+  new pipeline. Whether the share machinery is eventually refactored *into* that renderer is
+  undecided and is deliberately left open; the rule constrains what such a refactor may produce
+  rather than requiring one.
+
+- **A deprecation rule, and deliberately no deprecation mechanism.** Nothing is deprecated at 1.0,
+  so there is no marker to honour and no `@deprecated` handling was built: a tag, a lint rule and a
+  convention with no user would be three artefacts that rot, and a rotted contract is worse than
+  none. The rule for when there is one - announced in both changelogs, kept working for the rest
+  of the major version, removal bumps `apiVersion`, never silently repurposed - is written down so
+  the next lane does not have to invent it.
+
+- **`packages/core/test/stability-contract.test.ts`.** Parses the declaration out of
+  `docs/STABILITY.md` and checks it against the real published entry in **both** directions: a
+  declared name that is not exported fails, and an export that is not declared fails. It also pins
+  `API_VERSION` and `PIXEL_FORMAT_VERSION` from the same block, compares the declaration with the
+  independent `STABLE`/`INTERNAL` arrays in `npm-surface.test.ts` so the two cannot disagree,
+  asserts the stable set is still a small fraction of the internal barrel so it cannot be widened
+  into "whatever core exports", and asserts that exactly one declaration block exists - deleting
+  the contract is a failure, because a contract whose absence is silence is one that can be
+  removed by accident.
+
+  Proven to fail, not assumed to: adding a fictional name, removing a real one, and deleting the
+  block each turn it red, with the output quoted in the lane report. The declaration is a
+  fenced block tagged `json stable-surface` rather than front matter, because `packages/core` ships
+  four runtime dependencies and none parses YAML, and because a named fence is one deterministic
+  where front matter is "everything above the first blank line" - a shape a prose edit moves
+  quietly.
+
+### Changed
+
 ### Changed
 
 - **One asset-bundle renderer, in core.** `renderAssetBundle` is now the single place that builds a

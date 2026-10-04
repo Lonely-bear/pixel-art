@@ -134,8 +134,7 @@ templates ship: `bare`, `card`, `review` and `handoff`. The badge is metadata an
 in, because a burned badge destroys pixels the content hash covers and cannot be recovered by
 anyone who did not watch it happen.
 
-Still to do in this phase: a 1.0
-stabilisation pass, and the long-form writing about the lazy tool surface and the single bus.
+Still to do in this phase: the long-form writing about the lazy tool surface and the single bus.
 Gallery *hosting* is still under "Needs a human" below — it needs an account. The build job
 uploads the page as an artifact and stops there.
 
@@ -155,6 +154,9 @@ uploads the page as an artifact and stops there.
 
 Small, and listed so nobody rediscovers them:
 
+- `docs/STABILITY.md` has **no Chinese mirror**. D-3 asks for one per English doc, and this one
+  is the document a user reads before pinning a version, so the gap is worth a lane. It is not
+  listed here as "fine" — the mirror is missing.
 - **Closed.** `docs/ASSET-CONTRACT-ZH.md`, `docs/EVALUATION-ZH.md` (§4.4 and §7 only — the
   header says so, and the remaining sections are still unmirrored), and the missing
   `CHANGELOG.md` entries in `CHANGELOG-ZH.md` now exist, and so do `docs/ACTION-ZH.md` and
