@@ -1159,7 +1159,7 @@ export const verifyQualityCommand = defineCommand({
     '## No score to climb\n\n' +
     'The gate refuses on named defects and named floors. It does not report how far from passing ' +
     'anything is, does not grade the artwork, and does not publish a number that could become a ' +
-    'target — `docs/EVALUATION.md` §3 deleted a `quality_report` tool for exactly that reason and ' +
+    'target — `dev/EVALUATION.md` §3 deleted a `quality_report` tool for exactly that reason and ' +
     'this command is written so that it cannot become the next one.',
   readOnly: true,
   params: z

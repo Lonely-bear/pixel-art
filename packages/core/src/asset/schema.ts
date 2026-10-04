@@ -11,7 +11,7 @@ import { z } from 'zod';
  * this schema are bound together by `test/asset-contract.test.ts`, which *parses the
  * specification's field table* and fails when a field here has no row there or a row there
  * has no field here. That is the same drift guard `quality-weights.test.ts` puts on
- * `docs/EVALUATION.md`, and for the same reason: a duplicated literal only relocates drift,
+ * `dev/EVALUATION.md`, and for the same reason: a duplicated literal only relocates drift,
  * it does not detect it.
  *
  * The field order below is not cosmetic. It is the order the bytes are written in, because

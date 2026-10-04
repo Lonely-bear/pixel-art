@@ -18,6 +18,11 @@
 reference (command catalogue, MCP internals, scripting, tilemaps). Read them before changing
 behaviour they describe — they are accurate and load-bearing.
 
+`docs/` is what a product user or an integrator is handed, and `docs/README.md` indexes it. The
+locked product decisions (D-1..D-6) live in `dev/DECISIONS.md`, which is not in the npm `files`
+allowlist. `dev/EVALUATION.md` looks like developer material but **cannot move**: a test resolves
+it by path (see `dev/README.md`), so the specification and the code are pinned to each other.
+
 ## Commands
 
 ```bash
@@ -103,8 +108,8 @@ So, before registering any measure:
 - **PowerShell `Get-Content` / `Set-Content` destroys UTF-8 in this repo.** It re-decodes as the system
   codepage and silently mangles every em dash and every `§`. Use the `write` tool or a Node script with
   `readFileSync`/`writeFileSync`. Two agents have lost work this way.
-- **Line endings are not interchangeable.** `docs/EVALUATION.md`, `README*.md`, `CHANGELOG*.md` and
-  `TASKS.md` are CRLF and the `edit` tool cannot match multi-line blocks in them — use single-line
+- **Line endings are not interchangeable.** `dev/EVALUATION.md`, `README*.md` and
+  `CHANGELOG*.md` are CRLF and the `edit` tool cannot match multi-line blocks in them — use single-line
   anchors or a Node script splicing `\r\n`. `benchmarks/corpus/baseline.md` must stay **LF**, because
   the corpus test generates it with LF-joined strings and compares byte for byte.
 - **`packages/*/dist` is build output.** A stale `dist` has made an inverted band table look correct
@@ -187,8 +192,9 @@ Things that will bite:
 
 ## The MCP tool surface is budgeted
 
-The advertised tool list is deliberately 37 entry-point tools (`describe_recipe` was the 37th, and
-`docs/REFERENCE.md` lists them); the 94 core commands are **not** in it until a session touches one.
+The advertised tool list is deliberately ~38 entry-point tools (38 over stdio: 37 shared with the
+app's HTTP host plus `get_connection_status`; `docs/REFERENCE.md` lists them); the core commands are
+**not** in it until a session touches one.
 `commands: 'lazy'` promotes a command to a first-class tool when it is looked up
 (`list_commands`/`describe_command`/`find_workflow`) or actually run (`apply_ops`/`run_script`), and
 announces the new list.
@@ -200,7 +206,8 @@ announces the new list.
 
 - A new **core command costs nothing** in the tool list. A new **session tool** (`addTool` in
   `packages/mcp/src/tools.ts`) eats a fixed budget: `tool-surface.test.ts` asserts
-  `tools.length <= 40` and total advertised bytes `<= 100_000`. Raise the number in the same commit
+  `tools.length <= 40` and total advertised bytes `<= 71_000` (38 tools, ~70.7K bytes, as of
+  2026-10-04; it was 100_000 before the 2026-10 diet). Raise the number in the same commit
   and say why in the test name.
 - Every tool must declare an `outputSchema` (defaults to `TOOL_RESULT_ENVELOPE`) and all four risk
   hints (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), derived from the
@@ -223,7 +230,7 @@ is the single most important design lesson in this repository:
 
 Any score handed to an agent becomes the target instead of the artwork. That is Goodhart's law
 arriving on schedule, and it is why this project ships *procedural craft guidance*
-(`docs/EVALUATION.md`, `pixel://skill`) and a read-only perception channel (`read_grid`,
+(`dev/EVALUATION.md`, `pixel://skill`) and a read-only perception channel (`read_grid`,
 `get_preview`) rather than a verdict.
 
 The replacement quality pipeline (`packages/core/src/quality/`) is being built with that in mind:

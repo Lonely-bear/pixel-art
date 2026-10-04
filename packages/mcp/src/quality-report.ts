@@ -299,7 +299,7 @@ function reportNotes(report: QualityReport): string[] {
           ? 'no asset class was given, so it was derived from the frames and the canvas size'
           : 'the caller named the asset class'
       }). A total is not comparable across profiles, and the weights are chosen numbers under ` +
-      'review rather than measured ones - see docs/EVALUATION.md 5.2.',
+      'review rather than measured ones - see dev/EVALUATION.md 5.2.',
   );
 
   if (measured === 0) {

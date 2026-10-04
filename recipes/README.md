@@ -118,7 +118,7 @@ There is deliberately **no field anywhere in the schema** for a target quality, 
 to clear, a percentage, or a dimension to optimise — and the top-level object is `.strict()`,
 so adding one is a schema change that has to be argued for in review rather than something a
 recipe author can slip in with a stray key. When a check needs a number it belongs in
-`docs/EVALUATION.md`, which is calibrated against human raters, not in an art-direction brief
+`dev/EVALUATION.md`, which is calibrated against human raters, not in an art-direction brief
 that no human ever rated.
 
 This is also why `checks` are *questions with yes/no answers* and a read-only tool, never
@@ -294,7 +294,7 @@ the current build advertises, which is the same catalogue the MCP server walks.
 
 ## Related
 
-- `docs/EVALUATION.md` — the scoring specification. Where the numbers that measure artwork
+- `dev/EVALUATION.md` — the scoring specification. Where the numbers that measure artwork
   live, and where a threshold belongs instead of in a recipe.
 - `pixel://skill` — the general craft guide (`packages/mcp/src/skill.ts`). A recipe is the
   asset-class-specific companion to it; it does not restate it.

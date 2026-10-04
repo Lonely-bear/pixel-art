@@ -26,7 +26,7 @@
  * clear, a percentage, or a dimension to optimise — and the top-level object is
  * `.strict()`, so adding one is a schema change that has to be argued for in review
  * rather than something a recipe author can slip in with a stray key. When a check needs
- * a number it belongs in `docs/EVALUATION.md`, which is calibrated against human raters,
+ * a number it belongs in `dev/EVALUATION.md`, which is calibrated against human raters,
  * not in an art-direction brief that no human ever rated.
  *
  * ## Why the validation lives here and not in `packages/mcp`

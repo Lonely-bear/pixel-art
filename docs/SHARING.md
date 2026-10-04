@@ -3,7 +3,7 @@
 > Two things a person can actually send to another person: a PNG that says where it came from, and
 > a bundle that says what is wrong with it. Neither may contain a number.
 
-`dotloom-mcp` ships a build-time gallery (`scripts/build-gallery.mjs`, `docs/ROADMAP.md` Phase 2)
+`dotloom-mcp` ships a build-time gallery (`scripts/build-gallery.mjs`,
 and a share bundle builder (`scripts/build-share.mjs`). The gallery publishes a page; this publishes
 a **bundle**, per piece, from a template. Everything here is a build artifact driven through the
 advertised MCP tool surface.

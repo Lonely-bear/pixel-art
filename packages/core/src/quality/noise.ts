@@ -166,7 +166,7 @@ function neighbourCounts(
  * §4.4's first version asked whether `p` has a same-bucket **4-neighbour**, and its own worked
  * example listed the cases that answer "no" — a material edge, an outline's inner edge, a smooth
  * shading plane. **Two of those three rows are false as written**, and the measurement is in
- * `docs/EVALUATION.md` §7:
+ * `dev/EVALUATION.md` §7:
  *
  *   - **A 1px outline drawn as a staircase.** Every corner pixel of the contour has no same-bucket
  *     4-neighbour; the rest of the contour reaches it diagonally. `control/outline-ring-32` — a

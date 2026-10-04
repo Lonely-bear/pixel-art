@@ -333,7 +333,7 @@ today**, so the exemption cannot quietly become the norm.
 
 **The one thing a byte comparison cannot see:** whether the artwork is any good. The manifest
 pins what the pipeline produced, not that it was the right answer. Judging the pictures is
-[`docs/EVALUATION.md`](EVALUATION.md)'s job, and it needs human raters.
+[`dev/EVALUATION.md`](EVALUATION.md)'s job, and it needs human raters.
 
 ---
 

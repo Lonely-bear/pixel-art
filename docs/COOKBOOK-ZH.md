@@ -313,7 +313,7 @@ Asset naming refuses this bundle: 1 error(s) [reserved-name]. First: "outputs[0]
 任何示例使用它**，所以这项豁免不会悄悄变成常态。
 
 **字节比对看不见的唯一一件事：** 画面到底好不好。manifest 钉住的是管线产出了什么，而不是
-那是不是正确答案。评判这些图是 [`docs/EVALUATION.md`](EVALUATION.md) 的工作，而它需要人类
+那是不是正确答案。评判这些图是 [`dev/EVALUATION.md`](EVALUATION.md) 的工作，而它需要人类
 评分者。
 
 ---

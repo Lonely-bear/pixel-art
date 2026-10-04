@@ -19,7 +19,7 @@
 # spend twelve minutes re-rendering twelve pieces.
 #
 # The output is uploaded as an artifact rather than published. Gallery *hosting*
-# is listed in `docs/ROADMAP.md` under "Needs a human": it needs an account, so
+# is listed as "Needs a human" in the repository's issue tracker: it needs an
 # this job produces the thing and stops there.
 
 name: gallery

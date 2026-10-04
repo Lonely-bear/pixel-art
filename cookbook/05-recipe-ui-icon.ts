@@ -23,7 +23,7 @@
  *      scores: measure the mark, and ask `evaluate` for **named defects**.
  *
  * Step 4 is where the discipline matters. Nothing in this file compares a number to
- * a target. `docs/EVALUATION.md` owns the thresholds; this file prints defect
+ * a target. `dev/EVALUATION.md` owns the thresholds; this file prints defect
  * *names* and the sentence that says what to do about each one, because a build
  * script that showed a score would turn that score into the artwork.
  */

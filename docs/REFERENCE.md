@@ -263,9 +263,9 @@ and fail loudly when it is not there.
 
 ### What it exposes
 
-- **A small declared surface plus an on-demand command catalog.** The advertised list is 37
+- **A small declared surface plus an on-demand command catalog.** The advertised list is 38
   tools over stdio, measured with `node scripts/mcp-call.mjs list`; that number drifts, so
-  re-measure it rather than copying it out of a document. 36 of them are shared with the app's
+  re-measure it rather than copying it out of a document. 37 of them are shared with the app's
   HTTP host — the session, perception, export and discovery tools: `create_document`, `create_sprite_spec`,
   `open_document`, `save_document`, `finalize_document`, `import_image` (PNG or Aseprite),
   `select_document`, `close_document`, `list_documents`, `get_document`, `get_preview`, `preview_pose`,
@@ -278,7 +278,7 @@ and fail loudly when it is not there.
   whether it is editing the app or an in-memory store.
 
   The ~90 core commands (`draw_rect`, `autotile`, `create_tileset`, `add_palette_ramp`, …) are **not**
-  in that list up front: shipping all 127 cost ~55K tokens of tool definitions in the context of every
+  in that list up front: shipping the whole catalogue cost ~55K tokens of tool definitions in the context of every
   request. They are reachable three ways, and all of them *promote* the command to a real tool once this
   session touches it:
 
@@ -292,7 +292,7 @@ and fail loudly when it is not there.
   Responses name what was promoted in `promotedTools`, and `list_commands` marks each catalogue entry
   `tool: true` once it is directly callable. So the tool list tracks the work rather than guessing up
   front. `apply_ops` runs any command inline with or without promotion, so nothing is unavailable.
-  Pass `commands: 'eager'` to `createPixelServer` for the old flat 127-tool surface.
+  Pass `commands: 'eager'` to `createPixelServer` for the old flat catalogue-everything surface.
 
   `list_commands` returns the runnable command catalogue plus a `sessionTools` list, so
   `undo`/`redo`/`get_history`, `apply_ops`, and the perception/export tools are discoverable
@@ -309,7 +309,7 @@ and fail loudly when it is not there.
   changing the session focus.
 - **Declarations that are dialled in, not repeated.** Two arguments, `document` and `expectedVersion`,
   are accepted by every tool and are *not* advertised in every schema — they were 9.4K tokens of
-  "operate on the active document" restated 127 times, and the server instructions say it once instead.
+  "operate on the active document" restated once per command, and the server instructions say it once instead.
   Safe-integer bounds from zod (`minimum: -9007199254740991`) are stripped from the advertised form:
   521 occurrences, 28.7KB, none of them actionable. Validation still runs against the full strict
   schema, so nothing is loosened — only the advertisement changed. Every tool declares all four risk

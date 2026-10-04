@@ -28,7 +28,7 @@ import {
 
 // `packages/core/test/` -> `packages/core/` -> `packages/` -> repo root. Three levels: a
 // path that resolves to the wrong directory has to fail here, not quietly find nothing.
-const SPEC_PATH = fileURLToPath(new URL('../../../docs/EVALUATION.md', import.meta.url));
+const SPEC_PATH = fileURLToPath(new URL('../../../dev/EVALUATION.md', import.meta.url));
 const SECTION = '§5.1';
 
 function readSpec(path: string): string {

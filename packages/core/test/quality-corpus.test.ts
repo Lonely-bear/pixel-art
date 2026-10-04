@@ -56,7 +56,7 @@ import * as silhouette from '../src/quality/silhouette.js';
  * put there on purpose. Those are regression guards with expected values. The real artwork answers a
  * different question ("does the analyzer stay quiet on good work it was not designed around"), and
  * the human tier - empty on arrival - is the only one that can speak to taste, because
- * `docs/EVALUATION.md` §6.1 is explicit that algorithmic labels cannot calibrate an algorithm.
+ * `dev/EVALUATION.md` §6.1 is explicit that algorithmic labels cannot calibrate an algorithm.
  *
  * This file therefore has five jobs, and the first is the one a corpus most often gets wrong:
  *
@@ -136,7 +136,7 @@ function paletteFrameOf(id: string) {
 }
 
 /**
- * Every code `silhouette` can emit, from `docs/EVALUATION.md` Appendix A.
+ * Every code `silhouette` can emit, from `dev/EVALUATION.md` Appendix A.
  *
  * Named here because two of the tests below are about one dimension on purpose: the aggregator
  * applies `value` to a full-bleed scene and `silhouette` does not, so "the report says nothing
@@ -153,7 +153,7 @@ const SILHOUETTE_CODES = [
   'thin-profile',
 ] as const;
 
-/** Every code `palette` can emit, from `docs/EVALUATION.md` §4.3's issue table. */
+/** Every code `palette` can emit, from `dev/EVALUATION.md` §4.3's issue table. */
 const PALETTE_CODES = [
   'colour-budget-exceeded',
   'grey-colours',
@@ -1113,7 +1113,7 @@ describe('the tier boundary is structural, not a comment', () => {
   });
 
   it('refuses to let a real case assert taste: no expected codes, no expected verdict', () => {
-    // The rule that makes the tier mean something. `docs/EVALUATION.md` §6.1 and the decision this
+    // The rule that makes the tier mean something. `dev/EVALUATION.md` §6.1 and the decision this
     // roadmap has already made twice: there is one human-rated asset in this repository, and
     // asserting an expected code list against it is fitting noise. A `real` case may assert
     // applicability facts and may record measurements as a drift baseline; it may not say what the
@@ -1978,7 +1978,7 @@ describe("this repository's own artwork, which is real and unlabelled", () => {
     // them that is also a cut between them and a snapping miss, because §4.3's membership test is
     // *exact*. The icon is not "more undisciplined" than `artwork/dusk-lake-valley-agent.pixel` at 36
     // per-mille — it is a different thing, and the threshold has no way to say which. So the gate
-    // stays where §4.3 puts it and the cost is recorded in `docs/EVALUATION.md` §7 item 3.
+    // stays where §4.3 puts it and the cost is recorded in `dev/EVALUATION.md` §7 item 3.
     expect(paletteFrameOf('control/clean-figure-20').offPaletteQ).toBe(0);
     expect(paletteFrameOf('app/icon.png').offPaletteQ).toBe(1000);
   });

@@ -460,7 +460,8 @@ A good first real request after that:
 
 ### What you will see in the tool list
 
-The server advertises **37 tools**. That is deliberate, not a truncated list: the ~90
+The server advertises **38 tools** over stdio (37 of them are also served by the desktop app's
+HTTP host). That is deliberate, not a truncated list: the ~90
 drawing, palette, rig and tilemap commands behind them are published on demand so they do
 not consume the context window of every message. Ask the assistant for
 `list_commands` to see the full catalogue, and `describe_command` with a command's name to

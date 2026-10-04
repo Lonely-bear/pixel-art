@@ -2428,7 +2428,7 @@ because "there is no shape to read a contour around" is a stronger and different
 subject chose no contour", and a scene's framing is not a stylistic decision. `app/icon.png`
 reads `inkCount` **0** and `inkColours` **0**: it is a soft-edged render with no pixel anywhere on
 its boundary 20 `Lq` darker than its neighbourhood, so it reports no contour rather than a
-spurious one. (`docs/ROADMAP.md` predicted that `outline` would read `curvedQ max` 818 on the icon
+spurious one. (The roadmap predicted that `outline` would read `curvedQ max` 818 on the icon
 as `value` does. **It does not compute a curvature at all**, and 818 is `value`'s own reading.
 #### Three further findings, all measured against the shipped predicate
 
@@ -3291,7 +3291,7 @@ T-022 computes, per dimension and overall:
 | Confusion vs. the 3-way overall judgement at the `pass` threshold | reported, not targeted | Whether the gate line is in the right place. |
 | §6.2 contrast-pair separation | every pair ordered correctly, by a margin worth arguing about | Whether each measurement is aimed at the thing it claims. **This one is a gate, not a statistic** — a failing pair is a bug, and no correlation rescues it. |
 
-`r > 0.70` is the acceptance bar quoted in TASKS.md T-025, and it is a *low* bar. It says
+`r > 0.70` is the acceptance bar locked in `dev/DECISIONS.md`, and it is a *low* bar. It says
 the scorer is a useful second opinion, not that it is right. Any claim stronger than that
 would need a stronger number than 200 images can produce.
 

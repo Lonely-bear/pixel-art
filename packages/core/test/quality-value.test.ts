@@ -85,7 +85,7 @@ function spriteOf(palette: readonly string[], rows: readonly (readonly [Row, str
   // palette the sprite declares, so every one of them was **100% off-palette** against the default
   // 16-entry DawnBringer — including `nested`, the *correct* artwork in the contrast pair this file
   // exists for, whose report flipped from `pass` to `fail` on a defect it never had. That is
-  // `docs/EVALUATION.md` §7 item 3 in its purest form: the document's palette was never this
+  // `dev/EVALUATION.md` §7 item 3 in its purest form: the document's palette was never this
   // picture's palette, and the mitigation is upstream, not a looser gate.
   const sprite = createSprite({
     width: 32,

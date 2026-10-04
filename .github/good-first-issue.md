@@ -65,11 +65,11 @@ or the tool surface. Ask for it to be labelled if you find one.
 - Anything that adds a runtime dependency, changes the `.pixel` container format, or moves
   a rule between the layers of the bus.
 - Anything that adds to the advertised MCP tool list. The list is budgeted
-  (`tools.length <= 40`, advertised bytes `<= 100_000`) and a new session tool is a
+  (`tools.length <= 40`, advertised bytes `<= 71_000`) and a new session tool is a
   design decision, not a contribution.
 - A refactor across packages. Tempting, and much better as a conversation first.
 - A new drawing command. The catalogue is past the point where a model can choose well
-  between options; see [D-6 in the roadmap](../TASKS.md) for the reasoning.
+  between options; see [D-6 in `dev/DECISIONS.md`](../dev/DECISIONS.md) for the reasoning.
 
 ## Bar for the PR
 

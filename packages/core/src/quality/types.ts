@@ -602,7 +602,7 @@ export function assertReportInvariants(report: QualityReport): void {
  *
  * Re-tuning these moves every committed baseline, so it is a product decision and not a
  * code cleanup. `test/quality-weights.test.ts` parses this table back out of
- * `docs/EVALUATION.md` §5.1 and fails the build when the two disagree, because the spec
+ * `dev/EVALUATION.md` §5.1 and fails the build when the two disagree, because the spec
  * and the code were written in parallel once already and disagreed silently.
  */
 export type QualityWeights = Readonly<Record<QualityDimensionId, number>>;

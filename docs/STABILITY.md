@@ -175,7 +175,7 @@ the current build.
 ### 3.5 The quality pipeline's numbers
 
 **No score is stable, and none is exposed by this contract.** A quality *dimension* may be added,
-renamed, reweighted or removed; the `unmeasured` contract (`AGENTS.md`, `docs/EVALUATION.md`) is
+renamed, reweighted or removed; the `unmeasured` contract (`AGENTS.md`, `dev/EVALUATION.md`) is
 the part that is load-bearing, not the weights. The reason is not fastidiousness: a
 `quality_report` tool shipped once, was deleted in 0.3.1, and a model told the number was "clean"
 sanded a lake into a dark flat rectangle. Anything an agent can read as a number to move toward
