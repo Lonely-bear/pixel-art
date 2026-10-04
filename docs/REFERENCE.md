@@ -519,8 +519,10 @@ and fail loudly when it is not there.
   later render drift. Baking classifies destination layers: part-owned layers are driven
   by the pose and cleared when it empties them (`clearedPartLayers`), while layers the rig
   does not own are the destination's own and are left alone (`preservedLayers`).
-- Rig-bearing `.pixel` files use container format v2. Version-1 files remain readable, and
-  rig-free documents continue to write v1 for compatibility.
+- `.pixel` files use container format v2, which is the manifest with `sprite.rig` in it. The
+  version describes the format, not the payload: every file is stamped
+  `PIXEL_FORMAT_VERSION`, with or without a rig. Version-1 files remain readable, and
+  `manifest.version > PIXEL_FORMAT_VERSION` is refused.
 - `create_sprite_spec` is a declarative structural scaffold: layers, frames, tags, semantic
   palette roles and an optional rig in one call. It creates no artwork or art-direction
   decisions beyond the supplied structure.

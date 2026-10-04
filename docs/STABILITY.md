@@ -225,6 +225,30 @@ only if that consumer is recompiled.
 per cel. This is the dependency users feel most, and it is the one this repository controls least,
 so the promise here is deliberately narrower than for the library API.
 
+### 5.1 What the version number is
+
+**The version describes the format, never the payload, and it is stamped unconditionally.**
+
+- **Version 1** is the manifest without `sprite.rig`.
+- **Version 2** is that manifest with `sprite.rig` in it — parts, poses, tweens, anchors and
+  hitboxes. That is the *whole* of the difference, and it is the only change ever made to the
+  number. The later move to positional cel and tilemap entry names was deliberately additive
+  and stayed on version 2; the reasoning is written at the point of decision in
+  `packages/core/src/serialize.ts`.
+
+Two consequences follow, and both are the point:
+
+- **Adding a rig does not change the container version.** It used to: the writer stamped
+  `sprite.rig ? PIXEL_FORMAT_VERSION : 1`, so the same document declared version 1 or 2
+  depending on one optional field, and the archive bytes of a rig-less document moved the
+  moment a rig was attached. A version number that reports the document's contents is not a
+  version number.
+- **A rig-less file written today is stamped `2` and is refused by a build that only knows
+  version 1** — that is npm `0.1.0` through `0.1.3`, the releases before rigs existed. Those
+  releases could not write a rig at all, and every release from `0.2.0` onwards accepts
+  version 2, so this is a one-way door that is only open backwards in time. It is recorded
+  here rather than left implicit.
+
 - **Forward compatibility is not promised.** A `.pixel` file written by a build newer than yours
   will be **refused** — `manifest.version > PIXEL_FORMAT_VERSION` throws
   `File was written by a newer version`. There is no attempt to read a future file and no partial
@@ -241,7 +265,10 @@ so the promise here is deliberately narrower than for the library API.
 - What *is* promised at 1.0: `format` is `pixel-art/sprite`, version `1` and `2` load, a
   non-integer or sub-1 version is refused, and the archive is byte-reproducible for a given
   document (zip entry timestamps are pinned, which is what makes "the source did not change"
-  checkable rather than hopeful).
+  checkable rather than hopeful). Byte-reproducible means a pure function of the document *and
+  the format version*: a rig-less `.pixel` file saved by a build that stamps version 2
+  differs by one number from the same file saved by a build that stamped version 1, and the
+  committed hash moves once, on re-save.
 
 The contrast with `docs/ASSET-CONTRACT.md` is deliberate and is the point of reading both. The
 asset contract has a real forward-compatibility story — additive fields only, readers ignore what

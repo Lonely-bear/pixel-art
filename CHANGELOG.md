@@ -95,6 +95,25 @@ All notable changes to dotloom-mcp are documented in this file.
 
 ### Fixed
 
+- **The `.pixel` manifest version describes the format, not the payload.** The writer
+  stamped `sprite.rig ? PIXEL_FORMAT_VERSION : 1`, so a rig-less document declared itself
+  format version 1 and the same document declared version 2 the moment a rig was attached. The
+  number was reporting one optional field of the document while claiming to be the container's
+  version, which made `PIXEL_FORMAT_VERSION = 2` mean "the version a rig requires" instead of
+  "the current format version" — and made the archive bytes of a rig-less document a function of
+  its payload rather than of its content. Every file is now stamped `PIXEL_FORMAT_VERSION`
+  unconditionally. What version 2 *is* is written down where the decision is made: version 1 is
+  the manifest without `sprite.rig`, version 2 is that manifest with it, and nothing else has
+  ever moved the number.
+
+  Backwards compatibility is unchanged where it was promised — `manifest.version` 1 still loads,
+  and `packages/core/test/serialize-reproducible.test.ts` now proves it on a genuine version-1 zip
+  rather than asserting it. The cost is recorded rather than hidden: a rig-less file written now
+  is stamped 2 and is refused by npm `0.1.0` through `0.1.3`, the releases that predate rigs and
+  knew only version 1. Every release from `0.2.0` onwards accepts version 2, and those releases
+  already wrote v1 for every rig-less document, so the exposure is a reader pinned four minor
+  versions behind.
+
 - Nothing shipped changed a byte. `build-share.mjs --verify` reports byte-identical output for 210
   files across two generations, and `build-gallery.mjs --check-stale` reports the committed gallery
   matches a fresh build.

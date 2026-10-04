@@ -21,8 +21,8 @@
           "sha256": "d3472a9d87a206f5497a48ef3b4687d89844a3a31852a1b6db786c533c87c222"
         },
         "slime.pixel": {
-          "bytes": 1234,
-          "sha256": "43e139ffdf6501b1ff2787f263cf8a0666ec6a016e1b991c2ddc4a7580c86fa8"
+          "bytes": 1236,
+          "sha256": "b176d9e835401b5fad97fbcc89407c7d133671fe64033fd1546a5ba48b55d754"
         }
       }
     },
@@ -105,8 +105,8 @@
           "sha256": "b8d523b3c22159785b44112020f492aa10fe98672935005448bcd9e9988440e0"
         },
         "leaf.pixel": {
-          "bytes": 725,
-          "sha256": "9e000b1165616b76f23726c96014eedddd4c55128fddc8ec0d3f3a77bcba636c"
+          "bytes": 726,
+          "sha256": "e1517e7e2094fec370fd2826f8146874ec4e19e490a327271d179b192fa6bf28"
         },
         "refusal.txt": {
           "bytes": 74,

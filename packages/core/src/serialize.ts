@@ -52,6 +52,41 @@ import { decodePNG, encodePNG } from './png.js';
  */
 
 export const PIXEL_FORMAT = 'pixel-art/sprite';
+
+/**
+ * The version of the *container*, stamped unconditionally into every manifest.
+ *
+ * It describes the format and not the payload. Version 1 is the manifest without
+ * `sprite.rig`; version 2 is that manifest plus `sprite.rig` (parts, poses, tweens,
+ * anchors, hitboxes). Nothing else has ever moved the number: the positional entry
+ * naming described above was deliberately additive and stayed on the same version.
+ *
+ * This used to be written `sprite.rig ? PIXEL_FORMAT_VERSION : 1`, and the reason
+ * that matters is not the bug but the bug's history: **that conditional was a
+ * downgrade shim, introduced by the rig commit itself** (`760e98d`), on which the
+ * constant also went 1 → 2. It existed so a rig-less document would keep opening in
+ * the 0.1.x builds still in circulation at the time. Every commit before it stamped
+ * `PIXEL_FORMAT_VERSION` unconditionally.
+ *
+ * So this is a **restoration, not a redesign**, and it is worth knowing that before
+ * changing it again. The shim outlived its purpose silently: nothing marked it
+ * expiring, so four minor versions later the temporary measure had become the
+ * de facto meaning of the number, and the constant had quietly stopped describing
+ * the format. A rig-less document's archive bytes changed the moment a rig was
+ * added — a version number moving in response to artwork — which is the opposite of
+ * what a format version is for.
+ *
+ * The reader accepts `1..PIXEL_FORMAT_VERSION`, so stamping the constant keeps every
+ * version-1 file loadable and costs nothing in that direction. The cost is in the
+ * other one: a build whose `PIXEL_FORMAT_VERSION` is `1` — npm 0.1.0 through 0.1.3,
+ * the releases before rigs existed — will now refuse a rig-less file written by a
+ * current build. Those releases predate the rig, could not have written one, and
+ * 0.2.0 onwards all understand version 2; the exposure is real, bounded and one-way.
+ *
+ * **If you are here to make the number describe something else, do not reach for the
+ * conditional.** Change the reader and the writer together, and pay the version bump
+ * honestly. A payload-dependent version number is not a compatibility feature.
+ */
 export const PIXEL_FORMAT_VERSION = 2;
 
 /**
@@ -127,7 +162,9 @@ export function serializeSprite(sprite: Sprite): Uint8Array {
 
   const manifest: SpriteManifest = {
     format: PIXEL_FORMAT,
-    version: sprite.rig ? PIXEL_FORMAT_VERSION : 1,
+    // The container's version, not the document's: see PIXEL_FORMAT_VERSION. A manifest
+    // must not declare a different container version because one optional field is absent.
+    version: PIXEL_FORMAT_VERSION,
     sprite: {
       id: sprite.id,
       name: sprite.name,

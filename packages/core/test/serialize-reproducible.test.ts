@@ -11,7 +11,7 @@ import {
   ZIP_MTIME,
   type Sprite,
 } from '../src/index.js';
-import { deserializeSprite, PIXEL_FORMAT, type SpriteManifest } from '../src/serialize.js';
+import { deserializeSprite, PIXEL_FORMAT, PIXEL_FORMAT_VERSION, type SpriteManifest } from '../src/serialize.js';
 import { encodePNG } from '../src/png.js';
 
 /**
@@ -139,7 +139,7 @@ function buildDeterministic(idSeed = 101, opsSeed = 7): Uint8Array {
  * `tilemaps/<id>.json`, assembled here by hand from a real document, so nothing about
  * the assertion can be satisfied by the writer it is testing.
  */
-function legacyContainer(): { bytes: Uint8Array; source: Sprite } {
+function legacyContainer(version = 2): { bytes: Uint8Array; source: Sprite } {
   const sprite = buildProbeSprite();
   const files: Record<string, Uint8Array> = {};
   const cels: Array<{ layerId: string; frameId: string; path: string }> = [];
@@ -173,7 +173,7 @@ function legacyContainer(): { bytes: Uint8Array; source: Sprite } {
 
   const manifest: SpriteManifest = {
     format: PIXEL_FORMAT,
-    version: 2,
+    version,
     sprite: {
       id: sprite.id,
       name: sprite.name,
@@ -416,6 +416,138 @@ describe('a container written with the pre-T-091 entry names still loads', () =>
     expect(again.tilemaps?.[0].id).toBe(restored.tilemaps?.[0].id);
     expect(Array.from(again.tilemaps?.[0].data ?? [])).toEqual(Array.from(restored.tilemaps![0].data));
     expect(again.tileset?.image.isEqualTo(restored.tileset!.image)).toBe(true);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * The stamped version is the container's
+ * ------------------------------------------------------------------ */
+
+/**
+ * A rig-less document, and the same document with a rig, from one seeded build.
+ *
+ * `buildProbeSprite` is used for the rig side because it is already built through the
+ * command bus; the rig-less side has to come off the *same* ids, or every other
+ * manifest field would move and the version number would be unobservable.
+ */
+function riglessAndRigid(): { rigless: Sprite; rigid: Sprite } {
+  setIdFactory(deterministicIdFactory(4242));
+  try {
+    const editor = createEditor(createSprite({ width: 8, height: 8, layers: ['ink'] }));
+    editor.execute('draw_rect', {
+      layer: 0, frame: 0, rect: { x: 1, y: 1, w: 4, h: 4 }, color: '#ff8800', fill: true,
+    });
+    const rigless = editor.sprite;
+    editor.execute('create_rig', { restFrame: 0, parts: [{ name: 'body', pivot: { x: 4, y: 7 }, layers: ['ink'] }] });
+    return { rigless, rigid: editor.sprite };
+  } finally {
+    setIdFactory(null);
+  }
+}
+
+describe('the manifest version describes the container, not the payload', () => {
+  it('stamps PIXEL_FORMAT_VERSION on a rig-less document', () => {
+    const { rigless } = riglessAndRigid();
+    expect(rigless.rig).toBeUndefined();
+    const manifest = JSON.parse(manifestText(serializeSprite(rigless))) as SpriteManifest;
+    expect(manifest.version).toBe(PIXEL_FORMAT_VERSION);
+    expect(manifest.version).toBeGreaterThan(1); // otherwise this assertion proves nothing
+  });
+
+  it('stamps the same number whether or not a rig is attached', () => {
+    // The discriminating half. Before the fix the second manifest carried 2 and the first
+    // carried 1, so adding a rig changed the container version a file declared about
+    // itself. The number must now be a function of the format and nothing else.
+    const { rigless, rigid } = riglessAndRigid();
+    const before = JSON.parse(manifestText(serializeSprite(rigless))) as SpriteManifest;
+    const after = JSON.parse(manifestText(serializeSprite(rigid))) as SpriteManifest;
+
+    expect(before.sprite.rig).toBeUndefined();
+    expect(after.sprite.rig).toBeDefined();
+    expect(after.version).toBe(before.version);
+    // ... and it is the format's number, not a coincidence of the pair.
+    expect(after.version).toBe(PIXEL_FORMAT_VERSION);
+  });
+
+  it('leaves a rig-bearing archive byte-for-byte unchanged by the stamping rule', () => {
+    // The documents that were already correct must not move: the rig side of the pair
+    // above stamped the constant before the fix and stamps it after it.
+    const sprite = buildProbeSprite();
+    expect(sprite.rig).toBeDefined();
+    const manifest = JSON.parse(manifestText(serializeSprite(sprite))) as SpriteManifest;
+    expect(manifest.version).toBe(PIXEL_FORMAT_VERSION);
+  });
+
+  it('loads a genuine version-1 manifest with no rig in it', () => {
+    // The backwards-compatibility claim, proved on the side that fails if it is false.
+    // Version 1 *is* "the manifest without sprite.rig", so a real v1 file is built from
+    // a rig-less document here — a v1 manifest carrying a rig would be a fixture whose
+    // note contradicts its drawing. The archive is a genuine zip assembled by fflate, not
+    // a mock of one, and it is loaded by the shipped reader.
+    const sprite = riglessAndRigid().rigless;
+    const files: Record<string, Uint8Array> = {};
+    const cels: Array<{ layerId: string; frameId: string; path: string }> = [];
+    sprite.frames.forEach((frame, frameIndex) => {
+      for (const [layerId, buffer] of frame.cels) {
+        if (buffer.isEmpty()) continue;
+        const path = `cels/${frameIndex}_${layerId}.png`;
+        files[path] = encodePNG(buffer);
+        cels.push({ layerId, frameId: frame.id, path });
+      }
+    });
+    const manifest: SpriteManifest = {
+      format: PIXEL_FORMAT,
+      version: 1,
+      sprite: {
+        id: sprite.id,
+        name: sprite.name,
+        width: sprite.width,
+        height: sprite.height,
+        layers: sprite.layers,
+        frames: sprite.frames.map((f) => ({ id: f.id, durationMs: f.durationMs })),
+        tags: sprite.tags,
+        palette: sprite.palette,
+        paletteLocked: sprite.paletteLocked,
+      },
+      cels,
+    };
+    files['manifest.json'] = strToU8(JSON.stringify(manifest, null, 2));
+    const bytes = zipSync(files, { level: 6, mtime: ZIP_MTIME });
+
+    // Guard the guard: it really is a v1 archive with pixels in it.
+    expect(strFromU8(unzipSync(bytes)['manifest.json'])).toContain('"version": 1');
+    expect(cels.length).toBeGreaterThan(0);
+
+    const restored = deserializeSprite(bytes);
+    expect(restored.id).toBe(sprite.id);
+    expect(restored.width).toBe(8);
+    expect(restored.rig).toBeUndefined();
+    expect(restored.layers).toEqual(sprite.layers);
+    const [layer] = sprite.layers;
+    expect(restored.frames[0].cels.get(layer.id)?.isEqualTo(sprite.frames[0].cels.get(layer.id)!)).toBe(true);
+  });
+
+  it('still refuses a version that is not an integer, is below 1, or is above this build', () => {
+    // The other three sides of the gate S5 promises. Pairs with the version-1 test above:
+    // one direction is not a threshold.
+    const sprite = riglessAndRigid().rigless;
+    const withVersion = (version: unknown): Uint8Array => {
+      const bytes = serializeSprite(sprite);
+      const files: Record<string, Uint8Array> = { ...unzipSync(bytes) };
+      const manifest = JSON.parse(strFromU8(files['manifest.json'])) as SpriteManifest;
+      (manifest as { version: unknown }).version = version;
+      files['manifest.json'] = strToU8(JSON.stringify(manifest, null, 2));
+      return zipSync(files, { level: 6, mtime: ZIP_MTIME });
+    };
+
+    expect(() => deserializeSprite(withVersion(0))).toThrow(/Unsupported \.pixel version/);
+    expect(() => deserializeSprite(withVersion(1.5))).toThrow(/Unsupported \.pixel version/);
+    expect(() => deserializeSprite(withVersion('2'))).toThrow(/Unsupported \.pixel version/);
+    expect(() => deserializeSprite(withVersion(PIXEL_FORMAT_VERSION + 1))).toThrow(/newer version/);
+    // ... and the boundary itself is accepted, so the two refusals above are the gate and
+    // not a blanket rejection.
+    expect(() => deserializeSprite(withVersion(PIXEL_FORMAT_VERSION))).not.toThrow();
+    expect(() => deserializeSprite(withVersion(1))).not.toThrow();
   });
 });
 
