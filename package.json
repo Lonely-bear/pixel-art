@@ -42,7 +42,9 @@
     "CHANGELOG-ZH.md",
     "LICENSE",
     "assets",
-    "docs"
+    "docs",
+    "cookbook",
+    "recipes"
   ],
   "scripts": {
     "build:libs": "pnpm --filter @pixel/core build && pnpm --filter @pixel/script build && pnpm --filter @pixel/cli build && pnpm --filter @pixel/mcp build",

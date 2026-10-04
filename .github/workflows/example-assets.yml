@@ -1,0 +1,77 @@
+# Build game assets with dotloom-mcp
+#
+# Two jobs, and the second one is the point. The first proves the Action runs a
+# project's asset build; the second proves the gate actually refuses, by building
+# a document that is defective on purpose and requiring the job to fail.
+#
+# This file is an **example**. It is not part of `ci.yml` or `release.yml` and it
+# is not run by pull request - it is here so a reader can copy six lines into
+# their own repository and see it work.
+
+name: example — assets
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - '.github/actions/build-assets/**'
+      - 'recipes/**'
+      - 'scripts/npm-index.ts'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13'
+
+      # The library is a devDependency of a game project, so the Action installs
+      # it like any other dependency and then runs the project's own build script.
+      # Nothing here knows about dotloom-mcp beyond `import { buildSprite } from
+      # 'dotloom-mcp'` inside the script.
+      - uses: ./.github/actions/build-assets
+        with:
+          install-command: pnpm install --frozen-lockfile
+          command: node .github/actions/build-assets/examples/build-assets.mjs
+          check-command: node .github/actions/build-assets/examples/check-assets.mjs
+          quality-gate: blocking
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generated-assets
+          path: assets/generated
+
+  gate-refuses-a-defect:
+    # A gate that has never been seen to fail is not known to work. This job
+    # builds a document with a defect the gate must refuse, and fails unless the
+    # gate's exit code is non-zero.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Write two control documents
+        run: node .github/actions/build-assets/examples/gate-fixtures.mjs
+
+      - name: The advisory document must pass
+        run: |
+          DOTLOOM_GATE_DIR=tmp/gate-fixtures/passed \
+            node .github/actions/build-assets/gate.mjs
+
+      - name: The defective document must be refused
+        run: |
+          if DOTLOOM_GATE_DIR=tmp/gate-fixtures/refused \
+            node .github/actions/build-assets/gate.mjs; then
+            echo "::error::the quality gate passed a document carrying a blocking defect"
+            exit 1
+          fi

@@ -98,7 +98,7 @@ section below.
 | **Asset contract** | `meta.json`, the generator, the validator, all four importers (Godot, Unity, Phaser, Excalidraw) and the naming-convention validator ship — see `docs/IMPORTERS.md`. Still to write: exposing the importers through `finalize_document` and the MCP tool surface, which is blocked on whether `meta.json` is written next to every export or is one more output the caller opts into; and importers for the contract classes `kind` does not model yet (tilesets, tilemaps). |
 | **SVG trace import** | Raster outline to cel. `.aseprite` native read is possible but needs reverse-engineering verification. |
 | **Stable programmatic API** | The npm package is a devDependency away from being pleasant. |
-| **Cookbook, GitHub Action, team palettes** | Not started. |
+| **Cookbook, GitHub Action, team palettes** | **Cookbook and Action shipped.** `cookbook/` is five runnable examples — first sprite, 8-direction walk cycle, SVG trace, engine export, one recipe end to end — and `packages/core/test/cookbook.test.ts` compiles, runs and byte-compares every one of them, so a snippet cannot rot. `dotloom-mcp/build-assets` runs a project's build in CI and fails it on a refused document, printing named defects and never a score. **Team palettes: not started.** |
 
 ## Phase 2 — spread
 
@@ -123,7 +123,8 @@ Small, and listed so nobody rediscovers them:
 
 - **Closed.** `docs/ASSET-CONTRACT-ZH.md`, `docs/EVALUATION-ZH.md` (§4.4 and §7 only — the
   header says so, and the remaining sections are still unmirrored), and the missing
-  `CHANGELOG.md` entries in `CHANGELOG-ZH.md` now exist. D-3 asks for a mirror per English doc;
+  `CHANGELOG.md` entries in `CHANGELOG-ZH.md` now exist, and so do `docs/ACTION-ZH.md` and
+  `docs/COOKBOOK-ZH.md`. D-3 asks for a mirror per English doc;
   `docs/EVALUATION.md` §1–§3, §4.1–§4.3, §4.5, §4.6, §5, §6, §8 and appendix A are still English-only.
 - `scripts/mcp-call.mjs` and the docs carry tool counts as prose, and they drift. **Measure with
   `node scripts/mcp-call.mjs list` rather than copying a number out of a document** — including out of

@@ -258,6 +258,43 @@ console.log(VERSION, document.width, typeof mcp.createPixelServer, typeof script
 Those three namespaces are the escape hatch rather than the recommended starting point.
 They are real, shipped and documented, and they are not covered by `API_VERSION`.
 
+### Cookbook: five tasks, five runnable files
+
+Five things people actually want to do, each one a real file in [`cookbook/`](cookbook/)
+that the test suite compiles, runs and compares byte for byte — so a snippet cannot rot
+without the build noticing:
+
+1. **Your first sprite** — silhouette, shading, contour, exported as PNG + sheet + `.pixel`.
+2. **A walk cycle and eight directions** — four cardinals from one drawing, and why the
+   diagonals still need artwork.
+3. **Tracing an SVG** — vector to pixel grid, and the refusal that comes with it.
+4. **Exporting for an engine** — Godot, Unity, Phaser, Excalidraw bundles from one contract.
+5. **One recipe, end to end** — build a UI icon from `recipes/ui-icons.recipe.json` and
+   answer its checks with named defects rather than a score.
+
+[`docs/COOKBOOK.md`](docs/COOKBOOK.md) is the prose; [`docs/API.md`](docs/API.md) is the
+reference for every field and error code.
+
+### Generate assets in CI
+
+A build script that only runs on your laptop is a build script nobody reviews. The
+`build-assets` Action runs it on a pull request and fails the job when the assets are
+wrong — a broken op, a byte-reproducibility check, or (opt-in) a blocking quality
+defect.
+
+```yaml
+- uses: dotloom-mcp/build-assets@v0.5.0
+  with:
+    command: node tools/build-assets.mjs
+    check-command: node tools/check-assets.mjs
+    quality-gate: blocking
+```
+
+It reports **named defects**, never a quality score: a CI log that prints `quality 0.87`
+turns the number into the target. An advisory finding is printed and does not fail the
+build. **[`docs/ACTION.md`](docs/ACTION.md)** has the inputs, the reasoning and what
+will bite on your first run.
+
 ### Connect an MCP client
 
 Most desktop MCP clients use an `mcpServers` object:
@@ -640,6 +677,7 @@ or config change is needed:
 
 - [Client setup](docs/CLIENTS.md) — configuration files and verified JSON for Claude Desktop, Claude Code, Cursor, OpenCode and Windsurf, plus a three-step connection check ([中文](docs/CLIENTS-ZH.md))
 - [Library API](docs/API.md) — build-time asset generation, the determinism contract, and the versioning policy ([中文](docs/API-ZH.md))
+- [Cookbook](docs/COOKBOOK.md) — five tasks as runnable, byte-compared files: first sprite, eight-direction walk cycle, SVG trace, engine export, one recipe end to end ([中文](docs/COOKBOOK-ZH.md))
 - [Technical reference](docs/REFERENCE.md) — command catalogue, MCP internals, scripting, animation, tilemaps, and design decisions
 - [Changelog](CHANGELOG.md) — release history and scope ([中文](CHANGELOG-ZH.md))
 - [Model Context Protocol](https://modelcontextprotocol.io/)
@@ -647,11 +685,13 @@ or config change is needed:
 
 ## Project status
 
-`dotloom-mcp@0.4.2` is the current release. `0.4.0` was the first to ship desktop
+`dotloom-mcp@0.5.0` is the current release. `0.4.0` was the first to ship desktop
 installers; `0.4.1` made the headless server reconnect to an app that starts late
 instead of committing to memory for the rest of the session; `0.4.2` added a
 one-command demo, a stable build-time library API, byte-reproducible `.pixel`
-files, and in-app updates.
+files, and in-app updates; `0.5.0` completed the judgement layer at six of six
+dimensions, and shipped the engine importers, SVG trace import, 8-direction
+characters, the cookbook and the build-time GitHub Action.
 
 - [x] Core document model, rasteriser, command bus, history, and native serialisation
 - [x] PNG, spritesheet, GIF, Aseprite import, and Tiled export

@@ -1,0 +1,101 @@
+name: Build game assets
+description: >-
+  Run a project's dotloom-mcp asset build in CI and fail the job when the build
+  fails, the check script fails, or a produced document carries a blocking
+  quality defect. Advisory findings are reported and never fail the build.
+
+branding:
+  icon: image
+  color: purple
+
+inputs:
+  command:
+    description: >-
+      The build command to run, as a shell command line. Anything the project
+      already runs locally belongs here, e.g. `node tools/build-assets.mjs` or
+      `npm run assets:build`.
+    required: true
+  check-command:
+    description: >-
+      An optional command run after the build. A non-zero exit fails the job.
+      This is where a byte-reproducibility check belongs - rebuild the same
+      spec and compare bytes with the committed files.
+    required: false
+    default: ''
+  install-command:
+    description: >-
+      The dependency install command, run before the build. Set to an empty
+      string to skip installing (for a repository that vendors node_modules or
+      installs in an earlier step).
+    required: false
+    default: npm ci
+  node-version:
+    description: >-
+      Node.js version to put on the runner. The published package requires
+      22.13 or newer; the default is that floor, not "latest", so two runs of
+      the same commit render the same bytes.
+    required: false
+    default: '22.13'
+  working-directory:
+    description: >-
+      Directory every other path is resolved against, and the directory the
+      build command runs in.
+    required: false
+    default: '.'
+  quality-gate:
+    description: >-
+      `off` (default) runs only the commands above. `blocking` additionally
+      walks the asset directory for `.pixel` documents, measures each one, and
+      fails the job when one carries a defect the delivery gate refuses. An
+      advisory - anything below the blocking cut - is printed and does not fail
+      the build.
+    required: false
+    default: 'off'
+  gate-threshold:
+    description: >-
+      Which gate threshold `quality-gate: blocking` uses. `fail` (default)
+      refuses named defects and measured dimensions below their floor.
+      `warn` also refuses a weighted total below its pass mark; only a project
+      that has calibrated the pipeline on its own artwork should use it.
+    required: false
+    default: fail
+  asset-dir:
+    description: >-
+      Directory the quality gate searches for `.pixel` documents, relative to
+      `working-directory`. Only read when `quality-gate` is not `off`.
+    required: false
+    default: assets/generated
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Install dependencies
+      if: ${{ inputs.install-command != '' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: ${{ inputs.install-command }}
+
+    - name: Build assets
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: ${{ inputs.command }}
+
+    - name: Check assets
+      if: ${{ inputs.check-command != '' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: ${{ inputs.check-command }}
+
+    - name: Quality gate
+      if: ${{ inputs.quality-gate != 'off' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        DOTLOOM_GATE_DIR: ${{ inputs.asset-dir }}
+        DOTLOOM_GATE_THRESHOLD: ${{ inputs.gate-threshold }}
+      run: node "$GITHUB_ACTION_PATH/gate.mjs"

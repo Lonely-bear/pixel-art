@@ -248,6 +248,38 @@ console.log(VERSION, document.width, typeof mcp.createPixelServer, typeof script
 这三个命名空间是逃生舱，而不是推荐的起点。它们真实存在、已经发布、也有文档，
 但不在 `API_VERSION` 的覆盖范围内。
 
+### Cookbook：五个任务，五个可运行的文件
+
+人们真正想做的五件事，每一件都是 [`cookbook/`](cookbook/) 里的真实文件，测试会编译、运行并逐字节比对，
+所以示例不会在无人察觉的情况下腐化：
+
+1. **第一张精灵** —— 剪影、明暗、描边，导出为 PNG + 图集 + `.pixel`。
+2. **行走循环与八方向** —— 一张底图画出四个正方向，以及为什么斜方向仍然需要单独绘制。
+3. **描摹 SVG** —— 从矢量到像素网格，以及随之而来的明确拒绝。
+4. **面向引擎导出** —— 由同一份契约生成 Godot、Unity、Phaser、Excalidraw 文件。
+5. **完整跑通一份配方** —— 按 `recipes/ui-icons.recipe.json` 画出 UI 图标，并用「具名缺陷」而不是分数来回答它的检查项。
+
+[`docs/COOKBOOK.md`](docs/COOKBOOK-ZH.md) 是正文；[`docs/API.md`](docs/API-ZH.md) 是每个字段与错误码的参考。
+
+### 在 CI 里生成资源
+
+只在你本机上跑过的构建脚本，等于没人 review 过的构建脚本。`build-assets`
+Action 会在 PR 上运行它，并在资源有问题时让任务失败：某个 op 报错、字节复现
+检查不通过，或者（可选）出现阻断级质量缺陷。
+
+```yaml
+- uses: dotloom-mcp/build-assets@v0.5.0
+  with:
+    command: node tools/build-assets.mjs
+    check-command: node tools/check-assets.mjs
+    quality-gate: blocking
+```
+
+它报告的是**具名缺陷**，而不是质量分数：一份打印 `quality 0.87` 的 CI 日志只会让
+那个数字变成目标。建议级（advisory）发现会被打印出来，但不会让构建失败。
+**[`docs/ACTION.md`](docs/ACTION-ZH.md)** 写明了全部输入、设计理由，以及第一次运行时
+容易踩到的坑。
+
 ### 连接 MCP 客户端
 
 大多数桌面 MCP 客户端使用 `mcpServers` 对象：
@@ -622,6 +654,7 @@ electron-builder 读取。
 - [客户端接入](docs/CLIENTS-ZH.md) — Claude Desktop、Claude Code、Cursor、OpenCode 和 Windsurf 的配置文件与验证过的 JSON，以及三步连接检查（[English](docs/CLIENTS.md)）
 - [English README](README.md) — 英文项目介绍与完整使用说明
 - [库 API](docs/API-ZH.md) — 构建期生成资产的任务形接口、确定性契约与版本策略（[English](docs/API.md)）
+- [Cookbook](docs/COOKBOOK-ZH.md) — 五个任务的可运行示例，逐字节比对：第一张精灵、八方向行走循环、SVG 描摹、引擎导出、完整跑通一份配方（[English](docs/COOKBOOK.md)）
 - [技术参考](docs/REFERENCE.md) — 命令目录、MCP 内部机制、脚本、动画、瓦片地图和设计决策
 - [更新日志](CHANGELOG-ZH.md) — 发布历史和范围（[English](CHANGELOG.md)）
 - [Model Context Protocol](https://modelcontextprotocol.io/)
@@ -629,10 +662,11 @@ electron-builder 读取。
 
 ## 项目状态
 
-`dotloom-mcp@0.4.2` 是当前版本。`0.4.0` 是第一个提供桌面安装程序的版本；`0.4.1`
+`dotloom-mcp@0.5.0` 是当前版本。`0.4.0` 是第一个提供桌面安装程序的版本；`0.4.1`
 让无界面服务器在编辑器稍晚启动时能够重连，而不是在本次会话剩余时间里一直待在
 内存模式；`0.4.2` 带来了一条命令的 demo、稳定的构建期库 API、字节可复现的
-`.pixel` 文件，以及应用内更新。
+`.pixel` 文件，以及应用内更新；`0.5.0` 让判断层补齐到六个维度全部就位，并带来了
+四个引擎导入器、SVG 描摹导入、八方向角色、Cookbook 和构建期 GitHub Action。
 
 - [x] 核心文档模型、光栅器、命令总线、历史记录和原生序列化
 - [x] PNG、精灵图、GIF、Aseprite 导入和 Tiled 导出

@@ -1,0 +1,194 @@
+{
+  "note": "The cookbook's executable index. Every .ts file in cookbook/ must appear in `examples`, and every example here must be executed by packages/core/test/cookbook.test.ts. `outputs` is the byte expectation: path -> length and sha256 of the file the example produced. Regenerate with DOTLOOM_COOKBOOK_UPDATE=1 when an example's artwork legitimately changes, and read the diff before committing it.",
+  "cookbook": "docs/COOKBOOK.md",
+  "examples": [
+    {
+      "file": "01-first-sprite.ts",
+      "chapter": "1. Your first sprite",
+      "title": "A slime: silhouette, shading, contour, exported",
+      "determinism": "Same spec, same bytes. buildSprite installs a seeded id factory for the call, so the .pixel archive's ids are a function of the seed.",
+      "outputs": {
+        "slime_0.png": {
+          "bytes": 154,
+          "sha256": "1de3a8aacf6f93464469cd41a53b22dd07cc00a32cba797d436d18389a9e1b40"
+        },
+        "slime_sheet.png": {
+          "bytes": 154,
+          "sha256": "1de3a8aacf6f93464469cd41a53b22dd07cc00a32cba797d436d18389a9e1b40"
+        },
+        "slime_sheet.json": {
+          "bytes": 895,
+          "sha256": "d3472a9d87a206f5497a48ef3b4687d89844a3a31852a1b6db786c533c87c222"
+        },
+        "slime.pixel": {
+          "bytes": 1234,
+          "sha256": "43e139ffdf6501b1ff2787f263cf8a0666ec6a016e1b991c2ddc4a7580c86fa8"
+        }
+      }
+    },
+    {
+      "file": "02-walk-cycle.ts",
+      "chapter": "2. A walk cycle and eight directions",
+      "title": "Four cardinal walk cycles from one drawing, plus the direction plan",
+      "determinism": "Integer triangle waves, integer matrices, no trigonometry and no clock: the plan, the four sheets and the four GIFs are all a function of the seed and the ops.",
+      "outputs": {
+        "directions.json": {
+          "bytes": 1843,
+          "sha256": "ee420ce3ba1f5d3e21b183f029600a8ef7a164b4431e9d8d7893c617426f50fa"
+        },
+        "hero-n_sheet.png": {
+          "bytes": 334,
+          "sha256": "0edbdfc2e5a738be15d78725f39f2b09e99af6a956761a448b64681df862ec9e"
+        },
+        "hero-n_sheet.json": {
+          "bytes": 5141,
+          "sha256": "f84b62906eab44583765923d6d7121fbf432e1e0087cdf4a85344fdb398447fb"
+        },
+        "hero-n.gif": {
+          "bytes": 1958,
+          "sha256": "b6b14d1516c0ef068d7c5d0cd78aa4a15fe26dff81faa3319a1be9a1ebf3c55b"
+        },
+        "hero-e_sheet.png": {
+          "bytes": 638,
+          "sha256": "10b2c9476276bf43f28e53b14dd0f3cc7dd798e119df068a1f8376b75c760a5b"
+        },
+        "hero-e_sheet.json": {
+          "bytes": 5141,
+          "sha256": "d4e14273ccfb83cc1331fa90b0f0dc5f5cbf5a5b74e32a0d894c838ba887b49c"
+        },
+        "hero-e.gif": {
+          "bytes": 3281,
+          "sha256": "c7b74dcd26d769e4a016be3a5f4b57ff7de548e998b2694f6a48557ef2b5e893"
+        },
+        "hero-s_sheet.png": {
+          "bytes": 380,
+          "sha256": "c0b128a3a5e7ea9569abefce3c6be838b5d971b0586eaffb13f8756ec40395d0"
+        },
+        "hero-s_sheet.json": {
+          "bytes": 5141,
+          "sha256": "af4fec18cc1a38f5b9653f0acbe19cd64dd498c0aba48802fabb27fa9c8033a3"
+        },
+        "hero-s.gif": {
+          "bytes": 2030,
+          "sha256": "f8aed9f73f91114d789c4c901ac455cac95bbafda6a46a711f0ed26891e85dd6"
+        },
+        "hero-w_sheet.png": {
+          "bytes": 682,
+          "sha256": "c469630553f3bf7d5a4ef36e9acdf940b97c2a101e36b0ff79432546e3b9d7ea"
+        },
+        "hero-w_sheet.json": {
+          "bytes": 5141,
+          "sha256": "be8ee2c63a3240a840f870b2b0582d566e6cc89a50d339e7b8142c40f9e83d4a"
+        },
+        "hero-w.gif": {
+          "bytes": 3255,
+          "sha256": "ea42de22901b963bf1b800eefead8c1f4792ed9277ae73a203951dbde35df9d0"
+        }
+      }
+    },
+    {
+      "file": "03-trace-svg.ts",
+      "chapter": "3. Tracing an SVG",
+      "title": "A 64-unit leaf traced into a 16px icon, and the refusal that comes with it",
+      "determinism": "The tracer's trigonometry is Cody-Waite plus fdlibm kernels rather than Math.sin, so the same SVG lands on the same pixels in V8, JSC and SpiderMonkey.",
+      "outputs": {
+        "leaf_0.png": {
+          "bytes": 128,
+          "sha256": "cc0eab464a7df8ff55636095e5320163334b73a025a81f104d2c53f508d8928c"
+        },
+        "leaf_sheet.png": {
+          "bytes": 128,
+          "sha256": "cc0eab464a7df8ff55636095e5320163334b73a025a81f104d2c53f508d8928c"
+        },
+        "leaf_sheet.json": {
+          "bytes": 701,
+          "sha256": "b8d523b3c22159785b44112020f492aa10fe98672935005448bcd9e9988440e0"
+        },
+        "leaf.pixel": {
+          "bytes": 725,
+          "sha256": "9e000b1165616b76f23726c96014eedddd4c55128fddc8ec0d3f3a77bcba636c"
+        },
+        "refusal.txt": {
+          "bytes": 74,
+          "sha256": "0c5c5c0704d366ec9592c098720b2e05201d63aa7d44ad17f0ea056757d4e803"
+        }
+      }
+    },
+    {
+      "file": "04-engine-export.ts",
+      "chapter": "4. Exporting for an engine",
+      "title": "Four engine bundles from one contract, with warnings and a naming refusal",
+      "determinism": "No timestamp and no invented uid:// in the contract; the file order is the importer's and the naming report is a pure function of the names.",
+      "outputs": {
+        "hero-idle/hero-idle_sheet.png": {
+          "bytes": 260,
+          "sha256": "0cf555b0811f7616fae7dfcf11c896d8621ccd82b51edb146beb959eeb129f0e"
+        },
+        "hero-idle/meta.json": {
+          "bytes": 2120,
+          "sha256": "6ba783efbb8a2c3a37c29cd498f6dd4ab8db5b204690c413ff0527f20e08cb12"
+        },
+        "hero-idle/hero-idle.tres": {
+          "bytes": 1239,
+          "sha256": "0d1c2721a4d0e7556a757c529cd9c433a793bc8a2e67638f7bb361370dcd7ebe"
+        },
+        "hero-idle/hero-idle.tscn": {
+          "bytes": 308,
+          "sha256": "df69dc2bcb7e1386ae9b11543d2402e5f468e25b9353f225757d604015ef8652"
+        },
+        "hero-idle/hero-idle.directions.res": {
+          "bytes": 321,
+          "sha256": "d81a7ae806c2b5f4b0b510a3cc02499f671ae9f225b1e3c659e6b9bcbcedbcc5"
+        },
+        "hero-idle/hero-idle.unity-sprite.json": {
+          "bytes": 2009,
+          "sha256": "5b0c4779e7d3406498c4190031400284cb82697deffb7953cfb27f3e6f4c903d"
+        },
+        "hero-idle/DotloomSpriteImporter.cs": {
+          "bytes": 11075,
+          "sha256": "63b1edf756ea32777e082b080859d6803189488a17401791dae4c4770a04d2ff"
+        },
+        "hero-idle/hero-idle.phaser.mjs": {
+          "bytes": 1619,
+          "sha256": "cd2930537df952f173d8364d9bea1cde0c0655be0502713ea6743c6a3ddd3908"
+        },
+        "hero-idle/hero-idle.excalidraw": {
+          "bytes": 5894,
+          "sha256": "e3efadc7a2d3725baaa155752e0a53e694ec7d50e7ed112648ccc21902c5c9d1"
+        },
+        "bundle-report.json": {
+          "bytes": 1787,
+          "sha256": "704b87a190b93a4a10f3062465fc4e9085ca2a7a5f05c5a944b94a13340b2f77"
+        },
+        "naming-refusal.txt": {
+          "bytes": 264,
+          "sha256": "9e43ded5c7568eabc4e6596476475c1df12f0fec82460e2fa038befe4bb9b2d7"
+        }
+      }
+    },
+    {
+      "file": "05-recipe-ui-icon.ts",
+      "chapter": "5. One recipe, end to end",
+      "title": "ui-icons: read the brief, build the icon, answer its checks with named defects",
+      "determinism": "Same recipe file, same bytes — including the defect list, because evaluate is read-only and reads no clock.",
+      "outputs": {
+        "icon-gate_0.png": {
+          "bytes": 104,
+          "sha256": "66e1c82543786acbeab7c52c67c978b1da0c040770270fb6d99a03d9fff13328"
+        },
+        "icon-gate_sheet.png": {
+          "bytes": 104,
+          "sha256": "66e1c82543786acbeab7c52c67c978b1da0c040770270fb6d99a03d9fff13328"
+        },
+        "icon-gate_sheet.json": {
+          "bytes": 806,
+          "sha256": "d1f24fe667f1f254440e4c4a77186b5af4d15feabe6752de1989c746783f3ff7"
+        },
+        "checks.json": {
+          "bytes": 823,
+          "sha256": "f6049ce87d6ded014bee293af6afe8ba5f5aad15d83fad6bb269edf60908de2f"
+        }
+      }
+    }
+  ]
+}

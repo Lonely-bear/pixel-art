@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { packedTarball } from './helpers/npm-build-lock.js';
 
 /**
  * The published package, proved the way a consumer experiences it.
@@ -93,24 +94,18 @@ beforeAll(() => {
   // name first it silently resolves against the repository root and the run reports a missing
   // tarball that is in fact sitting in a temp directory nobody looks in.
   consumer = join(workdir, 'consumer');
-  tarball = join(workdir, packName());
   mkdirSync(join(consumer, 'node_modules', 'dotloom-mcp'), { recursive: true });
   mkdirSync(join(consumer, 'src'), { recursive: true });
 
   // The built package, exactly as CI's last step sees it: `pnpm build:npm` then `npm pack`.
-  const built = spawnSync(process.execPath, [BUILD_SCRIPT], { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-  if (built.status !== 0) {
-    throw new Error(`scripts/build-npm-package.mjs failed (${built.status}):\n${built.stdout ?? ''}${built.stderr ?? ''}`);
-  }
-  const packed = spawnSync(process.execPath, [npmCli(), 'pack', '--ignore-scripts', '--pack-destination', workdir], {
-    cwd: ROOT,
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  if (packed.status !== 0) {
-    throw new Error(`npm pack failed (${packed.status}):\n${packed.stdout ?? ''}${packed.stderr ?? ''}`);
-  }
-  if (!existsSync(tarball)) throw new Error(`npm pack reported success but ${tarball} is not there.`);
+  //
+  // **Built and packed once, by a helper shared with `cookbook.test.ts`.** Both files need the same
+  // tarball and each used to make its own, which was fragile twice over: they wrote the same root
+  // `dist/`, and each deleted its own temp tree in `afterAll`, so one file's cleanup could remove
+  // state another was reading. That surfaced as seven unrelated-looking failures and an `ENOENT` on
+  // a consumer directory a `beforeAll` had just built — three full runs failed, and every subset
+  // passed. Neither symptom named its cause, which is why it took a bisect rather than a guess.
+  tarball = packedTarball();
   installTarball();
   linkRuntimeDependencies();
 }, 300_000);
@@ -120,6 +115,11 @@ afterAll(() => {
   // because a killed `tsc` can leave a read handle behind on Windows, and a leftover temp
   // directory is worse than a failed removal.
   if (workdir) rmSync(workdir, { recursive: true, force: true });
+  // **Deliberately NOT removing the build lock here.** It was, and it was a bug: this file's
+  // `afterAll` deletes the lock `cookbook.test.ts` is currently holding, so a third claimer walks
+  // straight in and the serialisation becomes a lie. `withNpmBuildLock` releases in its own
+  // `finally`, including when the body throws, so a cleanup hook has nothing to do here except
+  // break a peer.
 });
 
 /** The tarball's own name, from `name` and `version`. */
