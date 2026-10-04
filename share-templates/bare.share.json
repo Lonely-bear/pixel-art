@@ -1,0 +1,12 @@
+{
+  "format": "dotloom-mcp/share-template",
+  "schemaVersion": 1,
+  "id": "bare",
+  "title": "Bare asset",
+  "summary": "The artwork and its provenance, and nothing else. No card, no HTML, no named defects rendered - for handing a sprite to someone who wants the sprite and will run the judgement layer themselves.",
+  "outputs": [{ "type": "png", "targetLongSide": 256 }],
+  "card": null,
+  "assetContract": false,
+  "engine": null,
+  "license": null
+}

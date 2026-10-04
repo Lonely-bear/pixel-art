@@ -1,0 +1,15 @@
+{
+  "format": "dotloom-mcp/share-template",
+  "schemaVersion": 1,
+  "id": "review",
+  "title": "Review request",
+  "summary": "The card, plus every frame as one strip, because a request for a second pair of eyes is about the motion and a still frame cannot show it. The motion dimension abstains on a single-frame document and says so on the card.",
+  "outputs": [
+    { "type": "png", "targetLongSide": 256 },
+    { "type": "sheet", "layout": "horizontal", "scale": 3 }
+  ],
+  "card": "card",
+  "assetContract": false,
+  "engine": null,
+  "license": null
+}

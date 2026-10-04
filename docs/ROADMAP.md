@@ -124,7 +124,17 @@ Two decisions in it are the point, and both are the repository's argument made v
   them is a compliment. That is the whole reason `ExcludedReason` exists, and the ten
   full-bleed scenes are the evidence that it is needed.
 
-Still to do in this phase: PNG metadata and a `made with` badge, share templates, a 1.0
+**PNG provenance and share bundles are shipped.** `encodePNG({metadata})` writes PNG `tEXt`
+chunks and changes no pixel, so a shared file carrying a badge still decodes to the artwork
+byte for byte - see `docs/SHARING.md`. `scripts/build-share.mjs` turns every committed `.pixel`
+into a bundle from a template in `share-templates/`, through the advertised tool surface and
+with the same three commitments the gallery makes: rendered from the source, **named defects and
+nothing else**, and every abstention carried as *not measured* with its reason spelled out. Four
+templates ship: `bare`, `card`, `review` and `handoff`. The badge is metadata and never burned
+in, because a burned badge destroys pixels the content hash covers and cannot be recovered by
+anyone who did not watch it happen.
+
+Still to do in this phase: a 1.0
 stabilisation pass, and the long-form writing about the lazy tool surface and the single bus.
 Gallery *hosting* is still under "Needs a human" below — it needs an account. The build job
 uploads the page as an artifact and stops there.

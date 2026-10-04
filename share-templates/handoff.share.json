@@ -1,0 +1,16 @@
+{
+  "format": "dotloom-mcp/share-template",
+  "schemaVersion": 1,
+  "id": "handoff",
+  "title": "Engine handoff",
+  "summary": "The card, the asset contract and one engine's files, so what is being shown and what is being shipped are described by the same hash. Opt-in in exactly the way finalize_document has always been: the target engine is the caller's choice and a tool cannot know it.",
+  "outputs": [
+    { "type": "png", "targetLongSide": 256 },
+    { "type": "sheet", "layout": "horizontal", "scale": 1 },
+    { "type": "engine", "engine": "godot" }
+  ],
+  "card": "card",
+  "assetContract": true,
+  "engine": "godot",
+  "license": null
+}

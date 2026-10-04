@@ -1,0 +1,12 @@
+{
+  "format": "dotloom-mcp/share-template",
+  "schemaVersion": 1,
+  "id": "card",
+  "title": "Share card",
+  "summary": "The default. One rendered PNG with provenance text chunks, one self-contained HTML card carrying the named defects and every abstention, and a share.json a machine can read.",
+  "outputs": [{ "type": "png", "targetLongSide": 256 }],
+  "card": "card",
+  "assetContract": false,
+  "engine": null,
+  "license": null
+}

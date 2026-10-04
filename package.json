@@ -53,6 +53,8 @@
     "build:npm": "node scripts/build-npm-package.mjs",
     "build:gallery": "pnpm run build:libs && node scripts/build-gallery.mjs",
     "verify:gallery": "pnpm run build:libs && node scripts/build-gallery.mjs --verify",
+    "build:share": "pnpm run build:libs && node scripts/build-share.mjs",
+    "verify:share": "pnpm run build:libs && node scripts/build-share.mjs --verify",
     "prepare-release": "node scripts/prepare-release.mjs",
     "typecheck": "pnpm run build:libs && pnpm -r run typecheck && tsc -p tsconfig.npm.json --noEmit && tsc -p benchmarks/tsconfig.json",
     "test": "pnpm run build:libs && pnpm -r run test",
