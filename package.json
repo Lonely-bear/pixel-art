@@ -51,6 +51,8 @@
     "build:app": "pnpm --filter @pixel/app build",
     "build": "pnpm run build:libs && pnpm run build:app",
     "build:npm": "node scripts/build-npm-package.mjs",
+    "build:gallery": "pnpm run build:libs && node scripts/build-gallery.mjs",
+    "verify:gallery": "pnpm run build:libs && node scripts/build-gallery.mjs --verify",
     "prepare-release": "node scripts/prepare-release.mjs",
     "typecheck": "pnpm run build:libs && pnpm -r run typecheck && tsc -p tsconfig.npm.json --noEmit && tsc -p benchmarks/tsconfig.json",
     "test": "pnpm run build:libs && pnpm -r run test",

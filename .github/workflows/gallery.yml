@@ -1,0 +1,86 @@
+# Build the public gallery
+#
+# `scripts/build-gallery.mjs` is a build-time gallery: it opens every committed
+# `.pixel` source through the advertised MCP tool surface, renders it with
+# `export_png`, asks the judgement layer what it can say about it, and writes
+# `showcase/gallery/index.html` plus `gallery.json` and one PNG per piece.
+#
+# Two things are worth having in CI rather than only on a laptop:
+#
+#   - **`--verify` is a determinism gate.** The page is a build artifact, so the
+#     same repository must produce the same bytes. The script generates twice and
+#     byte-compares every output, and this job fails when they differ.
+#   - **The page is regenerated whenever the artwork or the engine changes**, so
+#     `showcase/gallery/` in a diff is never stale and never hand-edited.
+#
+# This file is separate from `ci.yml` and `release.yml` and touches neither. It is
+# on `workflow_dispatch` plus pushes to `master` that touch the artwork, the
+# showcase, the gallery script or the engine itself — a docs-only commit does not
+# spend twelve minutes re-rendering twelve pieces.
+#
+# The output is uploaded as an artifact rather than published. Gallery *hosting*
+# is listed in `docs/ROADMAP.md` under "Needs a human": it needs an account, so
+# this job produces the thing and stops there.
+
+name: gallery
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - 'artwork/**'
+      - 'showcase/**'
+      - 'scripts/build-gallery.mjs'
+      - 'package.json'
+      - 'packages/core/src/**'
+      - 'packages/mcp/src/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gallery-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Render the gallery and check it reproduces
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.6.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `build:libs` first, and serially with everything else: the gallery spawns
+      # `packages/mcp/dist/cli.js`, so a stale dist would render a stale gallery and
+      # the determinism check would happily agree with itself about last week's art.
+      - name: Build the libraries the gallery renders through
+        run: pnpm build:libs
+
+      # Two generations, byte-compared, plus the anti-drift coverage check. A non-zero exit
+      # here means either the page is not a reproducible artifact — the one property this job
+      # exists to prove — or a committed `.pixel` is missing from it. One invocation, so the
+      # twelve pieces are not rendered four times.
+      - name: Build the gallery, twice, compare, and check coverage
+        run: node scripts/build-gallery.mjs --verify --check-coverage
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gallery
+          path: showcase/gallery

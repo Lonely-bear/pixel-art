@@ -74,3 +74,32 @@ session-assigned `document.id` and that string's length is not fixed. `files` ne
 
 TASKS.md tracks the index page (T-004), the benchmark aggregation over these manifests (T-007),
 and the README numbers (T-008).
+
+## The gallery
+
+[`gallery/index.html`](gallery/) is a build-time gallery over everything committed here **and**
+in `artwork/`: every `.pixel` source, rendered through the engine, published next to the named
+defects the judgement layer reports for it.
+
+```bash
+pnpm verify:gallery      # build:libs, generate twice, byte-compare, check coverage
+node scripts/build-gallery.mjs --verify --check-coverage   # the same, without the libs build
+```
+
+Open `showcase/gallery/index.html` from `file://`. No server, no network, no framework, no
+client-side JavaScript at all.
+
+Three things it is careful about, each guarded by `packages/core/test/gallery.test.ts`:
+
+- **Images come from the `.pixel` sources, not from the checked-in `.png` files.** `open_document`
+  then `export_png`, through the same advertised tool surface this folder is built on. The
+  committed PNGs beside each source are read by nothing.
+- **Pieces are discovered, not listed.** Every `.pixel` under `artwork/` plus every
+  `showcase/<piece>/`, so committing a new piece puts it on the page without editing the
+  generator. `--check-coverage` fails the build if one is missing.
+- **No score, grade, rating or percentage is published**, in the JSON or the page. What it
+  publishes instead is the defect **code**, the **dimension** that found it, the **region** and
+  what to do about it — and an **excluded** dimension is rendered as *not measured* with its
+  `ExcludedReason` spelled out, never as a clean result. A piece nobody could measure and a
+  piece that measured well both arrive as an absent number, and only one of them is a
+  compliment.

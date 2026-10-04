@@ -102,8 +102,32 @@ section below.
 
 ## Phase 2 — spread
 
-Not started. PNG metadata and a `made with` badge, a build-time gallery, share templates, a 1.0
+**The build-time gallery is shipped.** `scripts/build-gallery.mjs` walks every committed
+`.pixel` under `artwork/` and every `showcase/<piece>/`, opens each one through the advertised
+MCP tool surface, renders it with `export_png`, asks `evaluate` what it can say about it, and
+writes `showcase/gallery/` — one self-contained `index.html`, a `gallery.json`, and a PNG per
+piece. No framework, no CDN, no client-side JavaScript; it opens from `file://` with no
+network. `pnpm verify:gallery` and `.github/workflows/gallery.yml` build it in CI, and
+`packages/core/test/gallery.test.ts` gates it.
+
+Two decisions in it are the point, and both are the repository's argument made visible:
+
+- **Images are rendered from the `.pixel` sources, never from the checked-in `.png` files.**
+  A gallery whose pictures can drift from the artwork they claim to show is worse than no
+  gallery, and the engine is right there.
+- **Every piece carries its named defects and nothing else — no score, grade or percentage**
+  in the JSON or the page, enforced by the same recursive key-walk `packages/cli/test/
+  contract.test.ts` and `packages/app/src/asset-bundle.test.tsx` use. Each defect is a code, the
+  dimension that found it, the region and what to do about it. **An excluded dimension is
+  rendered as *not measured*, with its `ExcludedReason` spelled out, and never as a pass:**
+  an absent measurement and a good result both arrive as a missing number, and only one of
+  them is a compliment. That is the whole reason `ExcludedReason` exists, and the ten
+  full-bleed scenes are the evidence that it is needed.
+
+Still to do in this phase: PNG metadata and a `made with` badge, share templates, a 1.0
 stabilisation pass, and the long-form writing about the lazy tool surface and the single bus.
+Gallery *hosting* is still under "Needs a human" below — it needs an account. The build job
+uploads the page as an artifact and stops there.
 
 ## Needs a human, and no amount of code substitutes
 
