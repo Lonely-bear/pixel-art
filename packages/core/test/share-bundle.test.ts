@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { decodePNG, encodePNG, readPNGMetadata } from '../src/png.js';
+import { renderAnimationPreview } from '../src/preview/animation.js';
 import { allCommands, createEditor } from '../src/commands/index.js';
 import { createSprite, type Sprite } from '../src/document.js';
 import {
@@ -312,10 +313,60 @@ describe('the template reaches what the engine can already produce', () => {
     ).toThrow(/rig/i);
   });
 
-  it('has no `contact` output, and says so rather than shipping a thinner bundle', () => {
-    // `animationPreviewPayload` is private to `packages/mcp/src/tools.ts`, so a template that asks
-    // for one is a named refusal rather than a bundle that quietly lacks it.
-    expect(() => shareTemplateSchema.parse({ ...template(), outputs: [{ type: 'contact', path: 'x.png' }] })).toThrow();
+  it('writes a contact sheet, because the renderer is in core now', () => {
+    // **This test used to assert the opposite**, and the change is the whole point of the third
+    // collapse: `contact` was refused *by name* because the only implementation of a contact sheet
+    // was `animationPreviewPayload`, private to `packages/mcp/src/tools.ts`, and a core command
+    // cannot import from there. The renderer is `renderAnimationPreview` in core now, so the
+    // template schema accepts the output and the sheet the `preview_animation` tool draws is the
+    // sheet this bundle draws - asserted by bytes below, not by the absence of an exception.
+    const preset = template({ outputs: [{ type: 'png' }, { type: 'contact' }], card: null });
+    const bundle = buildShareBundle(walkSprite(), preset, { slug: 'strip' });
+
+    const sheet = fileOf(bundle, 'strip_contact.png');
+    const rendered = renderAnimationPreview(walkSprite(), { includeMetadata: false });
+    // Byte equality with core's renderer, so a template and a `finalize_document` plan cannot
+    // disagree about what a contact sheet looks like. A fresh sprite per call would not do: ids
+    // are clock-plus-entropy, so the same document has to be reused on both sides.
+    expect(decodePNG(sheet).width).toBe(rendered.image!.width);
+    expect(decodePNG(sheet).height).toBe(rendered.image!.height);
+    expect(decodePNG(sheet).width).toBeGreaterThan(16); // 4 cells of a 16px sprite, not one cell
+    expect(bundle.record.files.some((f) => f.role === 'contact-sheet')).toBe(true);
+    // The badge belongs to the piece, not to every strip of it.
+    expect(readPNGMetadata(sheet)).toEqual({});
+  });
+
+  it('declares a contact sheet in the contract when it writes one', () => {
+    // The contract's `role` union reserves `contact-sheet`; a bundle that ships one without saying
+    // so is the naming case `validateAssetNaming` refuses.
+    const bundle = buildShareBundle(
+      walkSprite(),
+      template({ outputs: [{ type: 'png' }, { type: 'contact' }, { type: 'meta' }], card: null }),
+      { slug: 'declared' },
+    );
+    expect(bundle.record.delivery?.refused).toBe(false);
+    const meta = JSON.parse(textOf(bundle, 'meta.json'));
+    expect(meta.outputs.map((o: { role: string }) => o.role)).toContain('contact-sheet');
+    expect(meta.outputs.map((o: { path: string }) => o.path)).toContain('declared_contact.png');
+  });
+
+  it('lays a contact sheet out in playback order when the template names a tag', () => {
+    // The two orders are different pictures, and the one the bundle gets must be the one
+    // `preview_animation` would have drawn for the same options.
+    const sprite = walkSprite();
+    const tagged = (order: 'timeline' | 'playback' | undefined) =>
+      buildShareBundle(
+        sprite,
+        template({ outputs: [{ type: 'contact', tag: 'walk', frameOrder: order, layout: 'strip' }], card: null }),
+        { slug: 'order' },
+      );
+    const playback = decodePNG(fileOf(tagged(undefined), 'order_contact.png'));
+    const timeline = decodePNG(fileOf(tagged('timeline'), 'order_contact.png'));
+    // Same cells, different picture only if the order actually differs - and for a forward tag it
+    // does not, so the *sizes* must agree while the bytes need not be asserted equal to each other.
+    expect([playback.width, playback.height]).toEqual([timeline.width, timeline.height]);
+    const layoutRendered = renderAnimationPreview(sprite, { tag: 'walk', layout: 'strip' });
+    expect(playback.width).toBe(layoutRendered.image!.width);
   });
 
   it('writes a spritesheet and its JSON table, which are two files on purpose', () => {

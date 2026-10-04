@@ -53,15 +53,16 @@ import {
   animationSequence,
   createQualityContext,
   evaluate,
-  isBlocking,
+  projectAbsences,
+  projectIssues,
   QUALITY_DIMENSIONS,
   QUALITY_WEIGHT_PROFILES,
   rectSchema,
   resolveFrame,
   type ExcludedReason,
+  type ProjectedIssue,
   type QualityAssetClass,
   type QualityDimensionId,
-  type QualityIssue,
   type QualityReport,
   type Rect,
   type Sprite,
@@ -117,21 +118,13 @@ export interface QualityTargetOptions {
 /**
  * One issue, flattened and attributed.
  *
- * Deduplicated by `(code, rect)` - the aggregator's own rule, and for the same
- * reason: two dimensions legitimately naming one defect should read as one defect.
- * The dimension names are collected rather than discarded, so the collapse does not
- * lose the information that two measurements agreed.
+ * **Declared in core** (`projectIssues`), because `packages/core/src/commands/share.ts` projects
+ * the same list onto a share card, and two walkers over one report is two answers to "which
+ * defects are there". This alias keeps one name for the shape in this module; the *policy* - which
+ * fields may travel - stays per surface, and the share card drops `severity` because a file that
+ * gets forwarded is the wrong place for a number.
  */
-export interface QualityIndexEntry {
-  readonly code: string;
-  readonly message: string;
-  readonly severity: number;
-  readonly rect: Rect | null;
-  /** Which measured dimensions raised this, in {@link QUALITY_DIMENSIONS} order. */
-  readonly dimensions: readonly QualityDimensionId[];
-  /** True at or above `SEVERITY_BLOCKING`. Also, always, a prefix of this list. */
-  readonly blocking: boolean;
-}
+export type QualityIndexEntry = ProjectedIssue;
 
 /** A sub-score a dimension could not measure, flattened out of its `unmeasured` map. */
 export interface UnmeasuredSubScore {
@@ -262,67 +255,23 @@ export const QUALITY_OUTPUT_SCHEMA = z.looseObject({
   notes: z.array(z.string()).describe('Facts about the measurement a reader could otherwise get wrong - what each absence means. Never a summary of quality.'),
 });
 
-/** Rects are objects whose identity says nothing, so the dedup key is the geometry. */
-function rectKey(rect: Rect | null): string {
-  return rect === null ? 'global' : `${rect.x},${rect.y},${rect.w},${rect.h}`;
-}
-
 /**
- * Every issue from every measured dimension plus the aggregator's own, flattened.
+ * The `unmeasured` maps, flattened, so a partly-measured dimension is legible on its own.
  *
- * Severity descending first, which is what puts every blocking issue ahead of every
- * advisory - the one property the truncation cap below depends on.
+ * The walk is {@link projectAbsences}'s - core's, and the share card's - with the whole-dimension
+ * entries filtered off, because this list is specifically about the second claim. `excluded` is
+ * published separately on the payload and must not be folded in here: "did not apply" and
+ * "measured everything except this" are different, and collapsing them is how a dimension that
+ * half-measured itself ended up reporting a confident perfect mark.
  */
-function indexIssues(report: QualityReport, own: readonly QualityIssue[]): QualityIndexEntry[] {
-  const byKey = new Map<string, QualityIndexEntry>();
-  const add = (issue: QualityIssue, dimension: QualityDimensionId | null): void => {
-    const key = `${issue.code}|${rectKey(issue.rect)}`;
-    const existing = byKey.get(key);
-    if (existing) {
-      // Same defect, second opinion. Record the dimension rather than dropping it.
-      if (dimension !== null && !existing.dimensions.includes(dimension)) {
-        byKey.set(key, {
-          ...existing,
-          dimensions: QUALITY_DIMENSIONS.filter((id) => id === dimension || existing.dimensions.includes(id)),
-        });
-      }
-      return;
-    }
-    byKey.set(key, {
-      code: issue.code,
-      message: issue.message,
-      severity: issue.severity,
-      rect: issue.rect,
-      dimensions: dimension === null ? [] : [dimension],
-      blocking: isBlocking(issue),
-    });
-  };
-
-  for (const id of QUALITY_DIMENSIONS) {
-    for (const issue of report.dimensions[id]?.issues ?? []) add(issue, id);
-  }
-  // The aggregator's issues describe the target rather than any one dimension's
-  // opinion of it, so they carry no dimension attribution - and `frames-identical`
-  // only exists in this list, which is why it is exported at all.
-  for (const issue of own) add(issue, null);
-
-  return [...byKey.values()].sort(
-    (a, b) =>
-      b.severity - a.severity ||
-      (a.code < b.code ? -1 : a.code > b.code ? 1 : 0) ||
-      (rectKey(a.rect) < rectKey(b.rect) ? -1 : rectKey(a.rect) > rectKey(b.rect) ? 1 : 0),
-  );
-}
-
-/** The `unmeasured` maps, flattened, so a partly-measured dimension is legible on its own. */
 function unmeasuredSubScores(report: QualityReport): UnmeasuredSubScore[] {
-  const out: UnmeasuredSubScore[] = [];
-  for (const id of QUALITY_DIMENSIONS) {
-    const map = report.dimensions[id]?.unmeasured;
-    if (!map) continue;
-    for (const subScore of Object.keys(map).sort()) out.push({ dimension: id, subScore, reason: map[subScore] });
-  }
-  return out;
+  return projectAbsences(report)
+    .filter((absence) => absence.subScore !== null)
+    .map((absence) => ({
+      dimension: absence.dimension,
+      subScore: absence.subScore as string,
+      reason: absence.reason,
+    }));
 }
 
 /**
@@ -356,12 +305,15 @@ function reportNotes(report: QualityReport): string[] {
       'No dimension could measure this target, so `score` is 0.00. That means "nothing was measured", not "bad artwork" - read `excluded` for the reason behind each dimension.',
     );
   }
-  for (const id of QUALITY_DIMENSIONS) {
-    const reason = report.excluded[id];
-    if (reason === undefined) continue;
-    notes.push(`\`${id}\` was not measured: ${ABSENCE_NOTES[reason]}`);
+  // One note per absence, from the shared walk (`projectAbsences`) rather than a second walk over
+  // `report.excluded` and a second over `unmeasured`. **Whole dimensions first, then sub-scores**,
+  // which is the order this list has always had: the two are different claims and the reader
+  // meets "this did not apply" before "this half was not taken".
+  const absences = projectAbsences(report);
+  for (const { dimension, reason } of absences.filter((absence) => absence.subScore === null)) {
+    notes.push(`\`${dimension}\` was not measured: ${ABSENCE_NOTES[reason]}`);
   }
-  for (const { dimension, subScore, reason } of unmeasuredSubScores(report)) {
+  for (const { dimension, subScore, reason } of absences.filter((absence) => absence.subScore !== null)) {
     notes.push(`\`${dimension}.${subScore}\` was not measured: ${ABSENCE_NOTES[reason]}`);
   }
   const notImplemented = QUALITY_DIMENSIONS.filter((id) => report.excluded[id] === 'not-implemented').length;
@@ -424,7 +376,7 @@ export function qualityPayload(sprite: Sprite, options: QualityTargetOptions = {
     focus: options.rect ?? null,
   });
   const report = evaluate(context, undefined, { assetClass: options.assetClass });
-  const index = indexIssues(report, aggregatorIssues(context));
+  const index = projectIssues(report, aggregatorIssues(context));
   const blockingCount = index.filter((entry) => entry.blocking).length;
 
   // Never let the cap hide a blocking defect. Severity-descending order puts every

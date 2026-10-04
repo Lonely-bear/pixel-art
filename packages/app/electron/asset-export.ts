@@ -28,17 +28,10 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
-  buildAssetMeta,
   buildSpritesheet,
   encodePNG,
-  importExcalidraw,
-  importGodot,
-  importPhaser,
-  importUnity,
+  renderAssetBundle,
   scaleAtlas,
-  serializeAssetMeta,
-  validateAssetNaming,
-  type AssetImportResult,
   type Sprite,
 } from '@pixel/core';
 
@@ -55,12 +48,10 @@ import {
 /** Re-exported so the main process has one import site for the whole capability. */
 export { ASSET_ENGINES, isAssetEngine, type AssetEngine };
 
-const IMPORTERS: Record<AssetEngine, (input: unknown) => AssetImportResult> = {
-  godot: importGodot,
-  unity: importUnity,
-  phaser: importPhaser,
-  excalidraw: importExcalidraw,
-};
+// **The importers themselves are not held here.** This table used to carry them, making it the
+// fourth copy of the walk `renderAssetBundle` now owns; `packages/core/test/single-implementation.test.ts`
+// fails if one reappears. `ASSET_ENGINES` is the name list the renderer menu and the IPC validator
+// share, which is vocabulary rather than policy.
 
 /**
  * One naming diagnostic, flattened for the renderer.
@@ -146,47 +137,56 @@ export async function exportAssetBundle(
       )
     : undefined;
 
-  const meta = buildAssetMeta(sprite, {
-    ...(packed && request.sheet
-      ? { sheet: { atlas: packed, image: request.sheet.image } }
-      : {}),
-    ...(request.outputs ? { outputs: request.outputs } : {}),
-    ...(request.directions ? { directions: request.directions } : {}),
-  });
+  // **One renderer, shared with `finalize_document`, the CLI and the share command.** This used to
+  // build the contract, validate the naming and walk the importer itself, which was the fourth copy
+  // of that walk; `packages/core/test/single-implementation.test.ts` fails if one reappears. What
+  // stays here is what is genuinely this surface's: joining paths onto a directory the user picked in
+  // a dialog, and the refusal wording below.
+  const bundle = renderAssetBundle(
+    sprite,
+    {
+      ...(packed && request.sheet
+        ? { sheet: { atlas: packed, image: request.sheet.image } }
+        : {}),
+      ...(request.outputs ? { outputs: request.outputs } : {}),
+      ...(request.directions ? { directions: request.directions } : {}),
+      ...(request.directory === undefined ? {} : { directory: request.directory }),
+    },
+    request.engine ?? null,
+  );
+  const { meta, naming, text } = bundle;
 
-  const naming = validateAssetNaming(meta);
-  if (!naming.ok) {
+  if (bundle.errors.length > 0) {
     return {
       written: false,
       files: [],
-      naming: { ok: false, diagnostics: toFindings(naming.diagnostics) },
-      refusal: refusalText(naming.diagnostics, 'the contract'),
+      naming: { ok: false, diagnostics: toFindings(bundle.errors) },
+      refusal: refusalText(bundle.errors, 'the contract'),
     };
   }
 
   // Everything this call would write, as one list, before anything touches disk.
   // The contract path first because it is what `outputs` names are relative to.
   const writes: { path: string; bytes: Uint8Array | string }[] = [];
-  const text = serializeAssetMeta(meta);
   writes.push({ path: request.path, bytes: text });
 
   let engineSummary: AssetEngineSummary | undefined;
-  if (request.engine) {
-    // Relative, forward-slashed paths from the importer are joined segment by
-    // segment so a Windows separator can never reach a contract path.
-    const result = IMPORTERS[request.engine](meta);
-    const root = request.directory ?? result.root;
-    const files = result.files.map((file) => ({
-      path: path.join(metaDir, root, ...file.path.split('/')),
-      reported: `${root}/${file.path}`,
-      contents: file.contents,
-    }));
-    for (const file of files) writes.push({ path: file.path, bytes: file.contents });
+  if (bundle.engine !== null) {
+    // The importer ran inside `renderAssetBundle`; all that is left is putting the bytes on disk
+    // under the directory the user chose. Relative, forward-slashed paths from the importer are
+    // joined segment by segment so a Windows separator can never reach a contract path.
+    const { root, files, warnings } = bundle.engine;
+    for (const file of files) {
+      writes.push({
+        path: path.join(metaDir, root, ...file.path.split('/')),
+        bytes: file.contents,
+      });
+    }
     engineSummary = {
-      engine: request.engine,
+      engine: request.engine!,
       root,
-      files: files.map((file) => file.reported),
-      warnings: [...result.warnings],
+      files: files.map((file) => `${root}/${file.path}`),
+      warnings: [...warnings],
     };
   }
   if (packed && request.sheet) {

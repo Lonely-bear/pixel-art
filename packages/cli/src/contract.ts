@@ -39,14 +39,8 @@ import {
   buildAssetMeta,
   buildSpritesheet,
   encodePNG,
-  importExcalidraw,
-  importGodot,
-  importPhaser,
-  importUnity,
+  renderAssetBundle,
   scaleAtlas,
-  serializeAssetMeta,
-  validateAssetNaming,
-  type AssetImportResult,
   type AssetMeta,
   type AssetMetaOutput,
   type AtlasOptions,
@@ -56,13 +50,15 @@ import { intFlag, repeatFlag, stringFlag, UsageError, type ParsedArgs } from './
 import { loadSprite, writeBytes, writeText } from './io.js';
 import type { CommandContext, CommandSpec } from './commands.js';
 
-/** The four importers, by the name the MCP surface and the docs both use. */
-const ENGINE_IMPORTERS: Record<string, (input: unknown) => AssetImportResult> = {
-  godot: importGodot,
-  unity: importUnity,
-  phaser: importPhaser,
-  excalidraw: importExcalidraw,
-};
+/**
+ * The four importer names, for flag validation only.
+ *
+ * **The importers themselves are not held here.** This table used to carry them, which made it the
+ * third copy of the walk that `renderAssetBundle` now owns; `packages/core/test/single-implementation.test.ts`
+ * fails if one reappears. A name list is not a policy — it is the vocabulary `--engine` accepts,
+ * and keeping it here is what lets the usage error name every valid value.
+ */
+const ENGINE_NAMES = ['godot', 'unity', 'phaser', 'excalidraw'] as const;
 
 /**
  * `outputs[].role`, as a closed set.
@@ -210,8 +206,12 @@ export const contractCommand: CommandSpec = {
     if (!out) throw new UsageError('missing --out <meta.json>');
 
     const engine = stringFlag(ctx.args.flags, 'engine');
-    if (engine !== undefined && !Object.prototype.hasOwnProperty.call(ENGINE_IMPORTERS, engine)) {
-      throw new UsageError(`unknown --engine "${engine}"; expected ${Object.keys(ENGINE_IMPORTERS).join(', ')}`);
+    // Read here so `renderAssetBundle` gets the caller's override in the same request the template
+    // would have used; the contract itself is identical either way, since `directory` is outside
+    // the content hash (S4.1).
+    const directory = stringFlag(ctx.args.flags, 'directory');
+    if (engine !== undefined && !(ENGINE_NAMES as readonly string[]).includes(engine)) {
+      throw new UsageError(`unknown --engine "${engine}"; expected ${ENGINE_NAMES.join(', ')}`);
     }
 
     const sprite = await loadSprite(input);
@@ -223,31 +223,45 @@ export const contractCommand: CommandSpec = {
     const sheetRef = packSheet(sprite, ctx);
     const meta = buildContract(sprite, ctx, out, outputs, directions, sheetRef);
 
+    // **One renderer, shared with `finalize_document` and the share command.** This used to build
+    // the contract, validate the naming and walk the importer itself, which was the third copy of
+    // that walk; `packages/core/test/single-implementation.test.ts` now fails if one reappears.
+    // What stays here is what is genuinely this surface's: the on-disk path join, and the refusal
+    // wording below.
+    const bundle = renderAssetBundle(
+      sprite,
+      {
+        ...(sheetRef
+        ? { sheet: { atlas: sheetRef.atlas, image: bundleRelative(out, sheetRef.sheetPath) } }
+        : {}),
+        ...(outputs.length > 0 ? { outputs } : {}),
+        ...(directions ? { directions } : {}),
+        ...(directory === undefined ? {} : { directory }),
+      },
+      engine ?? null,
+    );
+
     // Naming runs on the contract, before the write and before the importer: a bundle whose own
     // names cannot be committed is not worth writing in the first place. Errors refuse; warnings
     // do not, and are reported so a project can see what its convention costs.
-    const naming = validateAssetNaming(meta);
-    if (!naming.ok) {
-      const errors = naming.diagnostics.filter((d) => d.severity === 'error');
-      const codes = [...new Set(errors.map((d) => d.code))].join(', ');
-      const first = errors[0];
+    if (bundle.errors.length > 0) {
+      const codes = [...new Set(bundle.errors.map((d) => d.code))].join(', ');
+      const first = bundle.errors[0];
       return fail(
-        `Asset naming refuses this bundle: ${errors.length} error(s) [${codes}]. ` +
+        `Asset naming refuses this bundle: ${bundle.errors.length} error(s) [${codes}]. ` +
           `First: ${first && first.path !== '' ? `"${first.path}"` : 'the contract'}` +
           (first ? ` - ${first.message}` : ''),
         {
           code: 'asset-naming',
           gate: 'asset-naming',
-          naming: { ok: false, diagnostics: naming.diagnostics },
+          naming: { ok: false, diagnostics: bundle.naming.diagnostics },
           remediation:
             'Rename the offending path or the asset name, or drop the entry from --output/--sheet, then re-run. Naming warnings do not block an export.',
         },
       );
     }
 
-    // Serialised once and used twice, so the bytes written and the bytes reported are the same
-    // bytes and a second call is not a second chance for them to differ.
-    const text = serializeAssetMeta(meta);
+    const { naming, text } = bundle;
 
     // Nothing above this line touched the disk, so a refusal really does write nothing at all.
     const written: string[] = [];
@@ -261,23 +275,18 @@ export const contractCommand: CommandSpec = {
     let engineReport:
       | { engine: string; root: string; files: string[]; warnings: string[] }
       | undefined;
-    if (engine !== undefined) {
-      const result = ENGINE_IMPORTERS[engine]!(meta);
-      // `result.root` is the importer's suggested folder; `--directory` takes it over, relative
-      // to the contract. Paths are joined segment by segment so a Windows separator can never
-      // reach a path that later becomes a contract field.
-      const root = stringFlag(ctx.args.flags, 'directory') ?? result.root;
-      for (const file of result.files) {
+    if (bundle.engine !== null) {
+      // The importer ran inside `renderAssetBundle`; all that is left is putting the bytes on disk,
+      // which is this surface's job. `result.root` is the importer's suggested folder and
+      // `--directory` took it over. Paths are joined segment by segment so a Windows separator can
+      // never reach a path that later becomes a contract field.
+      const { root, files, warnings } = bundle.engine;
+      for (const file of files) {
         const target = join(dirname(resolve(out)), root, ...file.path.split('/'));
         await writeText(target, file.contents);
         written.push(resolve(target));
       }
-      engineReport = {
-        engine,
-        root,
-        files: result.files.map((file) => file.path),
-        warnings: [...result.warnings],
-      };
+      engineReport = { engine: engine!, root, files: files.map((f) => f.path), warnings: [...warnings] };
     }
 
     // No score anywhere in this envelope. Named defects, code paths and file paths are the whole

@@ -47,6 +47,14 @@ export * from './atlas.js';
 export * from './gif.js';
 export * from './import.js';
 
+// The perception renderer (`preview/animation.ts`): the contact sheet, and the preview sizing
+// helpers it owns. Public because three surfaces render one - the `preview_animation` session
+// tool, `finalize_document`'s `contact` output and the share bundle's `contact` output - and a
+// contact sheet that three implementations produced was a contact sheet that could disagree with
+// itself about its own safety limit. `packages/mcp/src/tools.ts` adds only the MCP `ContentBlock`
+// wrapper, which is the one part core cannot hold.
+export * from './preview/animation.js';
+
 // The quality pipeline: the aggregator, the dimensions that exist, and the contract they
 // share. Re-exporting the dimensions is deliberate — `evaluate` is the product's entry
 // point into the pipeline, and a caller that cannot reach the analyzer it is aggregating

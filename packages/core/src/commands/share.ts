@@ -54,11 +54,6 @@
  *
  * ## Not here, on purpose
  *
- * **A contact sheet.** Its only implementation, `animationPreviewPayload`, is private to
- * `packages/mcp/src/tools.ts`, so wiring it here would mean moving that function out of a file
- * this change does not own. A template that asks for one is refused by name rather than silently
- * shipped without it.
- *
  * **A version.** `dotloom:license` is written only when a caller supplied one and nothing else is
  * ever inferred - `ASSET-CONTRACT` S11, "absent is not public domain". The engine version is not
  * written either, by S10: it changes on every release, so every shared file would become a diff
@@ -69,17 +64,9 @@ import type { PixelBuffer } from '../buffer.js';
 import { animationSequence, encodeGIF } from '../gif.js';
 import type { Sprite } from '../document.js';
 import {
-  buildAssetMeta,
-  serializeAssetMeta,
-  validateAssetNaming,
-  importExcalidraw,
-  importGodot,
-  importPhaser,
-  importUnity,
+  renderAssetBundle,
   type AssetMeta,
-  type AssetMetaOptions,
   type AssetMetaOutput,
-  type AssetNamingDiagnostic,
 } from '../asset/index.js';
 import { sha256Hex, utf8Bytes } from '../asset/hash.js';
 import { buildSpritesheet, scaleAtlas, toAsepriteJson, type Atlas } from '../atlas.js';
@@ -89,14 +76,15 @@ import { serializeSprite } from '../serialize.js';
 import { findRigPose, findRigTween, interpolatePose, renderInterpolatedPose, renderPose, requireRig } from '../rig.js';
 import { createQualityContext } from '../quality/context.js';
 import { aggregatorIssues, evaluate as aggregateQualityReport } from '../quality/index.js';
+import { projectAbsences, projectIssues } from '../quality/projections.js';
 import {
-  isBlocking,
   QUALITY_DIMENSIONS,
   type ExcludedReason,
   type QualityDimensionId,
   type QualityIssue,
 } from '../quality/types.js';
 import { scaleNearest } from '../transform.js';
+import { renderAnimationPreview } from '../preview/animation.js';
 import { planQualityFix, type QualityFixPlan } from './quality.js';
 import { defineCommand, type CommandSummary } from './types.js';
 
@@ -110,16 +98,16 @@ export const SHARE_BADGE = 'dotloom-mcp';
 /** Longest edge a rendered piece is scaled to when a template's `png` output does not say. */
 const TARGET_LONG_SIDE = 256;
 
-/** The dimension set, in pipeline order, for the card's legend. Mirrors `build-gallery.mjs`. */
-const DIMENSIONS: readonly QualityDimensionId[] = ['silhouette', 'value', 'palette', 'noise', 'outline', 'motion'];
-
-/** The four importers, so a template that names an engine reaches the same code `finalize_document` does. */
-const ENGINE_IMPORTERS: Record<string, (input: unknown) => { root: string; files: { path: string; contents: string; role: string }[]; warnings: string[] }> = {
-  godot: importGodot as never,
-  unity: importUnity as never,
-  phaser: importPhaser as never,
-  excalidraw: importExcalidraw as never,
-};
+/**
+ * The dimension set, in pipeline order, for the card's legend.
+ *
+ * **The pipeline's own list, by reference** rather than a hand-copied one. It used to be spelled
+ * out here and mirrored in `build-gallery.mjs`, which is three orderings that had to agree; a new
+ * dimension added to `QUALITY_DIMENSIONS` and not to this file would have silently dropped a
+ * dimension's issues from every share card, because the walk reads `report.dimensions[id]` in
+ * this order.
+ */
+const DIMENSIONS: readonly QualityDimensionId[] = QUALITY_DIMENSIONS;
 
 export const SHARE_ENGINES = ['godot', 'unity', 'phaser', 'excalidraw'] as const;
 export type ShareEngine = (typeof SHARE_ENGINES)[number];
@@ -193,11 +181,17 @@ const tagField = z.union([z.string(), z.number().int()]).optional().describe('An
 /**
  * One file a template asks for.
  *
- * **The same union `finalize_document` offers, minus `contact`.** A template can ask for a GIF, a
- * baked rig pose, one engine's files or the bare contract; what it cannot ask for is a contact
- * sheet, and asking is a named refusal rather than a bundle that quietly ships less than it
- * claims. `meta` and `engine` are the two `finalize_document` asset outputs, spelled the same way
- * so the two cannot describe different bundles.
+ * **The same union `finalize_document` offers.** A template can ask for a GIF, a baked rig pose, a
+ * contact sheet, one engine's files or the bare contract; `meta` and `engine` are the two
+ * `finalize_document` asset outputs, spelled the same way so the two cannot describe different
+ * bundles.
+ *
+ * `contact` used to be the one name in `finalize_document`'s union that was **refused here by
+ * name**, because the only implementation of a contact sheet was `animationPreviewPayload` and it
+ * was private to `packages/mcp/src/tools.ts`. That renderer is now `renderAnimationPreview` in
+ * core (`preview/animation.ts`), so the same code the `preview_animation` tool and
+ * `finalize_document` draw is the code this bundle draws - and a template that asks for one gets
+ * the sheet rather than a refusal.
  *
  * Paths are **not** in here. A template says *what* goes in a bundle; the bundle says where, and a
  * template that could name an absolute path would be a template that decides where someone's build
@@ -250,6 +244,22 @@ export const shareOutputSchema = z.discriminatedUnion('type', [
       pose: z.string().describe('Pose name or ID to bake. The document must carry a rig.'),
       tween: z.string().optional().describe('Bake this tween instead of a pose, at `progress`.'),
       progress: z.number().min(0).max(1).optional().describe('Where along the tween (or the identity-to-pose blend) to render. Defaults to 1.'),
+      scale: scaleField,
+      background: backgroundField,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal('contact'),
+      tag: tagField,
+      frameOrder: z
+        .enum(['timeline', 'playback'])
+        .optional()
+        .describe('Which order the cells run in. Defaults to playback when `tag` is set and timeline order otherwise.'),
+      layout: z.enum(['strip', 'grid']).optional().describe('Cell layout. Defaults to "grid".'),
+      columns: z.number().int().min(1).optional().describe('Columns, for the "grid" layout.'),
+      padding: z.number().int().min(0).optional().describe('Transparent gap between cells, in unscaled pixels.'),
+      margin: z.number().int().min(0).optional().describe('Transparent border around the sheet, in unscaled pixels.'),
       scale: scaleField,
       background: backgroundField,
     })
@@ -378,33 +388,12 @@ function judge(sprite: Sprite): {
   });
   const report = aggregateQualityReport(context, undefined, {});
 
-  // One entry per `(code, rect)`, dimensions collected rather than discarded, sorted the way the
-  // aggregator sorts: severity descending, then code, then rect. Blocking defects come first
-  // because severity is what puts them there.
-  const byKey = new Map<string, { issue: QualityIssue; dimensions: string[] }>();
-  const add = (issue: QualityIssue, dimension: string | null): void => {
-    const key = `${issue.code}|${issue.rect === null ? 'global' : `${issue.rect.x},${issue.rect.y},${issue.rect.w},${issue.rect.h}`}`;
-    const existing = byKey.get(key);
-    if (existing) {
-      if (dimension !== null && !existing.dimensions.includes(dimension)) existing.dimensions.push(dimension);
-      return;
-    }
-    byKey.set(key, { issue, dimensions: dimension === null ? [] : [dimension] });
-  };
-  for (const id of DIMENSIONS) {
-    for (const issue of report.dimensions[id]?.issues ?? []) add(issue, id);
-  }
-  // The aggregator's issues describe the target rather than any one dimension's opinion of it.
-  for (const issue of aggregatorIssues(context)) add(issue, null);
-
-  const entries = [...byKey.values()].sort((a, b) => {
-    const bySeverity = b.issue.severity - a.issue.severity;
-    if (bySeverity !== 0) return bySeverity;
-    if (a.issue.code !== b.issue.code) return a.issue.code < b.issue.code ? -1 : 1;
-    const left = a.issue.rect === null ? '' : `${a.issue.rect.x},${a.issue.rect.y}`;
-    const right = b.issue.rect === null ? '' : `${b.issue.rect.x},${b.issue.rect.y}`;
-    return left < right ? -1 : left > right ? 1 : 0;
-  });
+  // The walk is `projectIssues`, the same one `packages/mcp/src/quality-report.ts` publishes: one
+  // `(code, rect)` deduplication, one severity-descending order, one attribution rule. What this
+  // function adds is the *policy* rather than the projection - severity is dropped, one defect is
+  // reported per code, and a repair plan is attached - and that policy is the share card's, not
+  // the reader of `pixel://quality/{doc}`'s.
+  const projected = projectIssues(report, aggregatorIssues(context));
 
   // Which dimension owns a code, for the repair plan's guidance. Last writer wins in pipeline
   // order, which is a defined answer rather than an accident: two dimensions naming one code is
@@ -414,25 +403,35 @@ function judge(sprite: Sprite): {
     for (const issue of report.dimensions[id]?.issues ?? []) owner.set(issue.code, id);
   }
 
-  // One plan per code, and the plan is keyed by code because the bundle reports a defect once.
-  // The **last** entry for a code wins, matching the order `fix` returns them in.
+  // One plan per code, keyed by code because the bundle reports a defect once. **The last entry
+  // for a code wins**, which is the order `fix` returns plans in and which this module has always
+  // done; the *reported* entry is the severity-highest one, so on a code that fires in two places
+  // the guidance sentence can name the second region. That is preserved rather than tidied, for
+  // the reason every other thing here is: a share bundle is a committed-shape artifact and a
+  // silent change to a word on its card is a diff nobody asked for.
   const plans = new Map<string, QualityFixPlan>();
-  for (const entry of entries) {
-    plans.set(entry.issue.code, planQualityFix(entry.issue, owner.get(entry.issue.code) ?? 'aggregator'));
+  for (const entry of projected) {
+    plans.set(
+      entry.code,
+      planQualityFix(
+        { code: entry.code, message: entry.message, severity: entry.severity, rect: entry.rect } as QualityIssue,
+        owner.get(entry.code) ?? 'aggregator',
+      ),
+    );
   }
 
   const seen = new Set<string>();
   const issues: ShareIssue[] = [];
-  for (const entry of entries) {
-    if (seen.has(entry.issue.code)) continue;
-    seen.add(entry.issue.code);
-    const plan = plans.get(entry.issue.code);
+  for (const entry of projected) {
+    if (seen.has(entry.code)) continue;
+    seen.add(entry.code);
+    const plan = plans.get(entry.code);
     issues.push({
-      code: entry.issue.code,
+      code: entry.code,
       dimensions: [...entry.dimensions].sort(),
-      rect: entry.issue.rect,
-      blocking: isBlocking(entry.issue),
-      message: oneLine(entry.issue.message),
+      rect: entry.rect,
+      blocking: entry.blocking,
+      message: oneLine(entry.message),
       disposition: plan?.fix === 'ops' ? 'safe-repair-available' : 'needs-a-decision',
       guidance: plan ? oneLine(plan.guidance) : null,
     });
@@ -443,19 +442,19 @@ function judge(sprite: Sprite): {
   // as a whole-dimension abstention: part of this claim was not checked. So it goes in the same
   // block, never folded into the measured list.
   const notMeasured: ShareNotMeasured[] = [];
-  for (const [dimension, reason] of Object.entries(report.excluded)) {
-    notMeasured.push({ dimension, reason, note: EXCLUSION_NOTES[reason as ExcludedReason] ?? `reason: ${reason}` });
-  }
-  for (const id of DIMENSIONS) {
-    for (const [sub, reason] of Object.entries(report.dimensions[id]?.unmeasured ?? {})) {
-      notMeasured.push({
-        dimension: `${id}.${sub}`,
-        reason: reason as string,
-        note:
-          (EXCLUSION_NOTES[reason as ExcludedReason] ?? `reason: ${reason}`) +
-          ' The rest of this dimension was measured and is reported normally; this one term is absent, not counted at its best.',
-      });
+  for (const absence of projectAbsences(report)) {
+    const note = EXCLUSION_NOTES[absence.reason] ?? `reason: ${absence.reason}`;
+    if (absence.subScore === null) {
+      notMeasured.push({ dimension: absence.dimension, reason: absence.reason, note });
+      continue;
     }
+    notMeasured.push({
+      dimension: `${absence.dimension}.${absence.subScore}`,
+      reason: absence.reason,
+      note:
+        note +
+        ' The rest of this dimension was measured and is reported normally; this one term is absent, not counted at its best.',
+    });
   }
   notMeasured.sort((a, b) => (a.dimension < b.dimension ? -1 : a.dimension > b.dimension ? 1 : 0));
 
@@ -605,6 +604,12 @@ function bakePose(sprite: Sprite, output: Extract<ShareOutput, { type: 'pose' }>
  *
  * `meta` implies the contract; `engine` implies the contract **and** the importer's files, because
  * the importer reads the contract - which is exactly the shape `finalize_document` gives both.
+ *
+ * All of it is {@link renderAssetBundle}'s work - the contract, the naming check, the
+ * serialisation, the importer. What is left here is the two things that are genuinely the share
+ * bundle's: **the bundle-relative forward-slashed join**, and **a refusal carried on the record
+ * rather than thrown**, because a bundle that says the delivery gate stopped it is more useful
+ * than no bundle.
  */
 function renderAssetOutput(
   sprite: Sprite,
@@ -613,16 +618,31 @@ function renderAssetOutput(
   sheetImage: string | undefined,
   engine: ShareEngine | undefined,
 ): { files: ShareBundleFile[]; delivery: ShareDelivery; meta: AssetMeta } {
-  const metaOptions: AssetMetaOptions = {
-    ...(atlas && sheetImage ? { sheet: { atlas, image: sheetImage } } : {}),
-    ...(request.outputs ? { outputs: request.outputs as readonly AssetMetaOutput[] } : {}),
-    ...(request.directions ? { directions: request.directions } : {}),
-  };
-  const meta = buildAssetMeta(sprite, metaOptions);
+  // **The command's `engine` wins over the output's own and over the template's.** That is the
+  // point of the override: a template names an engine so a bundle is reproducible for everybody
+  // sharing that piece, and a caller sending the same artwork into a Phaser project instead says
+  // so at the call rather than forking the template. The fallbacks are only for a caller who said
+  // nothing, and they read output-then-template so there is exactly one precedence order.
+  const requestedEngine = request.type === 'engine' ? engine ?? request.engine : undefined;
+  if (request.type === 'engine' && !requestedEngine) {
+    throw new Error(
+      'An `engine` output needs an engine: set `engine` on the output, on the template, or pass `engine` to the command. The target engine is the caller\'s choice and a tool cannot know it.',
+    );
+  }
 
-  const naming = validateAssetNaming(meta);
-  if (!naming.ok) {
-    const errors = naming.diagnostics.filter((diagnostic: AssetNamingDiagnostic) => diagnostic.severity === 'error');
+  const rendered = renderAssetBundle(
+    sprite,
+    {
+      ...(atlas && sheetImage ? { sheet: { atlas, image: sheetImage } } : {}),
+      ...(request.outputs ? { outputs: request.outputs as readonly AssetMetaOutput[] } : {}),
+      ...(request.directions ? { directions: request.directions } : {}),
+      ...(request.type === 'engine' && request.directory ? { directory: request.directory } : {}),
+    },
+    requestedEngine,
+  );
+
+  if (rendered.errors.length > 0) {
+    const errors = rendered.errors;
     const codes = [...new Set(errors.map((diagnostic) => diagnostic.code))].join(', ');
     return {
       files: [],
@@ -630,37 +650,18 @@ function renderAssetOutput(
         refused: true,
         reason: `Asset naming refuses this bundle: ${errors.length} error(s) [${codes}]. First: ${errors[0].path === '' ? 'the contract' : errors[0].path} - ${errors[0].message}`,
       },
-      meta,
+      meta: rendered.meta,
     };
   }
 
-  const text = serializeAssetMeta(meta);
   const files: ShareBundleFile[] = [
-    { path: 'meta.json', mediaType: 'application/json', role: 'asset', bytes: utf8(text) },
+    { path: 'meta.json', mediaType: 'application/json', role: 'asset', bytes: utf8(rendered.text) },
   ];
   const paths = ['meta.json'];
-  let engineName: string | null = null;
-
-  if (request.type === 'engine') {
-    // **The command's `engine` wins over the output's own and over the template's.** That is the
-    // point of the override: a template names an engine so a bundle is reproducible for everybody
-    // sharing that piece, and a caller sending the same artwork into a Phaser project instead says
-    // so at the call rather than forking the template. The fallbacks are only for a caller who said
-    // nothing, and they read output-then-template so there is exactly one precedence order.
-    const name = engine ?? request.engine;
-    if (!name) {
-      throw new Error(
-        'An `engine` output needs an engine: set `engine` on the output, on the template, or pass `engine` to the command. The target engine is the caller\'s choice and a tool cannot know it.',
-      );
-    }
-    const importer = ENGINE_IMPORTERS[name];
-    if (!importer) throw new Error(`Unknown engine "${name}".`);
-    engineName = name;
-    const result = importer(meta);
-    const root = request.directory ?? result.root;
-    for (const file of result.files) {
+  if (rendered.engine) {
+    for (const file of rendered.engine.files) {
       // Joined segment by segment, so a Windows separator can never reach a bundle path.
-      const path = `${root}/${file.path.split('/').join('/')}`;
+      const path = `${rendered.engine.root}/${file.path.split('/').join('/')}`;
       files.push({ path, mediaType: 'text/plain', role: 'asset', bytes: utf8(file.contents) });
       paths.push(path);
     }
@@ -674,13 +675,13 @@ function renderAssetOutput(
       assets: [
         {
           path: 'meta.json',
-          contentHash: meta.asset.contentHash,
-          schemaVersion: meta.schemaVersion,
-          engine: engineName,
+          contentHash: rendered.meta.asset.contentHash,
+          schemaVersion: rendered.meta.schemaVersion,
+          engine: rendered.engine?.engine ?? null,
         },
       ],
     },
-    meta,
+    meta: rendered.meta,
   };
 }
 
@@ -779,6 +780,27 @@ export function buildShareBundle(sprite: Sprite, template: ShareTemplate, option
     recordFiles.push({ role: 'gif', path });
   }
 
+  const contactOutput = wanted('contact');
+  if (contactOutput && contactOutput.type === 'contact') {
+    const path = `${slug}_contact.png`;
+    // Rendered by core's `renderAnimationPreview`, the same function the `preview_animation` tool
+    // and `finalize_document`'s `contact` output use. No badge: the badge belongs to the piece, not
+    // to every strip of it, and nothing reads these bytes back.
+    const contact = renderAnimationPreview(sprite, {
+      tag: contactOutput.tag,
+      frameOrder: contactOutput.frameOrder,
+      layout: contactOutput.layout,
+      columns: contactOutput.columns,
+      padding: contactOutput.padding,
+      margin: contactOutput.margin,
+      scale: contactOutput.scale,
+      background: contactOutput.background,
+      includeMetadata: false,
+    });
+    files.push({ path, mediaType: 'image/png', role: 'contact-sheet', bytes: encodePNG(contact.image!) });
+    recordFiles.push({ role: 'contact-sheet', path });
+  }
+
   const poseOutput = wanted('pose');
   if (poseOutput && poseOutput.type === 'pose') {
     const path = `${slug}_${poseOutput.pose}.png`;
@@ -812,6 +834,12 @@ export function buildShareBundle(sprite: Sprite, template: ShareTemplate, option
         ? ([{ role: 'sheet-json', path: `${slug}_sheet.json` }] as const)
         : []),
       ...(gifOutput && gifOutput.type === 'gif' ? ([{ role: 'gif', path: `${slug}.gif` }] as const) : []),
+      // Named because the contract's `role` union already reserves `contact-sheet`, and a
+      // bundle that writes a contact sheet without declaring it is exactly the case
+      // `validateAssetNaming` refuses.
+      ...(contactOutput && contactOutput.type === 'contact'
+        ? ([{ role: 'contact-sheet', path: `${slug}_contact.png` }] as const)
+        : []),
     ];
     // The bundle's own file list, minus the source when it is not being written. Declared, because
     // an engine importer told about no frames and no sheet emits resources pointing at textures
@@ -1140,8 +1168,8 @@ export const shareBundleCommand = defineCommand({
     '## Templates\n\n' +
     'Pass `template` as an object - read a `*.share.json` and hand it over. Its field set is closed:\n' +
     'an unknown key is an error, not a default. `outputs` may name `png`, `frames`, `sheet`, `gif`,\n' +
-    '`pose`, `meta` and `engine`; a `contact` sheet is not available here and asking for one is a\n' +
-    'named refusal rather than a bundle that ships less than it claims. `assetContract` and the\n' +
+    '`contact`, `pose`, `meta` and `engine` - the same union `finalize_document` offers, spelled\n' +
+    'the same way so the two cannot describe different bundles. `assetContract` and the\n' +
     'top-level `engine` are shorthand for the matching outputs, so a template that says both does\n' +
     'not get two contracts.',
   readOnly: true,

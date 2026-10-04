@@ -173,8 +173,8 @@ the script has never seen is checked by exactly the code that builds it. A secon
 fields is a second place for the two to drift, and a template is presentation *policy* - the one
 thing that must not be silently reinterpreted.
 
-`outputs` is the same union `finalize_document` offers - `png`, `frames`, `sheet`, `gif`, `pose`,
-`meta`, `engine` - minus `contact`, which is refused by name (see S6). `meta` and `engine` are spelled
+`outputs` is the same union `finalize_document` offers - `png`, `frames`, `sheet`, `gif`, `contact`,
+`pose`, `meta`, `engine`. `meta` and `engine` are spelled
 `finalize_document`'s way, so the two surfaces cannot describe different bundles; the top-level
 `assetContract` and `engine` fields are shorthand that expands into them, and expanding is idempotent,
 so `handoff` naming its engine in both places gets one contract rather than two.
@@ -260,10 +260,6 @@ writer and there is no window in which the file on disk disagrees with the recor
 
 ## S6. Limitations
 
-- **No `contact` output.** Its only implementation, `animationPreviewPayload`, is private to
-  `packages/mcp/src/tools.ts`, so a template that asks for one is refused by name rather than
-  shipped without it. Every other output `finalize_document` offers is reachable, including a bare
-  `{type: "meta"}` and each of the four importers including Excalidraw.
 - **No licence is ever inferred.** `dotloom:license` appears only if a template sets `license`, and
   none of the four does. A user who wants one adds it to their own template. Absent is not public
   domain (`ASSET-CONTRACT` S11).

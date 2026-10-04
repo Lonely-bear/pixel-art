@@ -747,6 +747,7 @@ function rectKey(issue: QualityIssue): string {
 }
 
 export * from './context.js';
+export * from './projections.js';
 export * from './silhouette.js';
 export * from './types.js';
 export * from './value.js';

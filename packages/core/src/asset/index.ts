@@ -27,6 +27,7 @@
 export * from './hash.js';
 export * from './schema.js';
 export * from './build.js';
+export * from './bundle.js';
 export * from './validate.js';
 // The four engine importers and the naming validator, all consuming that one contract.
 // `export *` rather than named re-exports: two one-token names in a package-wide barrel

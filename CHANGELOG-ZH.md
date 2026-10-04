@@ -9,6 +9,34 @@
 > 本文件是 [`CHANGELOG.md`](CHANGELOG.md) 的中文镜像。两者冲突时以英文为准 —— 英文是
 > 事实源,中文是它的副本。0.1.0 至 0.4.2 的全部发布历史均已翻译。
 
+## [Unreleased]
+### 变更
+
+- **一份资产包渲染器，在 core 里。** `renderAssetBundle` 现在是唯一一处构建契约、校验命名并遍历
+  importer 的地方。四个面各自持有过这段遍历：MCP 工具里的 `renderAssetOutputs`、分享命令里的
+  `renderAssetOutput`、`packages/cli/src/contract.ts` 和
+  `packages/app/electron/asset-export.ts`。CLI 与 app 改为调用共享渲染器，MCP 工具与分享命令改为
+  import 它。各面保留的只有真正属于各面的部分——路径拼接（在其中两个面上是磁盘路径，在另两个面上是
+  bundle 内的相对字符串），以及 refusal 文案，那是表达。
+
+  importer 本身不再由这些面中的任何一个持有表。CLI 保留四个 `--engine` 名称作为词汇，好让用法错误
+  能列出它们；app 保留 `ASSET_ENGINES` 供渲染菜单与 IPC 校验器使用。两者都是词汇，不是策略。
+
+  `packages/core/test/single-implementation.test.ts` 会在第二份遍历重新出现时失败——这一点通过重新
+  引入一份副本、并确认守卫变红来验证过。
+
+- **一份 issue 投影。** 分享卡片与 MCP 质量报告现在共用一份对报告中 issue 的投影，
+  `animationPreviewPayload` 也移进了 core。后者正是分享模板现在可以要一份 `contact` 输出的原因
+  ——此前 `share_bundle` 按名字拒绝它，因为唯一的实现曾是 MCP 层的私有函数。
+
+  该投影保留了整条质量流水线赖以成立的那个区分：**弃权不是通过**，所以 `ExcludedReason` 在搬迁中存活
+  下来——"闸门弃权，而弃权就是答案"仍与"已测量，且干净"可分辨。
+
+### 修复
+
+- 没有已发布内容变动一个字节。`build-share.mjs --verify` 报告两代生成产出 210 个文件逐字节相同，
+  `build-gallery.mjs --check-stale` 报告已提交的画廊与一次全新构建一致。
+
 ## [0.5.0] - 2026-10-04
 ### Added
 

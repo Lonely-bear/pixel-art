@@ -6,6 +6,39 @@ All notable changes to dotloom-mcp are documented in this file.
   <a href="CHANGELOG.md">English</a> · <a href="CHANGELOG-ZH.md">中文</a>
 </p>
 
+## [Unreleased]
+### Changed
+
+- **One asset-bundle renderer, in core.** `renderAssetBundle` is now the single place that builds a
+  contract, validates its naming and walks an importer. Four surfaces each held that walk:
+  `renderAssetOutputs` in the MCP tools, `renderAssetOutput` in the share command,
+  `packages/cli/src/contract.ts` and `packages/app/electron/asset-export.ts`. The CLI and the app
+  now call the shared renderer; the MCP tool and the share command import it. What stayed per
+  surface is what genuinely is per surface - the path join, which is a disk concern on two of them
+  and a bundle-relative string on the others, and the refusal wording, which is presentation.
+
+  The importers themselves are no longer held in a table on any of those surfaces. The CLI keeps the
+  four `--engine` names as vocabulary so a usage error can list them, and the app keeps
+  `ASSET_ENGINES` for the renderer menu and the IPC validator. Neither is policy.
+
+  `packages/core/test/single-implementation.test.ts` fails if a second copy of the walk reappears
+  - proven by reintroducing one and showing the guard go red.
+
+- **One issue projection.** The share card and the MCP quality report now share a projection of a
+  report's issues, and `animationPreviewPayload` moved into core. That last one is why a share
+  template can now ask for a `contact` output, which `share_bundle` previously refused by name: the
+  only implementation had been private to the MCP layer.
+
+  The projection preserves the distinction the whole quality pipeline rests on. An abstention is not
+  a pass, so `ExcludedReason` survives the move - "the gate abstained and that is the answer" stays
+  distinguishable from "measured, and clean".
+
+### Fixed
+
+- Nothing shipped changed a byte. `build-share.mjs --verify` reports byte-identical output for 210
+  files across two generations, and `build-gallery.mjs --check-stale` reports the committed gallery
+  matches a fresh build.
+
 ## [0.5.0] - 2026-10-04
 ### Added
 

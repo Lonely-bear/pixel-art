@@ -24,14 +24,11 @@ import { SKILL_FINGERPRINT } from './server.js';
 import {
   animationSequence,
   assertFinalizable,
-  buildAssetMeta,
-  importExcalidraw,
-  importGodot,
-  importPhaser,
-  importUnity,
-  serializeAssetMeta,
-  validateAssetNaming,
-  blendInto,
+  assertPreviewOutputSize,
+  previewFactor,
+  renderAnimationPreview,
+  renderAssetBundle,
+  resolvePreviewBackground as resolveBackground,
   buildSpritesheet,
   compositeFrame,
   compositeWithOnion,
@@ -58,7 +55,6 @@ import {
   layerRefSchema,
   qualityGateBypassNotice,
   rectSchema,
-  parseColor,
   PixelBuffer,
   resolveFrame,
   resolveLayer,
@@ -78,7 +74,6 @@ import {
   toAsepriteJson,
   toTiledJson,
   type Atlas,
-  type AssetImportResult,
   type AssetMetaOptions,
   type AssetMetaOutput,
   type AssetNamingDiagnostic,
@@ -580,16 +575,15 @@ function imageContent(buffer: PixelBuffer): ContentBlock {
   return binaryImageContent(encodePNG(buffer), 'image/png');
 }
 
-/** Integer upscale so a 16x16 sprite is actually legible to a vision model. */
-function previewFactor(width: number, height: number, target: number, max: number): number {
-  const longest = Math.max(width, height);
-  if (longest <= 0) return 1;
-  return Math.max(1, Math.min(max, Math.floor(target / longest) || 1));
-}
-
-function resolveBackground(value: string | null | undefined) {
-  return value == null ? null : parseColor(value);
-}
+/**
+ * Integer upscale so a 16x16 sprite is actually legible to a vision model, and the safety limit
+ * on how large a preview may be.
+ *
+ * **Both live in `@pixel/core`** (`previewFactor`, `assertPreviewOutputSize`) rather than here,
+ * because `renderAnimationPreview` is the renderer that needs them and it is a core module: a
+ * second copy of the 16-megapixel ceiling is a second place a preview can exceed it. Re-exported
+ * through this import list, not redefined.
+ */
 
 interface PreviewOnionOptions {
   before?: number;
@@ -619,19 +613,6 @@ interface PreviewRenderOptions {
   };
   frames?: 'one' | 'all';
   onion?: PreviewOnionOptions;
-}
-
-/** Even a valid 32x request can ask a 4096px canvas for a four-gigapixel image. */
-const MAX_PREVIEW_OUTPUT_PIXELS = 16_777_216;
-
-function assertPreviewOutputSize(width: number, height: number, factor: number): void {
-  const outputWidth = width * factor;
-  const outputHeight = height * factor;
-  if (outputWidth * outputHeight > MAX_PREVIEW_OUTPUT_PIXELS) {
-    throw new Error(
-      `Preview would be ${outputWidth}x${outputHeight} (${outputWidth * outputHeight} pixels), above the ${MAX_PREVIEW_OUTPUT_PIXELS}-pixel safety limit. Reduce scale or crop with rect.`,
-    );
-  }
 }
 
 /** Join the compact boolean switch, its options object and the legacy frame alias. */
@@ -782,151 +763,26 @@ interface PreviewAnimationOptions {
   includeMetadata?: boolean;
 }
 
-function blendAnimationFrame(
-  target: PixelBuffer,
-  source: PixelBuffer,
-  opacity: number,
-  tint: ReturnType<typeof parseColor> | null,
-): void {
-  if (opacity <= 0) return;
-  for (let i = 0; i < source.data.length; i += 4) {
-    const alpha = source.data[i + 3];
-    if (alpha === 0) continue;
-    const color = tint
-      ? { r: tint.r, g: tint.g, b: tint.b, a: alpha }
-      : { r: source.data[i], g: source.data[i + 1], b: source.data[i + 2], a: alpha };
-    blendInto(target.data, i, color, { opacity });
-  }
-}
-
-/** Render an animation in raw timeline or tag-expanded playback order as one contact sheet. */
+/**
+ * Render an animation in raw timeline or tag-expanded playback order as one contact sheet.
+ *
+ * **A two-line wrapper, and that is the point.** The renderer is
+ * `renderAnimationPreview` in `@pixel/core`: `preview_animation` and `finalize_document`'s
+ * `contact` output both used to have this code in this file, which is why `share_bundle` could not
+ * offer a contact sheet at all - the only implementation was on the wrong side of a package
+ * boundary. What stays here is the part core cannot hold: MCP `ContentBlock`s, because
+ * `ContentBlock` is a type from `@modelcontextprotocol/sdk` and `packages/core` has no Node.
+ */
 function animationPreviewPayload(
   sprite: Sprite,
   options: PreviewAnimationOptions = {},
 ): { blocks: ContentBlock[]; meta: Record<string, unknown>; image?: PixelBuffer } {
-  const frameOrder = options.frameOrder ?? (options.tag === undefined ? 'timeline' : 'playback');
-  if (frameOrder === 'playback' && options.tag === undefined) {
-    throw new Error('Playback preview requires a `tag`; use frameOrder: "timeline" to preview the whole document.');
-  }
-  const sequence = frameOrder === 'timeline'
-    ? animationSequence(sprite)
-    : animationSequence(sprite, options.tag);
-  if (sequence.frames.length === 0) throw new Error('Animation preview has no frames.');
-
-  if (options.format === 'gif') {
-    const scale = Math.max(1, Math.floor(options.scale ?? 1));
-    const playbackTag = frameOrder === 'playback' ? options.tag : undefined;
-    const bytes = encodeGIF(sprite, {
-      tag: playbackTag,
-      scale,
-      background: options.background,
-      loop: options.loop,
-    });
-    return {
-      blocks: [binaryImageContent(bytes, 'image/gif')],
-      meta: {
-        mode: 'animation-preview',
-        format: 'gif',
-        frameOrder,
-        tag: sequence.name,
-        frameCount: sequence.frames.length,
-        loops: options.loop ?? sequence.loops,
-        durationMs: sequence.durationMs,
-        scale,
-        imageWidth: sprite.width * scale,
-        imageHeight: sprite.height * scale,
-        ...(options.includeMetadata === false
-          ? {}
-          : {
-              sequence: sequence.frames.map((frame, position) => ({
-                position,
-                index: frame.index,
-                frameId: frame.frameId,
-                durationMs: frame.durationMs,
-              })),
-            }),
-      },
-    };
-  }
-
-  const count = sequence.frames.length;
-  const layout = options.layout ?? 'grid';
-  const padding = Math.max(0, Math.floor(options.padding ?? 1));
-  const margin = Math.max(0, Math.floor(options.margin ?? 1));
-  const columns = layout === 'strip'
-    ? count
-    : Math.max(1, Math.min(count, options.columns ?? Math.ceil(Math.sqrt(count))));
-  const rows = Math.ceil(count / columns);
-  const sheetWidth = margin * 2 + columns * sprite.width + Math.max(0, columns - 1) * padding;
-  const sheetHeight = margin * 2 + rows * sprite.height + Math.max(0, rows - 1) * padding;
-  const factor = options.scale ?? previewFactor(sheetWidth, sheetHeight, 256, 16);
-  assertPreviewOutputSize(sheetWidth, sheetHeight, factor);
-
-  const background = resolveBackground(options.background);
-  const layerIds = options.layers?.map((ref) => resolveLayer(sprite, ref).id);
-  const onion = options.onion;
-  const onionOpacity = Math.min(1, Math.max(0, onion?.opacity ?? 0.35));
-  const beforeTint = onion?.beforeTint === undefined ? null : parseColor(onion.beforeTint);
-  const afterTint = onion?.afterTint === undefined ? null : parseColor(onion.afterTint);
-  const sheet = new PixelBuffer(sheetWidth, sheetHeight);
-
-  sequence.frames.forEach((entry, position) => {
-    const cell = new PixelBuffer(sprite.width, sprite.height);
-    if (background !== undefined && background !== null) cell.fill(background);
-    const neighbor = (offset: number): typeof entry | undefined => {
-      let index = position + offset;
-      if (onion?.loop) index = ((index % count) + count) % count;
-      if (index < 0 || index >= count || index === position) return undefined;
-      return sequence.frames[index];
-    };
-    const ghost = (offset: number, tint: ReturnType<typeof parseColor> | null): void => {
-      const frame = neighbor(offset);
-      if (!frame) return;
-      blendAnimationFrame(
-        cell,
-        compositeFrame(sprite, frame.frameId, { layers: layerIds }),
-        onionOpacity,
-        tint,
-      );
-    };
-    for (let offset = onion?.before ?? 0; offset >= 1; offset--) ghost(-offset, beforeTint);
-    for (let offset = onion?.after ?? 0; offset >= 1; offset--) ghost(offset, afterTint);
-    blendAnimationFrame(cell, compositeFrame(sprite, entry.frameId, { layers: layerIds }), 1, null);
-
-    const column = position % columns;
-    const row = Math.floor(position / columns);
-    sheet.blit(cell, margin + column * (sprite.width + padding), margin + row * (sprite.height + padding));
-  });
-
-  const shown = factor > 1 ? scaleNearest(sheet, factor) : sheet;
-  const metadata = {
-    mode: 'animation-preview',
-    format: 'png',
-    frameOrder,
-    tag: sequence.name,
-    layout,
-    columns,
-    rows,
-    frameCount: count,
-    loops: sequence.loops,
-    durationMs: sequence.durationMs,
-    onion: onion ?? null,
-    layers: layerIds ?? null,
-    scale: factor,
-    imageWidth: shown.width,
-    imageHeight: shown.height,
-    ...(options.includeMetadata === false
-      ? {}
-      : {
-          sequence: sequence.frames.map((frame, position) => ({
-            position,
-            index: frame.index,
-            frameId: frame.frameId,
-            durationMs: frame.durationMs,
-          })),
-        }),
+  const rendered = renderAnimationPreview(sprite, options);
+  return {
+    blocks: [rendered.bytes ? binaryImageContent(rendered.bytes, 'image/gif') : imageContent(rendered.image!)],
+    meta: rendered.meta,
+    ...(rendered.image ? { image: rendered.image } : {}),
   };
-  return { blocks: [imageContent(shown)], meta: metadata, image: shown };
 }
 
 /** Best-effort structured description of a sprite for `get_document`. */
@@ -1412,13 +1268,6 @@ function renderExportOutputs(sprite: Sprite, outputs: ExportOutputSpec[]): Rende
 /** The `meta` and `engine` branches of `exportOutputSchema`. */
 type AssetOutputSpec = Extract<ExportOutputSpec, { type: 'meta' | 'engine' }>;
 
-const ENGINE_IMPORTERS: Record<string, (input: unknown) => AssetImportResult> = {
-  godot: importGodot,
-  unity: importUnity,
-  phaser: importPhaser,
-  excalidraw: importExcalidraw,
-};
-
 /** What the result says about each contract written, so the warnings travel with the delivery. */
 interface RenderedAsset {
   path: string;
@@ -1495,6 +1344,12 @@ function assetMetaOptions(
  * list, the write loop — then covers these outputs without knowing they exist. An output type
  * that did not join that list would be invisible to `incremental: true`, and the second run
  * would rewrite every engine file for everyone.
+ *
+ * **The contract itself is {@link renderAssetBundle}'s** — built, name-checked, serialised and
+ * imported in core, the same function `share_bundle` uses, so a fix to the bundle a plan describes
+ * reaches both surfaces. What is left here is the two things that are `finalize_document`'s: the
+ * disk-relative path join under the `meta.json`'s own directory, and the decision that a broken
+ * name **refuses the whole call**, which is what a delivery gate is for.
  */
 function renderAssetOutputs(
   sprite: Sprite,
@@ -1507,51 +1362,54 @@ function renderAssetOutputs(
   for (const output of outputs) {
     if (output.type !== 'meta' && output.type !== 'engine') continue;
     const request = output as AssetOutputSpec;
-    const meta = buildAssetMeta(sprite, assetMetaOptions(sprite, request, plan));
+    const metaOptions = assetMetaOptions(sprite, request, plan);
+    const rendered = renderAssetBundle(
+      sprite,
+      {
+        ...(metaOptions.sheet ? { sheet: metaOptions.sheet } : {}),
+        ...(request.outputs ? { outputs: request.outputs as readonly AssetMetaOutput[] } : {}),
+        ...(request.directions ? { directions: request.directions } : {}),
+        ...(request.type === 'engine' && request.directory ? { directory: request.directory } : {}),
+      },
+      request.type === 'engine' ? request.engine : null,
+    );
     // Naming runs on the contract *before* anything is written, and before the importer: an
     // engine file named after a reserved device or a case-colliding path is a broken build, and
     // the contract is where the bundle's file list lives.
-    const naming = validateAssetNaming(meta);
-    if (!naming.ok) throw new AssetNamingRefusal(naming.diagnostics);
+    if (!rendered.naming.ok) throw new AssetNamingRefusal(rendered.naming.diagnostics);
 
     // Serialised once and used twice: the bytes written and the bytes reported have to be the
     // same bytes, and a second call is a second chance for them to differ.
-    const text = serializeAssetMeta(meta);
+    const text = rendered.text;
     files.push({
       path: request.path,
       bytes: Buffer.from(text, 'utf8'),
       type: 'meta',
-      details: { contentHash: meta.asset.contentHash, schemaVersion: meta.schemaVersion },
+      details: { contentHash: rendered.meta.asset.contentHash, schemaVersion: rendered.meta.schemaVersion },
     });
     const asset: RenderedAsset = {
       path: request.path,
       bytes: Buffer.byteLength(text, 'utf8'),
-      contentHash: meta.asset.contentHash,
-      schemaVersion: meta.schemaVersion,
-      naming: { ok: naming.ok, diagnostics: naming.diagnostics },
+      contentHash: rendered.meta.asset.contentHash,
+      schemaVersion: rendered.meta.schemaVersion,
+      naming: { ok: rendered.naming.ok, diagnostics: rendered.naming.diagnostics },
     };
 
-    if (request.type === 'engine') {
-      const importer = ENGINE_IMPORTERS[request.engine];
-      if (!importer) throw new Error(`Unknown engine "${request.engine}".`);
-      const result = importer(meta);
-      // `result.root` is the importer's suggested folder; a caller with a project layout takes
-      // it over with `directory`. Relative, forward-slashed paths from the importer are joined
-      // segment by segment so a Windows separator can never reach a contract path.
-      const root = request.directory ?? result.root;
-      for (const file of result.files) {
+    if (rendered.engine) {
+      const { engine, root } = rendered.engine;
+      for (const file of rendered.engine.files) {
         files.push({
           path: join(dirname(request.path), root, ...file.path.split('/')),
           bytes: Buffer.from(file.contents, 'utf8'),
           type: 'engine',
-          details: { engine: request.engine, role: file.role },
+          details: { engine, role: file.role },
         });
       }
       asset.engine = {
-        engine: request.engine,
+        engine,
         root,
-        files: result.files.map((file) => file.path),
-        warnings: [...result.warnings],
+        files: rendered.engine.files.map((file) => file.path),
+        warnings: [...rendered.engine.warnings],
       };
     }
     assets.push(asset);
