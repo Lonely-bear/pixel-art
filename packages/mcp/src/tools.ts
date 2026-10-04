@@ -3711,6 +3711,17 @@ export function registerTools(
         frame: frameRefSchema.optional().describe('Frame id or 0-based index. Defaults to frame 0.'),
         frames: z.enum(['one', 'all']).optional().describe('"one" (default) or "all" for one file per frame.'),
         scale: z.number().int().min(1).max(32).optional().describe('Integer upscale factor. Defaults to 1 (pixel-exact).'),
+        // **Provenance, and it changes no pixel.** A tEXt chunk survives being mailed and re-saved
+        // by someone who never opens this file, so a verdict-shaped key or value is refused at the
+        // point of writing rather than by convention: `quality_report` was deleted in 0.3.1 because a
+        // model told a number was "clean" sanded a lake into a dark flat rectangle, and a number
+        // embedded in the artifact outlives the conversation that produced it.
+        metadata: z
+          .record(z.string(), z.string())
+          .optional()
+          .describe(
+            'PNG tEXt chunks, keyword to text. Provenance only and changes no pixel: use `Software` for a `made with` mark, `dotloom:asset` for the contract contentHash, `dotloom:defects` for sorted defect codes. A score-, grade- or verdict-shaped key or value is refused when written, and a bare number is refused under every key but `dotloom:schema`.',
+          ),
         rect: z
           .object({ x: z.number().int(), y: z.number().int(), w: z.number().int().min(1), h: z.number().int().min(1) })
           .optional()
@@ -3731,6 +3742,7 @@ export function registerTools(
         if (!out) return fail('`out` (or `path`) is required: where should the PNG be written?');
 
         const written: string[] = [];
+        const metadata = args.metadata as Record<string, string> | undefined;
         const crop = args.rect as { x: number; y: number; w: number; h: number } | undefined;
         const render = (frameId: string): PixelBuffer => {
           let buffer = compositeFrame(sprite, frameId, { background });
@@ -3750,12 +3762,12 @@ export function registerTools(
           const ext = dot > 0 ? out.slice(dot) : '';
           sprite.frames.forEach((frame, index) => {
             const path = `${base}_${index}${ext}`;
-            writeFile(path, encodePNG(render(frame.id)));
+            writeFile(path, encodePNG(render(frame.id), { metadata }));
             written.push(path);
           });
         } else {
           const frame = resolveFrame(sprite, (args.frame as number | string | undefined) ?? 0);
-          writeFile(out, encodePNG(render(frame.id)));
+          writeFile(out, encodePNG(render(frame.id), { metadata }));
           written.push(out);
         }
 
@@ -3790,6 +3802,15 @@ export function registerTools(
         padding: z.number().int().min(0).optional().describe('Transparent gap between frames, in pixels. Defaults to 0; use 1 to avoid texture bleed.'),
         margin: z.number().int().min(0).optional().describe('Transparent border around the sheet, in pixels. Defaults to 0.'),
         scale: z.number().int().min(1).max(32).optional().describe('Integer upscale factor for the sheet image. Defaults to 1.'),
+        // Same policy as `export_png`, and for the same reason: a tEXt chunk outlives the
+        // conversation that wrote it. A sheet is the format an engine resamples, so provenance on
+        // one is worth having precisely because the pixels will not survive it unchanged.
+        metadata: z
+          .record(z.string(), z.string())
+          .optional()
+          .describe(
+            'PNG tEXt chunks for the sheet image, keyword to text. Provenance only and changes no pixel. A score-, grade- or verdict-shaped key or value is refused when written.',
+          ),
       }),
       annotations: { destructiveHint: false },
     },
@@ -3812,7 +3833,7 @@ export function registerTools(
         // `meta.size` match the PNG the engine will actually slice.
         const sheet = scaleAtlas(atlas, scale);
 
-        writeFile(out, encodePNG(sheet.image));
+        writeFile(out, encodePNG(sheet.image, { metadata: args.metadata as Record<string, string> | undefined }));
 
         const fileName = out.split(/[\\/]/).pop() ?? 'sheet.png';
         const json = toAsepriteJson(sprite, sheet, fileName);
