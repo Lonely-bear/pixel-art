@@ -146,6 +146,81 @@
     </div>
   </figcaption>
 </figure>
+<figure class="piece" id="dusk-lake-valley-agent">
+  <div class="shot"><img src="out/dusk-lake-valley-agent.png" width="256" height="256" alt="Dusk Lake Valley Agent rendered from artwork/dusk-lake-valley-agent.pixel by the engine" loading="lazy"></div>
+  <figcaption>
+    <h2>Dusk Lake Valley Agent</h2>
+    <p class="caption">A full-bleed 256x256 scene, and the corpus case that found a real `off-palette` result: 2,339 of 65,297 pixels composite to a colour no swatch declares, because a translucent highlight layer blends to something outside the palette by design. The report calls it the most likely false positive in the pipeline, and it is still worth showing next to the clean pass.</p>
+    <p class="facts">
+      <span>256&times;256</span>
+      <span>7 layers</span>
+      <span>1 frame</span>
+      <span>asset class: scene</span>
+    </p>
+    <p class="src">rendered from <code>artwork/dusk-lake-valley-agent.pixel</code> by <code>export_png</code> &mdash;
+      sha256 <code>8b86c79a8fc99ffe</code></p>
+    <div class="dims"><span class="hint">dimensions that measured this piece</span>
+      <ul><li>noise</li><li>palette</li><li>value</li></ul></div>
+    <div class="notmeasured">
+        <h3>Not measured <span class="hint">&mdash; not the same as clean</span></h3>
+        <ul><li><code>motion</code> <span class="reason">single-frame</span><p>the evaluated sequence is one frame, so there is nothing to measure motion across.</p></li>
+          <li><code>outline</code> <span class="reason">no-subject</span><p>the ink runs to the frame on every edge, so the alpha boundary *is* the canvas and there is no shape to read. Measured on a different canvas, not on a different drawing.</p></li>
+          <li><code>silhouette</code> <span class="reason">no-subject</span><p>the ink runs to the frame on every edge, so the alpha boundary *is* the canvas and there is no shape to read. Measured on a different canvas, not on a different drawing.</p></li></ul>
+      </div>
+    <div class="judgement">
+      <h3>Named defects <span class="hint">&mdash; 3 found</span></h3>
+      <ul class="defects"><li>
+            <div class="head"><code class="code">colour-budget-exceeded</code><span class="dim">palette</span></div>
+            <div class="where"><span class="rect">whole document</span></div>
+            <p class="what">112 distinct colours against a budget of 96 for a 256x256 canvas (scene class). Scene-class canvases get a budget of 96 by area alone, so a large painting can still exceed it — and §7 item 8 records that one budget table cannot serve an icon, a tile and a landscape at once.</p>
+            <p class="todo">The defect is a count over the whole document rather than a place on the canvas, so the issue names no region and none was invented. No op, and the reason is arithmetic rather than caution: every colour counted here is already a declared swatch, so `quantize_to_palette` changes 0 bytes and the code survives it. The repair is to *merge* two of them — which two is a decision about the ramp, and a ramp whose steps are one apart is doing its job. `replace_colors {from, to}` merges one into another document-wide, then `prune_palette` drops the entry nothing uses; picking the pair is yours. If the count is right and the budget is wrong, that is §7 item 8 (budgets are keyed on canvas area, so one table cannot serve an icon and a landscape) and the honest response is to size the canvas to the job.</p>
+            <p class="disp">No machine repair: this is a decision, not a lookup.</p>
+          </li>
+        <li>
+            <div class="head"><code class="code">near-duplicate-colours</code><span class="dim">noise</span></div>
+            <div class="where"><span class="rect">whole document</span></div>
+            <p class="what">50 pairs of distinct colours each cover at least 8 pixels and sit within 8 of each other. Two ramp entries three steps apart are a decision error rather than a frequency one, so the count cannot size it; `quantize_to_palette` merges them.</p>
+            <p class="todo">The defect is a pair of palette entries rather than a place on the canvas, so the issue names no region and none was invented. `quantize_to_palette` is whole-document by nature, which is the right scope here. `quantize_to_palette` snaps every pixel onto the nearer swatch, which merges the pair when at least one of the two is off-palette. It is a no-op on a document already snapped to its own palette — both swatches are already nearest to their own pixels — and there the pair has to be merged on the palette itself, by recolouring one of them with `replace_color` and then `prune_palette`. Which of the two survives is a decision, so that part is yours. Re-run `evaluate` afterwards: merging two ramp entries can expose a new pair.</p>
+            <p class="disp">A safe, unambiguous repair exists for this code and is returned as ops; it is not applied here.</p>
+          </li>
+        <li>
+            <div class="head"><code class="code">off-palette</code><span class="dim">palette</span></div>
+            <div class="where"><span class="rect">whole document</span></div>
+            <p class="what">2339 of 65297 solid pixels are a colour that is not in the document palette. A colour one step off a swatch is a snapping miss and `quantize_to_palette` fixes it in one call.</p>
+            <p class="todo">The defect is the document's relationship to its own palette rather than a place on the canvas, so the issue names no region and none was invented. `quantize_to_palette` snaps every pixel onto a declared swatch, which is §7.3's documented mitigation. Read §7.3's warning first: a translucent highlight layer composites into a colour that is in no palette by design, so this is the most likely false positive in the pipeline and quantizing it may cost more than it saves. It is also a no-op on a document already snapped to its own palette.</p>
+            <p class="disp">A safe, unambiguous repair exists for this code and is returned as ops; it is not applied here.</p>
+          </li></ul>
+    </div>
+  </figcaption>
+</figure>
+<figure class="piece" id="dusk-lake-valley-agent2">
+  <div class="shot"><img src="out/dusk-lake-valley-agent2.png" width="256" height="256" alt="Dusk Lake Valley Agent2 rendered from artwork/dusk-lake-valley-agent2.pixel by the engine" loading="lazy"></div>
+  <figcaption>
+    <h2>Dusk Lake Valley Agent2</h2>
+    <p class="caption">The same scene drawn the clean way, and a **negative control**: it exists so the pipeline is proven to produce *no* issues on artwork that has none. Four of the eleven corpus fixtures are controls like this one, and a gallery that hid them would be showing only the failures.</p>
+    <p class="facts">
+      <span>256&times;256</span>
+      <span>9 layers</span>
+      <span>1 frame</span>
+      <span>asset class: scene</span>
+    </p>
+    <p class="src">rendered from <code>artwork/dusk-lake-valley-agent2.pixel</code> by <code>export_png</code> &mdash;
+      sha256 <code>088586bd8efd9a20</code></p>
+    <div class="dims"><span class="hint">dimensions that measured this piece</span>
+      <ul><li>noise</li><li>palette</li><li>value</li></ul></div>
+    <div class="notmeasured">
+        <h3>Not measured <span class="hint">&mdash; not the same as clean</span></h3>
+        <ul><li><code>motion</code> <span class="reason">single-frame</span><p>the evaluated sequence is one frame, so there is nothing to measure motion across.</p></li>
+          <li><code>outline</code> <span class="reason">no-subject</span><p>the ink runs to the frame on every edge, so the alpha boundary *is* the canvas and there is no shape to read. Measured on a different canvas, not on a different drawing.</p></li>
+          <li><code>silhouette</code> <span class="reason">no-subject</span><p>the ink runs to the frame on every edge, so the alpha boundary *is* the canvas and there is no shape to read. Measured on a different canvas, not on a different drawing.</p></li>
+          <li><code>value.form</code> <span class="reason">no-subject</span><p>the ink runs to the frame on every edge, so the alpha boundary *is* the canvas and there is no shape to read. Measured on a different canvas, not on a different drawing. The rest of this dimension was measured and is reported normally; this one term is absent, not counted at its best.</p></li></ul>
+      </div>
+    <div class="judgement">
+      <h3>Named defects <span class="hint">&mdash; 0 found</span></h3>
+      <p class="clean">No dimension named a defect in this piece. That means nothing was found, not that the piece is finished.</p>
+    </div>
+  </figcaption>
+</figure>
 <figure class="piece" id="dusk-lake-valley-v2">
   <div class="shot"><img src="out/dusk-lake-valley-v2.png" width="256" height="256" alt="Dusk Lake Valley V2 rendered from artwork/dusk-lake-valley-v2.pixel by the engine" loading="lazy"></div>
   <figcaption>
@@ -261,6 +336,54 @@
     </div>
   </figcaption>
 </figure>
+<figure class="piece" id="moonlit-alpine-lake-fast">
+  <div class="shot"><img src="out/moonlit-alpine-lake-fast.png" width="64" height="64" alt="Moonlit Alpine Lake Fast rendered from artwork/moonlit-alpine-lake-fast.pixel by the engine" loading="lazy"></div>
+  <figcaption>
+    <h2>Moonlit Alpine Lake Fast</h2>
+    <p class="caption">A second 64x64 pass, kept because the budget table keys on canvas area rather than on what the picture is: this one fires `hue-sprawl` at 64x64 and the larger one does not, which is the standing gap the report names rather than a defect in the drawing.</p>
+    <p class="facts">
+      <span>64&times;64</span>
+      <span>8 layers</span>
+      <span>1 frame</span>
+      <span>asset class: sprite</span>
+    </p>
+    <p class="src">rendered from <code>artwork/moonlit-alpine-lake-fast.pixel</code> by <code>export_png</code> &mdash;
+      sha256 <code>ee67a1f4882069e3</code></p>
+    <div class="dims"><span class="hint">dimensions that measured this piece</span>
+      <ul><li>noise</li><li>palette</li><li>value</li></ul></div>
+    <div class="notmeasured">
+        <h3>Not measured <span class="hint">&mdash; not the same as clean</span></h3>
+        <ul><li><code>motion</code> <span class="reason">single-frame</span><p>the evaluated sequence is one frame, so there is nothing to measure motion across.</p></li>
+          <li><code>outline</code> <span class="reason">no-subject</span><p>the ink runs to the frame on every edge, so the alpha boundary *is* the canvas and there is no shape to read. Measured on a different canvas, not on a different drawing.</p></li>
+          <li><code>silhouette</code> <span class="reason">no-subject</span><p>the ink runs to the frame on every edge, so the alpha boundary *is* the canvas and there is no shape to read. Measured on a different canvas, not on a different drawing.</p></li>
+          <li><code>value.form</code> <span class="reason">no-subject</span><p>the ink runs to the frame on every edge, so the alpha boundary *is* the canvas and there is no shape to read. Measured on a different canvas, not on a different drawing. The rest of this dimension was measured and is reported normally; this one term is absent, not counted at its best.</p></li></ul>
+      </div>
+    <div class="judgement">
+      <h3>Named defects <span class="hint">&mdash; 3 found</span></h3>
+      <ul class="defects"><li>
+            <div class="head"><code class="code">hue-sprawl</code><span class="dim">palette</span></div>
+            <div class="where"><span class="rect">whole document</span></div>
+            <p class="what">8 distinct hue families (30-degree sectors) on a 64x64 canvas, which the medium budget assumes is not a scene. Scene-class canvases are exempt from this row; this one is not, and that is a property of its size rather than of its colour.</p>
+            <p class="todo">The defect is a count over the whole document rather than a place on the canvas, so the issue names no region and none was invented. No op. As with `colour-budget-exceeded`, every colour involved is already declared — `quantize_to_palette` changes 0 bytes here — so the repair is choosing which two hue families to pull onto one ramp and which swatches should carry them, and that is an art-direction call, not a nearest-colour lookup. `replace_colors {from, to}` does the merge once you have decided it. Read the class sentence in the issue first: it fires *because* the canvas is not scene-class, so if this really is a scene that was painted small, the fix is the canvas rather than the palette.</p>
+            <p class="disp">No machine repair: this is a decision, not a lookup.</p>
+          </li>
+        <li>
+            <div class="head"><code class="code">key-light-inconsistent</code><span class="dim">value</span></div>
+            <div class="where"><span class="rect">at 0,0 64x64</span></div>
+            <p class="what">the top-left of the subject is only 6 lighter than its bottom-right, so the light direction is not readable; this is a consistency check, not a correctness one.</p>
+            <p class="todo">The region is 64x64 at (0, 0); that is the smallest area the defect was localised to. Pick one light direction and commit to it. This is a consistency check against a top-left key, not a correctness one, and lighting from the right is a legitimate choice.</p>
+            <p class="disp">No machine repair: this is a decision, not a lookup.</p>
+          </li>
+        <li>
+            <div class="head"><code class="code">near-duplicate-colours</code><span class="dim">noise</span></div>
+            <div class="where"><span class="rect">whole document</span></div>
+            <p class="what">1 pair of distinct colours each cover at least 8 pixels and sit within 8 of each other. Two ramp entries three steps apart are a decision error rather than a frequency one, so the count cannot size it; `quantize_to_palette` merges them.</p>
+            <p class="todo">The defect is a pair of palette entries rather than a place on the canvas, so the issue names no region and none was invented. `quantize_to_palette` is whole-document by nature, which is the right scope here. `quantize_to_palette` snaps every pixel onto the nearer swatch, which merges the pair when at least one of the two is off-palette. It is a no-op on a document already snapped to its own palette — both swatches are already nearest to their own pixels — and there the pair has to be merged on the palette itself, by recolouring one of them with `replace_color` and then `prune_palette`. Which of the two survives is a decision, so that part is yours. Re-run `evaluate` afterwards: merging two ramp entries can expose a new pair.</p>
+            <p class="disp">A safe, unambiguous repair exists for this code and is returned as ops; it is not applied here.</p>
+          </li></ul>
+    </div>
+  </figcaption>
+</figure>
 <figure class="piece" id="moonlit-alpine-lake">
   <div class="shot"><img src="out/moonlit-alpine-lake.png" width="64" height="64" alt="Moonlit Alpine Lake rendered from artwork/moonlit-alpine-lake.pixel by the engine" loading="lazy"></div>
   <figcaption>
@@ -305,6 +428,47 @@
             <p class="what">43 pixels of 4096 agree with nothing within two pixels and sit outside the lightness range of everything around them. That is what separates a stray colour from an edge: on a gradient a pixel's neighbours are the steps either side of it, and on an outline the rest of the contour reaches it diagonally, so both agree with it somehow.</p>
             <p class="todo">The orphan pixels are scattered across the sprite, so the issue names no region. Repaint each orphan with the colour its neighbourhood implies, or accept it as texture. A pixel-level predicate cannot tell a mistake from a deliberate glint, and §7 records the one case in this repository where the machine was wrong about it.</p>
             <p class="disp">No machine repair: this is a decision, not a lookup.</p>
+          </li></ul>
+    </div>
+  </figcaption>
+</figure>
+<figure class="piece" id="sunset-lighthouse-512-baseline-model-a">
+  <div class="shot"><img src="out/sunset-lighthouse-512-baseline-model-a.png" width="512" height="512" alt="Sunset Lighthouse 512 Baseline Model A rendered from artwork/sunset-lighthouse-512-baseline-model-a.pixel by the engine" loading="lazy"></div>
+  <figcaption>
+    <h2>Sunset Lighthouse 512 Baseline Model A</h2>
+    <p class="caption">An earlier 512x512 lighthouse, eleven layers against the finished ten. Same findings, three fewer near-duplicate colour pairs, and the only difference the report can name is the layer count.</p>
+    <p class="facts">
+      <span>512&times;512</span>
+      <span>11 layers</span>
+      <span>1 frame</span>
+      <span>asset class: scene</span>
+    </p>
+    <p class="src">rendered from <code>artwork/sunset-lighthouse-512-baseline-model-a.pixel</code> by <code>export_png</code> &mdash;
+      sha256 <code>1a76b5499b37caec</code></p>
+    <div class="dims"><span class="hint">dimensions that measured this piece</span>
+      <ul><li>noise</li><li>palette</li><li>value</li></ul></div>
+    <div class="notmeasured">
+        <h3>Not measured <span class="hint">&mdash; not the same as clean</span></h3>
+        <ul><li><code>motion</code> <span class="reason">single-frame</span><p>the evaluated sequence is one frame, so there is nothing to measure motion across.</p></li>
+          <li><code>outline</code> <span class="reason">no-subject</span><p>the ink runs to the frame on every edge, so the alpha boundary *is* the canvas and there is no shape to read. Measured on a different canvas, not on a different drawing.</p></li>
+          <li><code>silhouette</code> <span class="reason">no-subject</span><p>the ink runs to the frame on every edge, so the alpha boundary *is* the canvas and there is no shape to read. Measured on a different canvas, not on a different drawing.</p></li>
+          <li><code>value.form</code> <span class="reason">no-subject</span><p>the ink runs to the frame on every edge, so the alpha boundary *is* the canvas and there is no shape to read. Measured on a different canvas, not on a different drawing. The rest of this dimension was measured and is reported normally; this one term is absent, not counted at its best.</p></li></ul>
+      </div>
+    <div class="judgement">
+      <h3>Named defects <span class="hint">&mdash; 2 found</span></h3>
+      <ul class="defects"><li>
+            <div class="head"><code class="code">key-light-inconsistent</code><span class="dim">value</span></div>
+            <div class="where"><span class="rect">at 0,0 512x512</span></div>
+            <p class="what">the top-left of the subject is only 10 lighter than its bottom-right, so the light direction is not readable; this is a consistency check, not a correctness one.</p>
+            <p class="todo">The region is 512x512 at (0, 0); that is the smallest area the defect was localised to. Pick one light direction and commit to it. This is a consistency check against a top-left key, not a correctness one, and lighting from the right is a legitimate choice.</p>
+            <p class="disp">No machine repair: this is a decision, not a lookup.</p>
+          </li>
+        <li>
+            <div class="head"><code class="code">near-duplicate-colours</code><span class="dim">noise</span></div>
+            <div class="where"><span class="rect">whole document</span></div>
+            <p class="what">10 pairs of distinct colours each cover at least 8 pixels and sit within 8 of each other. Two ramp entries three steps apart are a decision error rather than a frequency one, so the count cannot size it; `quantize_to_palette` merges them.</p>
+            <p class="todo">The defect is a pair of palette entries rather than a place on the canvas, so the issue names no region and none was invented. `quantize_to_palette` is whole-document by nature, which is the right scope here. `quantize_to_palette` snaps every pixel onto the nearer swatch, which merges the pair when at least one of the two is off-palette. It is a no-op on a document already snapped to its own palette — both swatches are already nearest to their own pixels — and there the pair has to be merged on the palette itself, by recolouring one of them with `replace_color` and then `prune_palette`. Which of the two survives is a decision, so that part is yours. Re-run `evaluate` afterwards: merging two ramp entries can expose a new pair.</p>
+            <p class="disp">A safe, unambiguous repair exists for this code and is returned as ops; it is not applied here.</p>
           </li></ul>
     </div>
   </figcaption>
@@ -476,7 +640,7 @@
     <code>evaluate</code> and one <code>fix</code> through <code>apply_ops</code>. No
     <code>@pixel/core</code> import, and the checked-in <code>.png</code> files beside each source
     are not read. Generated with dotloom-mcp-link 0.5.0.</p>
-    <p>8 pieces, 21 named defects, 24 abstentions.
+    <p>12 pieces, 29 named defects, 39 abstentions.
     Reproduce with <code>node scripts/build-gallery.mjs --verify</code>.</p>
   </footer>
 </main>

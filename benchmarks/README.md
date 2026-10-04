@@ -30,7 +30,7 @@ edit.
 
 ## The three tiers
 
-`docs/EVALUATION.md` §6.1 is explicit: **algorithmic data cannot calibrate an algorithm.** Label the
+`dev/EVALUATION.md` §6.1 is explicit: **algorithmic data cannot calibrate an algorithm.** Label the
 corpus with `evaluate` and the correlation between `evaluate` and its own labels measures
 self-consistency, not validity; fit the thresholds to those labels and the correlation climbs
 toward 1.0 while the scorer gets no better. So the corpus is three tiers, and each answers a
@@ -114,7 +114,7 @@ contrast is a relation and a relation is not a partition.
 }
 ```
 
-**Every expectation is derived by hand from `docs/EVALUATION.md` and the declared geometry**, never
+**Every expectation is derived by hand from `dev/EVALUATION.md` and the declared geometry**, never
 copied out of the pipeline's own output. `N` from a rectangle's area, `perimeter` from
 `2(w + h)`, `compactnessQ` from `min(1000, rhu(4 * 355 * 1000 * N, 113 * P * P))`, `scoreQ` from
 the band table and the adjustment list. Copying the implementation's output into the spec is the

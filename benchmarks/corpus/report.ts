@@ -10,7 +10,7 @@
  *
  * ## What each case is compared against, and why that is not circular
  *
- * The expectations in `cases.json` are derived by hand from `docs/EVALUATION.md` §4.1 and §3.3
+ * The expectations in `cases.json` are derived by hand from `dev/EVALUATION.md` §4.1 and §3.3
  * and the declared geometry of the case — `N` from a rectangle's area, `perimeter` from
  * `2(w + h)`, `compactnessQ` from `min(1000, rhu(4 * 355 * 1000 * N, 113 * P * P))`,
  * `scoreQ` from the band table and the adjustment list. They are *not* copied out of the
@@ -30,7 +30,7 @@
  *   1. The per-case table — a regression guard. A mismatch fails.
  *   2. The **distribution** of `compactnessQ` across every subject in the corpus, with the gate
  *      marked and the one real human-relevant measurement in this repository placed in it. That
- *      is what a gate move has to be based on: `docs/EVALUATION.md` §6.2's standing rule is that
+ *      is what a gate move has to be based on: `dev/EVALUATION.md` §6.2's standing rule is that
  *      "a new threshold is a hypothesis until it has been run against a designed contrast", and
  *      two tasks have now declined to move the `compactnessQ` gate because a distribution of one
  *      sample is not evidence. **This file moves no gate.** It produces the numbers and names
@@ -1123,7 +1123,7 @@ export function renderMarkdown(spec: CorpusSpec, scores: CorpusScores, rows: rea
       `**${byTier('real').length} real** (unlabelled) · ` +
       `**${byTier('human').length} human** (awaiting a rater). ` +
       `Algorithmic labels cannot calibrate an algorithm — ` +
-      '`docs/EVALUATION.md` §6.1 — so the synthetic tier detects and regression-guards, and only ' +
+      '`dev/EVALUATION.md` §6.1 — so the synthetic tier detects and regression-guards, and only ' +
       'the human tier speaks to the aesthetic axis.',
   );
   out.push('');
@@ -1771,7 +1771,7 @@ export function renderMarkdown(spec: CorpusSpec, scores: CorpusScores, rows: rea
   out.push('## 8 · Thresholds: transcribed, and derived');
   out.push('');
   out.push(
-    '`SPEC_GATES` in `format.ts` is a **transcription** of `docs/EVALUATION.md`, and a ' +
+    '`SPEC_GATES` in `format.ts` is a **transcription** of `dev/EVALUATION.md`, and a ' +
       'transcription is checkable where an import is not. `DERIVED_POLICY` is the other kind: ' +
       'numbers T-022 derived, kept in a record named for their owner because a gate that was ' +
       'picked rather than quoted is a gate somebody has to be accountable for. **This file moves ' +
@@ -1783,7 +1783,7 @@ export function renderMarkdown(spec: CorpusSpec, scores: CorpusScores, rows: rea
       ['number', 'value', 'where it comes from'],
       [
         ...Object.entries(SPEC_GATES).map(
-          ([name, value]) => [`SPEC_GATES.${name}`, String(value), 'transcribed from docs/EVALUATION.md'] as const,
+          ([name, value]) => [`SPEC_GATES.${name}`, String(value), 'transcribed from dev/EVALUATION.md'] as const,
         ),
         ...(
           [

@@ -17,7 +17,7 @@
  *
  * ## Three tiers, and why the boundary between them is in the type system
  *
- * `docs/EVALUATION.md` §6.1 is unambiguous: "Algorithmic data cannot calibrate an algorithm.
+ * `dev/EVALUATION.md` §6.1 is unambiguous: "Algorithmic data cannot calibrate an algorithm.
  * If the benchmark corpus were labelled by a model, by a script, or by `evaluate` itself, then
  * measuring the correlation between `evaluate`'s scores and those labels would measure
  * *self-consistency*, not validity." Fitting thresholds to synthetic labels makes the
@@ -81,7 +81,7 @@ export type CorpusProvenance = 'generated' | 'repo-artwork' | 'repo-png';
  * The defects a case injects, as a closed set.
  *
  * Closed, and the members are exactly the issue codes `evaluate` can emit from the dimension
- * that exists today plus the aggregator's two — `docs/EVALUATION.md` Appendix A. Adding a
+ * that exists today plus the aggregator's two — `dev/EVALUATION.md` Appendix A. Adding a
  * dimension adds codes here, and the loader's rule "a declared defect must be an expected code"
  * then means every new code has to be exercised by a case that says it means something.
  *
@@ -161,7 +161,7 @@ export type DefectKind =
   // T-105: `motion`'s other six codes, one case each, and the clean multi-frame control that makes
   // them interpretable. **All seven codes have a case now**, which is the change this batch exists to
   // record: before it, `motion` was the only dimension in the corpus whose seven §4.6 codes had one
-  // case between them, and §4.6's severity scale is the one scale in `docs/EVALUATION.md` that a
+  // case between them, and §4.6's severity scale is the one scale in `dev/EVALUATION.md` that a
   // contact sheet cannot check, so a firing case with nothing to be compared against could not be
   // read as evidence either way.
   //
@@ -426,7 +426,7 @@ export interface CorpusSpec {
  * One dimension's score from one rater, on §4's 1-5 scale.
  *
  * The keys are §4's six subsections, not the six dimension ids, because a human reads "does the
- * shape read" and not "silhouette". `docs/EVALUATION.md` §4 carries the normative anchors for
+ * shape read" and not "silhouette". `dev/EVALUATION.md` §4 carries the normative anchors for
  * each value and §4.1 says they are normative: `4` means what §4 says `4` means.
  */
 export type HumanScores = Readonly<Record<'silhouette' | 'value' | 'palette' | 'noise' | 'outline' | 'motion', number>>;
@@ -473,7 +473,7 @@ export interface CorpusScores {
  * ------------------------------------------------------------------ */
 
 /**
- * The §4 thresholds this corpus measures against, copied out of `docs/EVALUATION.md` §4.1.
+ * The §4 thresholds this corpus measures against, copied out of `dev/EVALUATION.md` §4.1.
  *
  * **Transcribed, not imported, and that is deliberate.** `silhouette.ts` hard-codes `300` in the
  * middle of a band table rather than exporting it, so importing it would make the corpus's gate
@@ -505,7 +505,7 @@ export const SPEC_GATES: Readonly<{ compactnessQ: number; share: number; strayRa
 /**
  * The thresholds T-022 **derived**, kept apart from {@link SPEC_GATES} on purpose.
  *
- * `SPEC_GATES` is a transcription of `docs/EVALUATION.md`, and a transcription is checkable
+ * `SPEC_GATES` is a transcription of `dev/EVALUATION.md`, and a transcription is checkable
  * where an import is not: if the implementation hard-codes 300 and this file says 300, the
  * two agreeing is evidence, and if the spec moves the number this file is visibly stale.
  * That property only survives while nothing in this file was *invented*, so T-022's own

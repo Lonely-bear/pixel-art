@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "description": "Controlled subjects with declared defects, plus this repository's own artwork. Covers every failure mode T-012, T-018 and T-013 found, aimed rather than exhaustive: negative controls, the 1px-margin trap, the 4-vs-8 connectivity decision, the compactnessQ gate, the multi-frame rules, and §4.2 in two parts — the form-conformance term as a straight band against a form-following contour, a level set against both and a straight terminator on a straight-edged form, then one case per single-code defect in §4.2's issue table, so that a hue-carried form, a crushed shadow and a blown highlight are each something a case says they mean. Every expectation here is derived by hand from docs/EVALUATION.md and the declared geometry of the case, never copied out of the pipeline's own output.",
+  "description": "Controlled subjects with declared defects, plus this repository's own artwork. Covers every failure mode T-012, T-018 and T-013 found, aimed rather than exhaustive: negative controls, the 1px-margin trap, the 4-vs-8 connectivity decision, the compactnessQ gate, the multi-frame rules, and §4.2 in two parts — the form-conformance term as a straight band against a form-following contour, a level set against both and a straight terminator on a straight-edged form, then one case per single-code defect in §4.2's issue table, so that a hue-carried form, a crushed shadow and a blown highlight are each something a case says they mean. Every expectation here is derived by hand from dev/EVALUATION.md and the declared geometry of the case, never copied out of the pipeline's own output.",
   "cases": [
     {
       "id": "control/clean-blob-16",
@@ -493,7 +493,7 @@
       "defects": [
         {
           "kind": "clean-control",
-          "note": "Nothing injected. Present because docs/EVALUATION.md 6.3 asks for non-square canvases and because a threshold that only works at 32x32 is not a threshold."
+          "note": "Nothing injected. Present because dev/EVALUATION.md 6.3 asks for non-square canvases and because a threshold that only works at 32x32 is not a threshold."
         }
       ],
       "recipe": {
@@ -711,7 +711,7 @@
       "defects": [
         {
           "kind": "clean-control",
-          "note": "Nothing injected. Exists for its connectivity count, and it refines docs/EVALUATION.md 3.3's prose: a CLOSED contour is 4-connected, because every turn is joined by the corner pixel. The claim that a 1px contour is '8-connected and 4-disconnected' holds for a staircase RUN, which is what connectivity/contour-staircase-24 isolates, and not for a closed ring."
+          "note": "Nothing injected. Exists for its connectivity count, and it refines dev/EVALUATION.md 3.3's prose: a CLOSED contour is 4-connected, because every turn is joined by the corner pixel. The claim that a 1px contour is '8-connected and 4-disconnected' holds for a staircase RUN, which is what connectivity/contour-staircase-24 isolates, and not for a closed ring."
         }
       ],
       "recipe": {
@@ -1230,7 +1230,7 @@
     },
     {
       "id": "connectivity/contour-staircase-24",
-      "label": "An 18px 1px diagonal run on 24x24: the configuration docs/EVALUATION.md 3.3 describes for a contour",
+      "label": "An 18px 1px diagonal run on 24x24: the configuration dev/EVALUATION.md 3.3 describes for a contour",
       "tier": "synthetic",
       "provenance": "generated",
       "defects": [
@@ -1935,7 +1935,7 @@
       "defects": [
         {
           "kind": "interior-hole",
-          "note": "A 64 px hole in an 80 px ring. docs/EVALUATION.md 4.1 names this as a known false positive that a human rater's note settles, and no measurement can tell a keyhole from a mistake. In the corpus it is a defect like any other, because the mechanical rule is the mechanical rule."
+          "note": "A 64 px hole in an 80 px ring. dev/EVALUATION.md 4.1 names this as a known false positive that a human rater's note settles, and no measurement can tell a keyhole from a mistake. In the corpus it is a defect like any other, because the mechanical rule is the mechanical rule."
         },
         {
           "kind": "thin-profile",
@@ -2226,7 +2226,7 @@
       "defects": [
         {
           "kind": "empty-frame",
-          "note": "docs/EVALUATION.md 5.3's demonstration. A blank canvas is not bad artwork, it is NO artwork, and a mean cannot express that: the score is 1.00 and the verdict is fail. This case exists so that a change which turns the blank canvas into a low score, or into an exclusion, fails."
+          "note": "dev/EVALUATION.md 5.3's demonstration. A blank canvas is not bad artwork, it is NO artwork, and a mean cannot express that: the score is 1.00 and the verdict is fail. This case exists so that a change which turns the blank canvas into a low score, or into an exclusion, fails."
         }
       ],
       "recipe": {
@@ -5682,7 +5682,7 @@
       "label": "A 16x16 prop: a flask with a narrow neck, drawn as a silhouette row table",
       "tier": "human",
       "provenance": "generated",
-      "prompt": "Rate the six dimensions on docs/EVALUATION.md's 1-5 scale and give one overall judgement of usable / needs-work / unusable. This is an item icon, not a character, and §4's anchors are written for shapes, so say what you had to reinterpret.",
+      "prompt": "Rate the six dimensions on dev/EVALUATION.md's 1-5 scale and give one overall judgement of usable / needs-work / unusable. This is an item icon, not a character, and §4's anchors are written for shapes, so say what you had to reinterpret.",
       "recipe": {
         "canvas": {
           "w": 16,
@@ -5758,7 +5758,7 @@
       "label": "A 32x32 hard-surface tile: a bevelled block, the value dimension's curvature-gate counter-case",
       "tier": "human",
       "provenance": "generated",
-      "prompt": "Rate the six dimensions and give one overall judgement. A tile is the case docs/EVALUATION.md 4.2 says it cannot judge well: its straight edges are not a sphere, so a curvature gate has to exempt it. If your silhouette score disagrees with your value score, say so in a note — that disagreement is the finding.",
+      "prompt": "Rate the six dimensions and give one overall judgement. A tile is the case dev/EVALUATION.md 4.2 says it cannot judge well: its straight edges are not a sphere, so a curvature gate has to exempt it. If your silhouette score disagrees with your value score, say so in a note — that disagreement is the finding.",
       "recipe": {
         "canvas": {
           "w": 32,
@@ -10232,7 +10232,7 @@
       "defects": [
         {
           "kind": "hue-sprawl",
-          "note": "A seventh 3px band at `#c08000`, hue 30, which is sector 1 — and sector 1 is not among the six the partner case uses (0, 2, 4, 6, 8, 10), so `hueSectors` is **7** and §4.3's `>= 7` row fires. Everything else about the drawing is clean and is asserted rather than assumed: `offPalette` 0, `distinctColours` 7 against the `compact` budget of 16, `muddy` 0 because nothing is off the palette, `maxNearestDistance` 0 because every band is a swatch, and a mean saturation of 100% so `grey-colours` is silent. **The class is the only exemption §4.3 gives this row**, so the same seven families on a 256x256 canvas are not reported; `docs/EVALUATION.md` §7 records that as item 8's standing complaint, and the corpus measures the other side of it rather than arguing it."
+          "note": "A seventh 3px band at `#c08000`, hue 30, which is sector 1 — and sector 1 is not among the six the partner case uses (0, 2, 4, 6, 8, 10), so `hueSectors` is **7** and §4.3's `>= 7` row fires. Everything else about the drawing is clean and is asserted rather than assumed: `offPalette` 0, `distinctColours` 7 against the `compact` budget of 16, `muddy` 0 because nothing is off the palette, `maxNearestDistance` 0 because every band is a swatch, and a mean saturation of 100% so `grey-colours` is silent. **The class is the only exemption §4.3 gives this row**, so the same seven families on a 256x256 canvas are not reported; `dev/EVALUATION.md` §7 records that as item 8's standing complaint, and the corpus measures the other side of it rather than arguing it."
         }
       ],
       "recipe": {

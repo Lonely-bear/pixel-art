@@ -116,6 +116,14 @@ const CAPTIONS = {
     'Second pass: six layers and a wider palette. The report names two things that wider palette cost - form carried by hue rather than by lightness, and a key light that does not read.',
   'dusk-lake-valley-v3':
     'Third pass, back down to four layers. One advisory left, and it is the kind that is advisory by design.',
+  'dusk-lake-valley-agent':
+    'A full-bleed 256x256 scene, and the corpus case that found a real `off-palette` result: 2,339 of 65,297 pixels composite to a colour no swatch declares, because a translucent highlight layer blends to something outside the palette by design. The report calls it the most likely false positive in the pipeline, and it is still worth showing next to the clean pass.',
+  'dusk-lake-valley-agent2':
+    'The same scene drawn the clean way, and a **negative control**: it exists so the pipeline is proven to produce *no* issues on artwork that has none. Four of the eleven corpus fixtures are controls like this one, and a gallery that hid them would be showing only the failures.',
+  'moonlit-alpine-lake-fast':
+    'A second 64x64 pass, kept because the budget table keys on canvas area rather than on what the picture is: this one fires `hue-sprawl` at 64x64 and the larger one does not, which is the standing gap the report names rather than a defect in the drawing.',
+  'sunset-lighthouse-512-baseline-model-a':
+    'An earlier 512x512 lighthouse, eleven layers against the finished ten. Same findings, three fewer near-duplicate colour pairs, and the only difference the report can name is the layer count.',
   'moonlit-alpine-lake':
     'A deliberately small and fast pass: the whole pass, at low cost, in a single document.',
   'sunset-lighthouse-512':
@@ -251,6 +259,20 @@ class Server {
  * Every `.pixel` under `artwork/`, recursively (which is where the environments and the character
  * sprite live), plus `showcase/<piece>/<piece>.pixel` (where the recipe-driven pieces live).
  * Sorted by id, because an incidental `readdir` order is a diff.
+ *
+ * **`artwork/` is two populations and a directory scan cannot tell them apart:** showcase pieces,
+ * and the benchmark corpus's fixtures. All of them are shown. A cleanup once removed four of the
+ * fixtures on the grounds that their filenames read as iteration debris — `dusk-lake-valley-agent`,
+ * `-agent2`, `moonlit-alpine-lake-fast`, `sunset-lighthouse-512-baseline-model-a`. **All four are
+ * corpus cases, and one of them is a negative control** (clean artwork that must produce no
+ * issues), so the cleanup would have deleted a benchmark control to tidy a page. The variants are
+ * not debris: `dusk-lake-valley`'s own caption says the later passes are listed beside it *because
+ * the differences between them are the interesting part*. A filename that looks like scratch work
+ * is not evidence that it is.
+ *
+ * So the rule is the opposite of the one that was tried: **caption it or keep it, never delete it
+ * for looking untidy.** A piece with no caption in {@link CAPTIONS} gets a machine-derived one, and
+ * that is a gap to fill, not a file to remove.
  */
 async function discover() {
   const found = [];
@@ -283,7 +305,15 @@ async function discover() {
 
   // Deduplicated and sorted, on the full repository-relative path so the order is a property of
   // the tree rather than of a hash set. `renderPiece` is what derives the shorter card id.
-  return [...new Set(found)].sort();
+  const pieces = [...new Set(found)].sort();
+  // Uncaptioned pieces get a machine-derived title and an "Id, WxH." caption, which is the signal
+  // that a human has not written about this file yet. Named here so the gap is visible in the build
+  // output instead of only on the rendered page.
+  const uncaptioned = pieces.filter((p) => !(p.replace(/^artwork\//, '').replace(/\.pixel$/, '') in CAPTIONS) && !p.startsWith('showcase/'));
+  if (uncaptioned.length > 0) {
+    console.log(`  (uncaptioned: ${uncaptioned.map((p) => p.split('/').pop()).join(', ')})`);
+  }
+  return pieces;
 }
 
 // ------------------------------------------------------------------ one piece
