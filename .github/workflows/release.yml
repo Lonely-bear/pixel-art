@@ -40,6 +40,21 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      # `actions/checkout` fetches by commit SHA into `refs/tags/<tag>` with `--no-tags`, so the tag
+      # *object* never arrives and the ref it leaves is indistinguishable from a lightweight tag:
+      # `git cat-file -t v1.0.0` answers "commit" for a perfectly good annotated tag.
+      # `prepare-release.mjs` refuses a lightweight tag on purpose — `--follow-tags` sends only
+      # annotated ones — so **the release could never start.** The guard was right and the checkout
+      # was wrong; the only symptom was a release that refused to happen, with a message telling the
+      # author to recreate a tag that was already correct.
+      #
+      # Fetching the tag explicitly is what fixes it. `fetch-tags: true` is **not**: combined with
+      # the SHA refspec checkout already uses, git refuses outright ("Cannot fetch both <sha> and
+      # refs/tags/v1.0.0 to refs/tags/v1.0.0"). Measured both ways before choosing this.
+      - name: Fetch the tag object
+        if: ${{ github.ref_type == 'tag' }}
+        run: git fetch --force --no-tags --depth=1 origin "+refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
+
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -94,6 +109,12 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      # Same reason as the verify job: this job runs `prepare-release.mjs` too, and without the tag
+      # object the lightweight-tag refusal fires on a correct tag.
+      - name: Fetch the tag object
+        if: ${{ github.ref_type == 'tag' }}
+        run: git fetch --force --no-tags --depth=1 origin "+refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4

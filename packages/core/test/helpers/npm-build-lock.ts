@@ -85,19 +85,56 @@ function withLock(fn) {
 
 /**
  * `npm` on Windows is a `.cmd` shim, which `spawnSync` cannot execute without a shell — and a shell
- * brings in quoting, which brings in path-with-non-ASCII problems. `npm-cli.js` sits next to the
- * Node running the tests, so this resolves to the same client every time rather than to whatever
- * a PATH lookup finds.
+ * brings in quoting, which brings in path-with-non-ASCII problems. So resolve `npm-cli.js` itself,
+ * which also pins the tests to the client that ships with the Node running them rather than to
+ * whatever a PATH lookup finds.
+ *
+ * **"Sits next to the Node" was true on the machine that wrote this and false on a CI runner.**
+ * `actions/setup-node` puts the binary at `<prefix>/bin/node` and the client at
+ * `<prefix>/lib/node_modules/npm/bin/npm-cli.js`, so the first candidate never existed there and the
+ * suite failed on the runner with a message about a file that was not missing but in another place.
+ * Two tests that pack a real tarball had never once run off this machine.
+ *
+ * **`npm_execpath` is deliberately NOT a candidate, and that took a run to learn.** It names
+ * whatever package manager started the tests. Under `pnpm test` that is pnpm, and pnpm ships its own
+ * file at `.../pnpm/dist/npm-cli.js` — pnpm wearing npm's filename. Running it with npm's flags
+ * invokes pnpm, which answers `[ERROR] Unknown option: 'ignore-scripts'` and exits 1. It looks like
+ * the most authoritative answer available, which is exactly why it is worth writing down.
+ *
+ * So the candidates are npm's own layouts only: `lib/node_modules` beside the binary's parent is the
+ * POSIX prefix that `actions/setup-node` produces, `node_modules` beside the binary is the Windows
+ * one, and walking up covers a version manager that nests differently.
  */
-function npmCli() {
-  const nextToNode = join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
-  if (!existsSync(nextToNode)) {
-    throw new Error(
-      `could not find npm-cli.js next to ${process.execPath} (looked at ${nextToNode}). These tests ` +
-        'pack a real tarball, so they need the npm client that ships with the Node running them.',
-    );
+export function npmCliCandidates(nodeDir: string): string[] {
+  const prefix = dirname(nodeDir);
+  return [
+    join(prefix, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    ...ancestors(nodeDir).map((dir) => join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js')),
+  ];
+}
+
+function npmCli(): string {
+  const candidates = npmCliCandidates(dirname(process.execPath));
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
   }
-  return nextToNode;
+
+  throw new Error(
+    `could not find npm-cli.js. These tests pack a real tarball, so they need the npm client that ` +
+      `ships with the Node running them (${process.execPath}). Looked at:\n  ${candidates.join('\n  ')}`,
+  );
+}
+
+/** `dir` and each of its ancestors, nearest first. */
+function ancestors(dir: string): string[] {
+  const out: string[] = [];
+  for (let d = dir; ; ) {
+    const up = dirname(d);
+    if (up === d) return out;
+    out.push(up);
+    d = up;
+  }
 }
 
 /**
